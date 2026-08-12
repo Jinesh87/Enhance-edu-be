@@ -7,7 +7,7 @@ import {
   getInvitationExpiry,
   hashInvitationToken,
 } from "../../common/utils/invitation.js";
-import { User } from "../../entities/User.js";
+import { User } from "../../entities/index.js";
 import type {
   InvitePersonInput,
   InvitePersonResult,
