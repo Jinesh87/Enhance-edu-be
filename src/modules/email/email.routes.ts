@@ -5,7 +5,7 @@ import {
   authorize,
 } from "../../common/middleware/authenticate.js";
 import { validate } from "../../common/middleware/validate.js";
-import { updateEmailConfigSchema } from "./email.validation.js";
+import { updateMessagingConfigSchema } from "./email.validation.js";
 import { UserRole } from "../../common/constants/roles.js";
 
 const router = Router();
@@ -17,7 +17,7 @@ router.get("/config", (req, res) => void emailController.getConfig(req, res));
 
 router.put(
   "/config",
-  validate(updateEmailConfigSchema, "body"),
+  validate(updateMessagingConfigSchema, "body"),
   (req, res) => void emailController.updateConfig(req, res),
 );
 

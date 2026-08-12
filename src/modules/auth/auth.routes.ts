@@ -4,7 +4,11 @@ import { validate } from "../../common/middleware/validate.js";
 import { authController } from "./auth.controller.js";
 import {
   acceptInvitationSchema,
+  invitation2faMethodSchema,
+  invitationPasswordSchema,
   invitationPreviewQuerySchema,
+  invitationSetupIdSchema,
+  invitationVerify2faSchema,
   loginSchema,
 } from "./auth.validation.js";
 
@@ -14,6 +18,26 @@ authRouter.get(
   "/invitation",
   validate(invitationPreviewQuerySchema, "query"),
   authController.getInvitationPreview,
+);
+authRouter.post(
+  "/invitation/password",
+  validate(invitationPasswordSchema),
+  authController.setupInvitationPassword,
+);
+authRouter.post(
+  "/invitation/2fa-method",
+  validate(invitation2faMethodSchema),
+  authController.chooseInvitation2faMethod,
+);
+authRouter.post(
+  "/invitation/resend-code",
+  validate(invitationSetupIdSchema),
+  authController.resendInvitation2faCode,
+);
+authRouter.post(
+  "/invitation/verify-2fa",
+  validate(invitationVerify2faSchema),
+  authController.verifyInvitation2fa,
 );
 authRouter.post(
   "/accept-invitation",

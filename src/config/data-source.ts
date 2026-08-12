@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { DataSource } from "typeorm";
 import { RefreshToken } from "../entities/RefreshToken.js";
 import { User } from "../entities/User.js";
-import { EmailConfig } from "../entities/EmailConfig.js";
+import { MessagingConfig } from "../entities/EmailConfig.js";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -14,7 +14,7 @@ export const AppDataSource = new DataSource({
   synchronize:
     process.env.DB_SYNC === "true" || process.env.NODE_ENV !== "production",
   logging: false,
-  entities: [User, RefreshToken, EmailConfig],
+  entities: [User, RefreshToken, MessagingConfig],
   migrations: [],
   subscribers: [],
 });

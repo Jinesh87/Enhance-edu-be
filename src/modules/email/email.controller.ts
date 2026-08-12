@@ -9,31 +9,39 @@ export class EmailController {
     if (!config) {
       res.json({
         configured: false,
+        resendApiKey: null,
         fromEmail: null,
         fromName: null,
         enabled: false,
+        twilioAccountSid: null,
+        twilioAuthToken: null,
+        twilioConfigured: false,
+        twilioFromNumber: null,
+        smsEnabled: false,
       });
       return;
     }
 
     res.json({
       configured: true,
+      resendApiKey: config.resendApiKey,
       fromEmail: config.fromEmail,
       fromName: config.fromName,
       enabled: config.enabled,
-      // Never send the API key to the client
+      twilioAccountSid: config.twilioAccountSid,
+      twilioAuthToken: config.twilioAuthToken,
+      twilioConfigured: Boolean(
+        config.twilioAccountSid &&
+          config.twilioAuthToken &&
+          config.twilioFromNumber,
+      ),
+      twilioFromNumber: config.twilioFromNumber,
+      smsEnabled: config.smsEnabled,
     });
   }
 
   async updateConfig(req: Request, res: Response): Promise<void> {
-    const { resendApiKey, fromEmail, fromName, enabled } = req.body;
-
-    const config = await emailService.updateConfig(
-      resendApiKey,
-      fromEmail,
-      fromName,
-      enabled,
-    );
+    const config = await emailService.updateConfig(req.body);
 
     logger.info(
       { userId: req.user?.id },
@@ -42,9 +50,19 @@ export class EmailController {
 
     res.json({
       configured: true,
+      resendApiKey: config.resendApiKey,
       fromEmail: config.fromEmail,
       fromName: config.fromName,
       enabled: config.enabled,
+      twilioAccountSid: config.twilioAccountSid,
+      twilioAuthToken: config.twilioAuthToken,
+      twilioConfigured: Boolean(
+        config.twilioAccountSid &&
+          config.twilioAuthToken &&
+          config.twilioFromNumber,
+      ),
+      twilioFromNumber: config.twilioFromNumber,
+      smsEnabled: config.smsEnabled,
     });
   }
 }

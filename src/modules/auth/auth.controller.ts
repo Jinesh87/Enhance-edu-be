@@ -22,6 +22,71 @@ export class AuthController {
     }
   };
 
+  setupInvitationPassword = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await authService.setupInvitationPassword({
+        email: req.body.email,
+        token: req.body.token,
+        password: req.body.password,
+        preferredName: req.body.preferredName,
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  chooseInvitation2faMethod = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await authService.chooseInvitation2faMethod({
+        setupId: req.body.setupId,
+        method: req.body.method,
+        mobile: req.body.mobile,
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  resendInvitation2faCode = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      await authService.resendInvitation2faCode(req.body.setupId);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  verifyInvitation2fa = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await authService.verifyInvitation2faAndActivate({
+        setupId: req.body.setupId,
+        code: req.body.code,
+      });
+      setAuthCookies(res, result.tokens);
+      res.status(200).json({ user: result.user });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   acceptInvitation = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await authService.acceptInvitation({

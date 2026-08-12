@@ -1,4 +1,5 @@
 import { UserRole, UserStatus } from "../../../common/constants/roles.js";
+import type { TwoFactorMethod } from "../../../common/constants/roles.js";
 
 export type PublicUser = {
   id: string;
@@ -33,6 +34,39 @@ export type InvitationPreview = {
   email: string;
   fullName: string;
   role: UserRole;
+  email2faAvailable: boolean;
+  sms2faAvailable: boolean;
+};
+
+export type InvitationPasswordInput = {
+  email: string;
+  token: string;
+  password: string;
+  preferredName?: string | null;
+};
+
+export type InvitationPasswordResult = {
+  setupId: string;
+  email: string;
+  fullName: string;
+  role: UserRole;
+};
+
+export type Invitation2faMethodInput = {
+  setupId: string;
+  method: TwoFactorMethod;
+  mobile?: string | null;
+};
+
+export type Invitation2faMethodResult = {
+  setupId: string;
+  method: TwoFactorMethod;
+  codeSent: boolean;
+};
+
+export type InvitationVerify2faInput = {
+  setupId: string;
+  code: string;
 };
 
 export type LoginInput = {

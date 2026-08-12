@@ -6,8 +6,8 @@ import {
   UpdateDateColumn,
 } from "typeorm";
 
-@Entity("email_config")
-export class EmailConfig {
+@Entity("messaging_config")
+export class MessagingConfig {
   @PrimaryColumn({ type: "varchar", length: 50 })
   id!: string; // Will always be 'default' for singleton pattern
 
@@ -22,6 +22,18 @@ export class EmailConfig {
 
   @Column({ type: "boolean", default: true })
   enabled!: boolean;
+
+  @Column({ type: "varchar", length: 255, nullable: true })
+  twilioAccountSid!: string | null;
+
+  @Column({ type: "varchar", length: 255, nullable: true })
+  twilioAuthToken!: string | null;
+
+  @Column({ type: "varchar", length: 40, nullable: true })
+  twilioFromNumber!: string | null;
+
+  @Column({ type: "boolean", default: false })
+  smsEnabled!: boolean;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
