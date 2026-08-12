@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../../config/data-source.js";
 import { UserStatus } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
-import { verifyInvitationToken } from "../../common/utils/invitation.js";
+import {
+  getInvitationTokenData,
+  verifyAndConsumeInvitationToken,
+} from "../../common/utils/invitation-redis.js";
 import { hashValue, verifyHash } from "../../common/utils/hash.js";
 import {
   getRefreshExpiresAt,
@@ -13,10 +16,12 @@ import {
 import { hashPassword, verifyPassword } from "../../common/utils/password.js";
 import { RefreshToken } from "../../entities/RefreshToken.js";
 import { User } from "../../entities/User.js";
+import { logger } from "../../config/logger.js";
 import type {
   AcceptInvitationInput,
   AuthResult,
   AuthTokens,
+  InvitationPreview,
   LoginInput,
   PublicUser,
 } from "./types/auth.types.js";
@@ -44,35 +49,83 @@ export class AuthService {
   private readonly users = AppDataSource.getRepository(User);
   private readonly refreshTokens = AppDataSource.getRepository(RefreshToken);
 
+  async getInvitationPreview(token: string): Promise<InvitationPreview> {
+    const invitationData = await getInvitationTokenData(token);
+
+    if (!invitationData) {
+      throw new AppError(
+        400,
+        "Invitation link is invalid or has expired",
+        "INVALID_INVITATION",
+      );
+    }
+
+    const user = await this.users.findOne({
+      where: { id: invitationData.userId },
+    });
+
+    if (!user || user.status !== UserStatus.INVITED) {
+      throw new AppError(
+        400,
+        "Invitation link is invalid or has expired",
+        "INVALID_INVITATION",
+      );
+    }
+
+    return {
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+    };
+  }
+
   async acceptInvitation(input: AcceptInvitationInput): Promise<AuthResult> {
+    // Verify and consume the one-time invitation token from Redis
+    let invitationData;
+    try {
+      invitationData = await verifyAndConsumeInvitationToken(input.token);
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError(
+        400,
+        "Invitation link is invalid or has expired",
+        "INVALID_INVITATION",
+      );
+    }
+
+    // Verify the email matches
     const email = input.email.toLowerCase();
-    const user = await this.users.findOne({ where: { email } });
-
-    if (
-      !user ||
-      user.status !== UserStatus.INVITED ||
-      !user.invitationTokenHash
-    ) {
-      throw new AppError(400, "Invitation is invalid", "INVALID_INVITATION");
+    if (email !== invitationData.email.toLowerCase()) {
+      throw new AppError(
+        400,
+        "Email does not match the invitation",
+        "EMAIL_MISMATCH",
+      );
     }
 
-    if (!user.invitationExpiresAt || user.invitationExpiresAt < new Date()) {
-      throw new AppError(400, "Invitation has expired", "INVITATION_EXPIRED");
+    // Get user from database
+    const user = await this.users.findOne({ where: { id: invitationData.userId } });
+
+    if (!user) {
+      throw new AppError(404, "User not found", "USER_NOT_FOUND");
     }
 
-    const tokenValid = await verifyInvitationToken(
-      input.token,
-      user.invitationTokenHash,
-    );
-
-    if (!tokenValid) {
-      throw new AppError(400, "Invitation is invalid", "INVALID_INVITATION");
+    if (user.status !== UserStatus.INVITED) {
+      throw new AppError(
+        400,
+        "This invitation has already been accepted",
+        "ALREADY_ACCEPTED",
+      );
     }
 
+    // Set preferred name if provided
     if (input.preferredName !== undefined) {
       user.preferredName = input.preferredName?.trim() || null;
     }
 
+    // Set password and activate account
     user.passwordHash = await hashPassword(input.password);
     user.status = UserStatus.ACTIVE;
     user.securitySetupComplete = true;
@@ -81,6 +134,11 @@ export class AuthService {
     user.lastSignedInAt = new Date();
 
     await this.users.save(user);
+
+    logger.info(
+      { userId: user.id, email: user.email },
+      "User accepted invitation and account activated",
+    );
 
     const tokens = await this.issueTokens(user);
     return { user: toPublicUser(user), tokens };

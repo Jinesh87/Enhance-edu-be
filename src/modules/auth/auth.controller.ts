@@ -7,6 +7,21 @@ import {
 import { authService } from "./auth.service.js";
 
 export class AuthController {
+  getInvitationPreview = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const preview = await authService.getInvitationPreview(
+        req.query.token as string,
+      );
+      res.status(200).json({ invitation: preview });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   acceptInvitation = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await authService.acceptInvitation({

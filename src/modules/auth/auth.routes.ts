@@ -4,11 +4,17 @@ import { validate } from "../../common/middleware/validate.js";
 import { authController } from "./auth.controller.js";
 import {
   acceptInvitationSchema,
+  invitationPreviewQuerySchema,
   loginSchema,
 } from "./auth.validation.js";
 
 const authRouter = Router();
 
+authRouter.get(
+  "/invitation",
+  validate(invitationPreviewQuerySchema, "query"),
+  authController.getInvitationPreview,
+);
 authRouter.post(
   "/accept-invitation",
   validate(acceptInvitationSchema),

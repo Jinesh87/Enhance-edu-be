@@ -29,6 +29,12 @@ export type AcceptInvitationInput = {
   preferredName?: string | null;
 };
 
+export type InvitationPreview = {
+  email: string;
+  fullName: string;
+  role: UserRole;
+};
+
 export type LoginInput = {
   email: string;
   password: string;

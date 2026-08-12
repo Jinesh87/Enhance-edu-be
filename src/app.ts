@@ -6,6 +6,7 @@ import { logger } from "./config/logger.js";
 import authRouter from "./modules/auth/auth.routes.js";
 import healthRouter from "./modules/health/health.routes.js";
 import usersRouter from "./modules/users/users.routes.js";
+import emailRouter from "./modules/email/email.routes.js";
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use((req, res, next) => {
 app.use("/api/health", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/email", emailRouter);
 
 app.use(errorHandler);
 

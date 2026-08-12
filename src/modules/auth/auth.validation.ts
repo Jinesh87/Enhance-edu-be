@@ -5,6 +5,10 @@ export const loginSchema = Joi.object({
   password: Joi.string().required(),
 });
 
+export const invitationPreviewQuerySchema = Joi.object({
+  token: Joi.string().trim().min(20).required(),
+});
+
 export const acceptInvitationSchema = Joi.object({
   email: Joi.string().trim().email().required(),
   token: Joi.string().trim().min(20).required(),
