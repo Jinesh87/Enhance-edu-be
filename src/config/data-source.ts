@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { DataSource } from "typeorm";
+import { RefreshToken } from "../entities/RefreshToken.js";
 import { User } from "../entities/User.js";
 
 export const AppDataSource = new DataSource({
@@ -9,11 +10,10 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USER ?? "edu",
   password: process.env.DB_PASSWORD ?? "edu",
   database: process.env.DB_NAME ?? "edu",
-  // Prefer migrations in real deployments; enable sync for local/bootstrap via DB_SYNC=true
   synchronize:
     process.env.DB_SYNC === "true" || process.env.NODE_ENV !== "production",
   logging: false,
-  entities: [User],
+  entities: [User, RefreshToken],
   migrations: [],
   subscribers: [],
 });
