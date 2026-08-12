@@ -1,0 +1,19 @@
+import "reflect-metadata";
+import { DataSource } from "typeorm";
+import { User } from "../entities/User.js";
+
+export const AppDataSource = new DataSource({
+  type: "postgres",
+  host: process.env.DB_HOST ?? "localhost",
+  port: Number(process.env.DB_PORT ?? 5432),
+  username: process.env.DB_USER ?? "edu",
+  password: process.env.DB_PASSWORD ?? "edu",
+  database: process.env.DB_NAME ?? "edu",
+  // Prefer migrations in real deployments; enable sync for local/bootstrap via DB_SYNC=true
+  synchronize:
+    process.env.DB_SYNC === "true" || process.env.NODE_ENV !== "production",
+  logging: false,
+  entities: [User],
+  migrations: [],
+  subscribers: [],
+});
