@@ -7,7 +7,7 @@ import {
   storeInvitationToken,
   deleteUserInvitationTokens,
 } from "../../common/utils/invitation-redis.js";
-import { User } from "../../entities/User.js";
+import { User } from "../../entities/index.js";
 import { emailService } from "../email/email.service.js";
 import type {
   InvitePersonInput,

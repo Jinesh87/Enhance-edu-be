@@ -28,8 +28,7 @@ import {
   verifyRefreshToken,
 } from "../../common/utils/jwt.js";
 import { hashPassword, verifyPassword } from "../../common/utils/password.js";
-import { RefreshToken } from "../../entities/RefreshToken.js";
-import { User } from "../../entities/User.js";
+import { RefreshToken, User } from "../../entities/index.js";
 import { logger } from "../../config/logger.js";
 import type {
   AcceptInvitationInput,

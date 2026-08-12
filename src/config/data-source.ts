@@ -1,7 +1,14 @@
 import "reflect-metadata";
 import { DataSource } from "typeorm";
-import { RefreshToken } from "../entities/RefreshToken.js";
-import { User } from "../entities/User.js";
+import {
+  RefreshToken,
+  User,
+  Class,
+  Session,
+  ClassStudent,
+  AttendanceRecord,
+  ScanEvent,
+} from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 
 export const AppDataSource = new DataSource({
@@ -14,7 +21,8 @@ export const AppDataSource = new DataSource({
   synchronize:
     process.env.DB_SYNC === "true" || process.env.NODE_ENV !== "production",
   logging: false,
-  entities: [User, RefreshToken, MessagingConfig],
+  entities: [User, RefreshToken, MessagingConfig, Class, Session, ClassStudent, AttendanceRecord, ScanEvent],
+
   migrations: [],
   subscribers: [],
 });
