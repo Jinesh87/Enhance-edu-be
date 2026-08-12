@@ -30,4 +30,12 @@ export enum EmploymentType {
 
 export const EMPLOYMENT_TYPES = Object.values(EmploymentType);
 
+export enum TwoFactorMethod {
+  SMS = "SMS",
+  AUTHENTICATOR = "AUTHENTICATOR",
+  EMAIL = "EMAIL",
+}
+
+export const TWO_FACTOR_METHODS = Object.values(TwoFactorMethod);
+
 export const INVITATION_TTL_HOURS = 48;

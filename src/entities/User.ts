@@ -8,6 +8,7 @@ import {
 } from "typeorm";
 import {
   EmploymentType,
+  TwoFactorMethod,
   UserRole,
   UserStatus,
 } from "../common/constants/roles.js";
@@ -44,6 +45,9 @@ export class User {
 
   @Column({ type: "boolean", default: false })
   securitySetupComplete!: boolean;
+
+  @Column({ type: "enum", enum: TwoFactorMethod, nullable: true })
+  twoFactorMethod!: TwoFactorMethod | null;
 
   @Index()
   @Column({ type: "varchar", length: 255, nullable: true })
