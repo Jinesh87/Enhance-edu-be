@@ -1,17 +1,22 @@
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
+import { errorHandler } from "./common/middleware/error-handler.js";
 import { logger } from "./config/logger.js";
-import healthRouter from "./routes/health.js";
-import usersRouter from "./routes/users.js";
+import authRouter from "./modules/auth/auth.routes.js";
+import healthRouter from "./modules/health/health.routes.js";
+import usersRouter from "./modules/users/users.routes.js";
 
 const app = express();
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN?.split(",") ?? true,
+    origin: process.env.CORS_ORIGIN?.split(",").map((value) => value.trim()) ?? true,
+    credentials: true,
   }),
 );
 app.use(express.json());
+app.use(cookieParser());
 
 app.use((req, res, next) => {
   const started = Date.now();
@@ -30,18 +35,9 @@ app.use((req, res, next) => {
 });
 
 app.use("/api/health", healthRouter);
+app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 
-app.use(
-  (
-    err: unknown,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction,
-  ) => {
-    logger.error({ err }, "Unhandled error");
-    res.status(500).json({ error: "Internal server error" });
-  },
-);
+app.use(errorHandler);
 
 export default app;

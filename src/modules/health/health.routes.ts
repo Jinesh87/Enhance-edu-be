@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { AppDataSource } from "../config/data-source.js";
+import { AppDataSource } from "../../config/data-source.js";
 
 const healthRouter = Router();
 
