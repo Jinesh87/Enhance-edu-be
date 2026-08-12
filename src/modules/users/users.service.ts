@@ -3,11 +3,12 @@ import { logger } from "../../config/logger.js";
 import { UserRole, UserStatus } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
 import {
-  createInvitationToken,
-  getInvitationExpiry,
-  hashInvitationToken,
-} from "../../common/utils/invitation.js";
+  generateInvitationToken,
+  storeInvitationToken,
+  deleteUserInvitationTokens,
+} from "../../common/utils/invitation-redis.js";
 import { User } from "../../entities/index.js";
+import { emailService } from "../email/email.service.js";
 import type {
   InvitePersonInput,
   InvitePersonResult,
@@ -74,7 +75,7 @@ export class UsersService {
       );
     }
 
-    const invitationToken = createInvitationToken();
+    // Create user record
     const user = this.users.create({
       fullName: input.fullName.trim(),
       preferredName: input.preferredName?.trim() || null,
@@ -85,16 +86,46 @@ export class UsersService {
       status: UserStatus.INVITED,
       employmentType: input.employmentType ?? null,
       securitySetupComplete: false,
-      invitationTokenHash: await hashInvitationToken(invitationToken),
-      invitationExpiresAt: getInvitationExpiry(),
+      invitationTokenHash: null, // Not used anymore, using Redis
+      invitationExpiresAt: null,  // Not used anymore, using Redis
     });
 
     await this.users.save(user);
 
     logger.info(
       { userId: user.id, email: user.email },
-      "Invitation created (email not sent yet)",
+      "User created with INVITED status",
     );
+
+    // Generate one-time invitation token and store in Redis
+    const invitationToken = generateInvitationToken();
+    await storeInvitationToken(invitationToken, {
+      userId: user.id,
+      email: user.email,
+      fullName: user.fullName,
+    });
+
+    // Send invitation email
+    const invitationLink = `${process.env.FRONTEND_URL ?? "http://localhost:5173"}/accept-invitation?token=${invitationToken}`;
+    
+    try {
+      await emailService.sendInvitationEmail({
+        to: user.email,
+        fullName: user.fullName,
+        invitationLink,
+      });
+      
+      logger.info(
+        { userId: user.id, email: user.email },
+        "Invitation email sent successfully",
+      );
+    } catch (error) {
+      // Log but don't fail - the invitation is still created
+      logger.warn(
+        { userId: user.id, error },
+        "Failed to send invitation email, but invitation was created",
+      );
+    }
 
     return { person: toPersonDto(user), invitationToken };
   }
@@ -170,15 +201,40 @@ export class UsersService {
       );
     }
 
-    const invitationToken = createInvitationToken();
-    user.invitationTokenHash = await hashInvitationToken(invitationToken);
-    user.invitationExpiresAt = getInvitationExpiry();
-    await this.users.save(user);
+    // Delete any previous invitation tokens for this user
+    await deleteUserInvitationTokens(user.id);
 
-    logger.info(
-      { userId: user.id, email: user.email },
-      "Invitation resent (email not sent yet)",
-    );
+    // Generate new one-time invitation token and store in Redis
+    const invitationToken = generateInvitationToken();
+    await storeInvitationToken(invitationToken, {
+      userId: user.id,
+      email: user.email,
+      fullName: user.fullName,
+    });
+
+    logger.info({ userId: user.id }, "New invitation token generated");
+
+    // Resend invitation email
+    const invitationLink = `${process.env.FRONTEND_URL ?? "http://localhost:5173"}/accept-invitation?token=${invitationToken}`;
+    
+    try {
+      await emailService.sendInvitationEmail({
+        to: user.email,
+        fullName: user.fullName,
+        invitationLink,
+      });
+      
+      logger.info(
+        { userId: user.id, email: user.email },
+        "Invitation email resent successfully",
+      );
+    } catch (error) {
+      // Log but don't fail - the invitation token is still refreshed
+      logger.warn(
+        { userId: user.id, error },
+        "Failed to resend invitation email, but invitation token was refreshed",
+      );
+    }
 
     return { person: toPersonDto(user), invitationToken };
   }
