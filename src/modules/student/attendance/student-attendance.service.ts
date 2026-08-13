@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import {
   AttendanceStatus,
@@ -10,51 +9,70 @@ import {
   haversineDistance,
   ROOM_COORDINATES,
 } from "../../../common/utils/geo.js";
-import { ProcessScanInput } from "../../shared/attendance/attendance.types.js";
-
-const QR_SECRET = "enhance-edu-qr-secret-key-2026";
-const ROTATION_WINDOW_MS = 18000;
+import {
+  OfflineScanInput,
+  ProcessScanInput,
+} from "../../shared/attendance/attendance.types.js";
+import { validateAttendanceQr } from "../../shared/attendance/attendance-qr.js";
 
 export class StudentAttendanceService {
   private readonly repo = new AttendanceRepository();
 
   async getStudentDashboardData(studentId: string) {
     const enrols = await this.repo.findEnrolmentsByStudentId(studentId);
-    const classIds = enrols.map((e) => e.classId);
+
+    const classIds = enrols.map((enrolment) => enrolment.classId);
+
     if (classIds.length === 0) {
-      return { sessions: [] };
+      return {
+        sessions: [],
+      };
     }
 
     const sessions = await this.repo.findSessionsByClassIds(classIds);
+
     const attendanceRecords =
       await this.repo.findAttendanceRecordsByStudentId(studentId);
 
     return {
-      sessions: sessions.map((s) => {
-        const att = attendanceRecords.find((r) => r.sessionId === s.id);
-        let checkedInTime = "";
+      sessions: sessions.map((session) => {
+        const attendance = attendanceRecords.find(
+          (record) => record.sessionId === session.id,
+        );
+
         let status = "Not checked in";
-        if (att) {
-          if (
-            att.status === AttendanceStatus.PRESENT ||
-            att.status === AttendanceStatus.LATE
-          ) {
-            status = "Checked in";
-            if (att.scannedAt) {
-              const hours = String(att.scannedAt.getHours()).padStart(2, "0");
-              const mins = String(att.scannedAt.getMinutes()).padStart(2, "0");
-              checkedInTime = `${hours}:${mins}`;
-            }
+        let checkedInTime = "";
+
+        if (
+          attendance &&
+          (attendance.status === AttendanceStatus.PRESENT ||
+            attendance.status === AttendanceStatus.LATE)
+        ) {
+          status = "Checked in";
+
+          if (attendance.scannedAt) {
+            const hours = String(attendance.scannedAt.getHours()).padStart(
+              2,
+              "0",
+            );
+
+            const minutes = String(attendance.scannedAt.getMinutes()).padStart(
+              2,
+              "0",
+            );
+
+            checkedInTime = `${hours}:${minutes}`;
           }
         }
+
         return {
-          id: s.id,
-          classId: s.classId,
-          className: s.class.name,
-          classCode: s.class.code,
-          room: s.room ?? s.class.room,
-          startAt: s.startAt,
-          endAt: s.endAt,
+          id: session.id,
+          classId: session.classId,
+          className: session.class.name,
+          classCode: session.class.code,
+          room: session.room ?? session.class.room,
+          startAt: session.startAt,
+          endAt: session.endAt,
           status,
           checkedInTime,
         };
@@ -74,91 +92,163 @@ export class StudentAttendanceService {
       longitude,
     } = input;
 
+    if (!sessionId || !scannedCode) {
+      throw new AppError(
+        400,
+        "Session ID and QR code are required",
+        "INVALID_SCAN",
+      );
+    }
+
+    if (Number.isNaN(scannedAt.getTime())) {
+      throw new AppError(400, "Invalid scan time", "INVALID_SCAN_TIME");
+    }
+
     const session = await this.repo.findSessionWithClassById(sessionId);
+
     if (!session) {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
 
-    let reasonFlagged = ScanFlagReason.NONE;
+    const isEnrolled = await this.repo.isStudentEnrolled(
+      session.classId,
+      studentId,
+    );
 
-    if (!scannedCode.startsWith(sessionId)) {
-      reasonFlagged = ScanFlagReason.WRONG_SESSION_CODE;
-    } else {
-      const parts = scannedCode.split(":");
-      if (parts.length === 3) {
-        const codeSessionId = parts[0];
-        const codeWindowIndex = parseInt(parts[1], 10);
-        const codeSignature = parts[2];
-
-        const currentWindow = Math.floor(
-          scannedAt.getTime() / ROTATION_WINDOW_MS,
-        );
-        const isValidCurrent =
-          crypto
-            .createHmac("sha256", QR_SECRET)
-            .update(`${codeSessionId}:${codeWindowIndex}`)
-            .digest("hex") === codeSignature;
-
-        const isRecentWindow = Math.abs(currentWindow - codeWindowIndex) <= 2;
-
-        if (!isValidCurrent || !isRecentWindow) {
-          reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
-        }
-      } else {
-        reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
-      }
-    }
-
-    if (latitude !== undefined && longitude !== undefined) {
-      const roomName = session.room || "Default";
-      const roomCoord =
-        ROOM_COORDINATES[roomName] || ROOM_COORDINATES["Default"];
-      const distance = haversineDistance(
-        latitude,
-        longitude,
-        roomCoord.latitude,
-        roomCoord.longitude,
+    if (!isEnrolled) {
+      throw new AppError(
+        403,
+        "You are not enrolled in this class",
+        "NOT_ENROLLED",
       );
-
-      if (distance > 100) {
-        reasonFlagged = ScanFlagReason.OFF_NETWORK;
-      }
-    } else {
-      if (
-        deviceSignal.toLowerCase().includes("14 km") ||
-        deviceSignal.toLowerCase().includes("off-network")
-      ) {
-        reasonFlagged = ScanFlagReason.OFF_NETWORK;
-      }
     }
 
     const existingRecord = await this.repo.findAttendanceRecord(
       sessionId,
       studentId,
     );
+
+    /*
+     * If already successfully checked in,
+     * don't modify the valid attendance record.
+     */
     if (
       existingRecord &&
       (existingRecord.status === AttendanceStatus.PRESENT ||
         existingRecord.status === AttendanceStatus.LATE)
     ) {
-      reasonFlagged = ScanFlagReason.DUPLICATE_SCAN;
+      const duplicateScan = await this.repo.createScanEvent({
+        studentId,
+        sessionId,
+        scannedAt,
+        syncedAt: new Date(),
+        scannedCode,
+        deviceSignal,
+        isOfflineSync,
+        status: ScanStatus.PENDING,
+        reasonFlagged: ScanFlagReason.DUPLICATE_SCAN,
+      });
+
+      return {
+        status: "ALREADY_CHECKED_IN",
+        reasonFlagged: ScanFlagReason.DUPLICATE_SCAN,
+        scanEventId: duplicateScan.id,
+      };
     }
 
-    const isPending = reasonFlagged !== ScanFlagReason.NONE;
+    let reasonFlagged = ScanFlagReason.NONE;
 
-    const scan = await this.repo.createScanEvent({
+    /*
+     * Check the session attendance window.
+     *
+     * Example:
+     * session starts at 4:00
+     * gracePeriodMinutes = 25
+     * normal check-in closes at 4:25.
+     */
+    const gracePeriodMinutes = session.gracePeriodMinutes ?? 25;
+
+    const checkInOpensAt = session.startAt.getTime();
+
+    const checkInClosesAt =
+      session.startAt.getTime() + gracePeriodMinutes * 60_000;
+
+    const scanTime = scannedAt.getTime();
+
+    if (scanTime < checkInOpensAt || scanTime > checkInClosesAt) {
+      reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
+    }
+
+    /*
+     * Validate QR only when the session window
+     * itself hasn't already failed.
+     */
+    if (reasonFlagged === ScanFlagReason.NONE) {
+      const qrResult = validateAttendanceQr(scannedCode, sessionId, scannedAt);
+
+      if (!qrResult.valid) {
+        if (qrResult.reason === "WRONG_SESSION_CODE") {
+          reasonFlagged = ScanFlagReason.WRONG_SESSION_CODE;
+        } else {
+          reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
+        }
+      }
+    }
+
+    /*
+     * Location / network validation.
+     */
+    if (reasonFlagged === ScanFlagReason.NONE) {
+      if (latitude !== undefined && longitude !== undefined) {
+        const roomName = session.room ?? session.class.room ?? "Default";
+
+        const roomCoordinates =
+          ROOM_COORDINATES[roomName] ?? ROOM_COORDINATES["Default"];
+
+        if (roomCoordinates) {
+          const distance = haversineDistance(
+            latitude,
+            longitude,
+            roomCoordinates.latitude,
+            roomCoordinates.longitude,
+          );
+
+          if (distance > 100) {
+            reasonFlagged = ScanFlagReason.OFF_NETWORK;
+          }
+        }
+      } else {
+        const signal = deviceSignal?.toLowerCase() ?? "";
+
+        if (signal.includes("14 km") || signal.includes("off-network")) {
+          reasonFlagged = ScanFlagReason.OFF_NETWORK;
+        }
+      }
+    }
+
+    const isException = reasonFlagged !== ScanFlagReason.NONE;
+
+    const scanEvent = await this.repo.createScanEvent({
       studentId,
       sessionId,
       scannedAt,
+
+      // This tells us when the backend received it.
       syncedAt: new Date(),
+
       scannedCode,
       deviceSignal,
       isOfflineSync,
-      status: isPending ? ScanStatus.PENDING : ScanStatus.ACCEPTED,
+
+      status: isException ? ScanStatus.PENDING : ScanStatus.ACCEPTED,
+
       reasonFlagged,
     });
 
-    if (isPending) {
+    /*
+     * Problematic scan → exception queue.
+     */
+    if (isException) {
       if (!existingRecord) {
         await this.repo.createAttendanceRecord({
           sessionId,
@@ -168,32 +258,38 @@ export class StudentAttendanceService {
         });
       } else {
         existingRecord.status = AttendanceStatus.EXCEPTION;
+
         existingRecord.scannedAt = scannedAt;
+
         await this.repo.saveAttendanceRecord(existingRecord);
       }
 
       return {
         status: "EXCEPTION",
         reasonFlagged,
-        scanEventId: scan.id,
+        scanEventId: scanEvent.id,
       };
     }
 
-    const startOffsetMs = scannedAt.getTime() - session.startAt.getTime();
-    const isLate = startOffsetMs > 60 * 1000;
-
+    /*
+     * A normal valid scan inside the grace window
+     * is PRESENT.
+     *
+     * LATE is reserved for admin accepting an
+     * exception as "Accept as late".
+     */
     if (!existingRecord) {
       await this.repo.createAttendanceRecord({
         sessionId,
         studentId,
-        status: isLate ? AttendanceStatus.LATE : AttendanceStatus.PRESENT,
+        status: AttendanceStatus.PRESENT,
         scannedAt,
       });
     } else {
-      existingRecord.status = isLate
-        ? AttendanceStatus.LATE
-        : AttendanceStatus.PRESENT;
+      existingRecord.status = AttendanceStatus.PRESENT;
+
       existingRecord.scannedAt = scannedAt;
+
       await this.repo.saveAttendanceRecord(existingRecord);
     }
 
@@ -205,25 +301,56 @@ export class StudentAttendanceService {
     };
   }
 
-  async syncOfflineScans(studentId: string, scans: any[]) {
+  async syncOfflineScans(studentId: string, scans: OfflineScanInput[]) {
     const results = [];
+
     for (const scan of scans) {
       try {
-        const res = await this.processScan({
+        const scannedAt = new Date(scan.scannedAt);
+
+        if (Number.isNaN(scannedAt.getTime())) {
+          results.push({
+            success: false,
+            scan,
+            error: "Invalid scan time",
+          });
+
+          continue;
+        }
+
+        const result = await this.processScan({
           studentId,
           sessionId: scan.sessionId,
           scannedCode: scan.scannedCode,
-          scannedAt: new Date(scan.scannedAt),
-          deviceSignal: scan.deviceSignal,
+
+          // Offline scans use the original time
+          // recorded on the student's device.
+          scannedAt,
+
+          deviceSignal: scan.deviceSignal ?? "offline",
+
           isOfflineSync: true,
           latitude: scan.latitude,
           longitude: scan.longitude,
         });
-        results.push({ success: true, scan, result: res });
-      } catch (err: any) {
-        results.push({ success: false, scan, error: err.message });
+
+        results.push({
+          success: true,
+          scan,
+          result,
+        });
+      } catch (error) {
+        results.push({
+          success: false,
+          scan,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to sync attendance",
+        });
       }
     }
+
     return results;
   }
 }
