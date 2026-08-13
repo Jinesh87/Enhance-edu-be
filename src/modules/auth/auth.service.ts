@@ -213,7 +213,14 @@ export class AuthService {
     if (input.method === TwoFactorMethod.AUTHENTICATOR) {
       const secret = generateAuthenticatorSecret();
       setup.authenticatorSecret = secret;
-      await updateInvitationSetup(input.setupId, setup);
+      const saved = await updateInvitationSetup(input.setupId, setup);
+      if (!saved) {
+        throw new AppError(
+          400,
+          "Setup session has expired. Please start again from your invitation link.",
+          "SETUP_EXPIRED",
+        );
+      }
 
       logger.info(
         { userId: setup.userId, setupId: input.setupId },
@@ -242,7 +249,14 @@ export class AuthService {
     }
 
     setup.authenticatorSecret = undefined;
-    await updateInvitationSetup(input.setupId, setup);
+    const saved = await updateInvitationSetup(input.setupId, setup);
+    if (!saved) {
+      throw new AppError(
+        400,
+        "Setup session has expired. Please start again from your invitation link.",
+        "SETUP_EXPIRED",
+      );
+    }
 
     const code = generateSecurityCode();
     await storeInvitation2faCode(input.setupId, code);
@@ -405,6 +419,16 @@ export class AuthService {
     user.lastSignedInAt = new Date();
 
     await this.users.save(user);
+
+    if (
+      setup.twoFactorMethod === TwoFactorMethod.AUTHENTICATOR &&
+      setup.authenticatorSecret
+    ) {
+      await this.users.update(user.id, {
+        authenticatorSecret: setup.authenticatorSecret,
+        twoFactorMethod: TwoFactorMethod.AUTHENTICATOR,
+      });
+    }
     await deleteInvitationSetup(input.setupId);
 
     logger.info(
@@ -729,7 +753,15 @@ export class AuthService {
   private async startLogin2faChallenge(
     user: User,
   ): Promise<Login2faRequiredResult> {
-    const method = user.twoFactorMethod!;
+    let method = user.twoFactorMethod!;
+    if (method === TwoFactorMethod.AUTHENTICATOR && !user.authenticatorSecret) {
+      logger.warn(
+        { userId: user.id },
+        "Authenticator is selected but no secret is stored; using email code instead",
+      );
+      method = TwoFactorMethod.EMAIL;
+    }
+
     const challengeId = generateLoginChallengeId();
     await storeLogin2faChallenge(challengeId, {
       userId: user.id,
