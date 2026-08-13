@@ -21,7 +21,16 @@ export const AppDataSource = new DataSource({
   synchronize:
     process.env.DB_SYNC === "true" || process.env.NODE_ENV !== "production",
   logging: false,
-  entities: [User, RefreshToken, MessagingConfig, Class, Session, ClassStudent, AttendanceRecord, ScanEvent],
+  entities: [
+    User,
+    RefreshToken,
+    MessagingConfig,
+    Class,
+    Session,
+    ClassStudent,
+    AttendanceRecord,
+    ScanEvent,
+  ],
 
   migrations: [],
   subscribers: [],

@@ -1,4 +1,4 @@
-import { AppDataSource } from "../../config/data-source.js";
+import { AppDataSource } from "../../../config/data-source.js";
 import { In } from "typeorm";
 import {
   Session,
@@ -10,7 +10,7 @@ import {
   ScanEvent,
   ScanStatus,
   ScanFlagReason,
-} from "../../entities/index.js";
+} from "../../../entities/index.js";
 
 export class AttendanceRepository {
   private readonly sessions = AppDataSource.getRepository(Session);
