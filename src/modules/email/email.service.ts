@@ -23,6 +23,12 @@ export interface SendSecurityCodeSmsParams {
   code: string;
 }
 
+export interface SendPasswordResetEmailParams {
+  to: string;
+  fullName: string;
+  resetLink: string;
+}
+
 export interface UpdateMessagingConfigInput {
   resendApiKey: string;
   fromEmail: string;
@@ -173,6 +179,66 @@ export class EmailService {
     logger.info({ to: params.to, emailId: data?.id }, "Security code email sent");
   }
 
+  async sendPasswordResetEmail(
+    params: SendPasswordResetEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+
+    if (!config) {
+      throw new AppError(
+        500,
+        "Email configuration not found. Please configure email settings first.",
+        "EMAIL_NOT_CONFIGURED",
+      );
+    }
+
+    if (!config.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email sending is disabled, skipping password reset email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: "Reset your password",
+        html: this.buildPasswordResetEmailHtml(params),
+      });
+
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send password reset email",
+        );
+        throw new AppError(
+          500,
+          "Failed to send password reset email",
+          "EMAIL_SEND_FAILED",
+          { error },
+        );
+      }
+
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Password reset email sent",
+      );
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      logger.error({ err, to: params.to }, "Error sending password reset email");
+      throw new AppError(
+        500,
+        "Error sending password reset email",
+        "EMAIL_SEND_ERROR",
+        { error: err },
+      );
+    }
+  }
+
   async sendSecurityCodeSms(
     params: SendSecurityCodeSmsParams,
   ): Promise<void> {
@@ -236,6 +302,41 @@ export class EmailService {
     <p>Enter this code to finish setting up your account:</p>
     <p style="font-size: 32px; font-weight: 700; letter-spacing: 0.25em; text-align: center; margin: 24px 0; color: #002117;">${params.code}</p>
     <p style="color: #7f8c8d; font-size: 14px;">This code expires in 10 minutes. If you did not request it, you can ignore this email.</p>
+  </div>
+</body>
+</html>
+    `.trim();
+  }
+
+  private buildPasswordResetEmailHtml(
+    params: SendPasswordResetEmailParams,
+  ): string {
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reset your password</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #2c3e50; margin-bottom: 20px;">Reset your password</h1>
+    <p>Hi ${params.fullName},</p>
+    <p>We received a request to reset the password for your Enhance Education account. Click the button below to choose a new password.</p>
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="${params.resetLink}"
+         style="background-color: #e18f33; color: #002117; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: 700;">
+        Set a new password
+      </a>
+    </div>
+    <p style="color: #7f8c8d; font-size: 14px;">
+      This link expires in one hour and can only be used once. If you did not ask for a reset, you can ignore this email.
+    </p>
+    <p style="color: #7f8c8d; font-size: 14px; margin-top: 20px;">
+      If the button doesn't work, copy and paste this link into your browser:<br>
+      <a href="${params.resetLink}" style="color: #e18f33; word-break: break-all;">${params.resetLink}</a>
+    </p>
   </div>
 </body>
 </html>

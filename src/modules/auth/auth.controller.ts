@@ -158,6 +158,47 @@ export class AuthController {
       next(error);
     }
   };
+
+  requestPasswordReset = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      await authService.requestPasswordReset({ email: req.body.email });
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getPasswordResetPreview = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const preview = await authService.getPasswordResetPreview(
+        req.query.token as string,
+      );
+      res.status(200).json({ reset: preview });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  resetPassword = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await authService.resetPassword({
+        token: req.body.token,
+        password: req.body.password,
+      });
+      setAuthCookies(res, result.tokens);
+      res.status(200).json({ user: result.user });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const authController = new AuthController();

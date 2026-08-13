@@ -3,6 +3,13 @@ import { AppDataSource } from "../../config/data-source.js";
 import { UserStatus } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
 import {
+  deleteUserPasswordResetTokens,
+  generatePasswordResetToken,
+  getPasswordResetTokenData,
+  storePasswordResetToken,
+  verifyAndConsumePasswordResetToken,
+} from "../../common/utils/password-reset-redis.js";
+import {
   getInvitationTokenData,
   verifyAndConsumeInvitationToken,
 } from "../../common/utils/invitation-redis.js";
@@ -35,6 +42,7 @@ import type {
   AcceptInvitationInput,
   AuthResult,
   AuthTokens,
+  ForgotPasswordInput,
   Invitation2faMethodInput,
   Invitation2faMethodResult,
   InvitationPasswordInput,
@@ -43,6 +51,7 @@ import type {
   InvitationVerify2faInput,
   LoginInput,
   PublicUser,
+  ResetPasswordInput,
 } from "./types/auth.types.js";
 import {
   clearLoginLockout,
@@ -413,6 +422,97 @@ export class AuthService {
       { userId: user.id, email: user.email },
       "User accepted invitation and account activated",
     );
+
+    const tokens = await this.issueTokens(user);
+    return { user: toPublicUser(user), tokens };
+  }
+
+  async requestPasswordReset(input: ForgotPasswordInput): Promise<void> {
+    const email = input.email.toLowerCase().trim();
+    const user = await this.users.findOne({ where: { email } });
+
+    // Always return quietly — never reveal whether the address exists.
+    if (!user || user.status !== UserStatus.ACTIVE || !user.passwordHash) {
+      logger.info(
+        { email },
+        "Password reset requested for unknown or inactive account",
+      );
+      return;
+    }
+
+    await deleteUserPasswordResetTokens(user.id);
+
+    const token = generatePasswordResetToken();
+    await storePasswordResetToken(token, {
+      userId: user.id,
+      email: user.email,
+    });
+
+    const frontendUrl = (
+      process.env.FRONTEND_URL ?? "http://localhost:5173"
+    ).replace(/\/$/, "");
+    const resetLink = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
+
+    try {
+      await emailService.sendPasswordResetEmail({
+        to: user.email,
+        fullName: user.preferredName || user.fullName,
+        resetLink,
+      });
+    } catch (error) {
+      logger.error(
+        { error, userId: user.id, email: user.email },
+        "Failed to send password reset email",
+      );
+      if (process.env.NODE_ENV !== "production") {
+        logger.info({ resetLink }, "Password reset link (dev fallback)");
+      }
+    }
+  }
+
+  async getPasswordResetPreview(token: string): Promise<{ email: string }> {
+    const data = await getPasswordResetTokenData(token);
+
+    if (!data) {
+      throw new AppError(
+        400,
+        "This reset link is invalid or has expired",
+        "INVALID_RESET_TOKEN",
+      );
+    }
+
+    const user = await this.users.findOne({ where: { id: data.userId } });
+
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      throw new AppError(
+        400,
+        "This reset link is invalid or has expired",
+        "INVALID_RESET_TOKEN",
+      );
+    }
+
+    return { email: user.email };
+  }
+
+  async resetPassword(input: ResetPasswordInput): Promise<AuthResult> {
+    const resetData = await verifyAndConsumePasswordResetToken(input.token);
+    const user = await this.users.findOne({ where: { id: resetData.userId } });
+
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      throw new AppError(
+        400,
+        "This reset link is invalid or has expired",
+        "INVALID_RESET_TOKEN",
+      );
+    }
+
+    user.passwordHash = await hashPassword(input.password);
+    user.lastSignedInAt = new Date();
+    await this.users.save(user);
+
+    await clearLoginLockout(user.email.toLowerCase());
+
+    logger.info({ userId: user.id }, "User reset password and signed in");
 
     const tokens = await this.issueTokens(user);
     return { user: toPublicUser(user), tokens };

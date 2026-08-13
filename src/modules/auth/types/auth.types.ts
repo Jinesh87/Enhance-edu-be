@@ -74,6 +74,15 @@ export type LoginInput = {
   password: string;
 };
 
+export type ForgotPasswordInput = {
+  email: string;
+};
+
+export type ResetPasswordInput = {
+  token: string;
+  password: string;
+};
+
 export type AuthResult = {
   user: PublicUser;
   tokens: AuthTokens;
