@@ -11,6 +11,15 @@ export interface ProcessScanInput {
   longitude?: number;
 }
 
+export interface OfflineScanInput {
+  sessionId: string;
+  scannedCode: string;
+  scannedAt: string;
+  deviceSignal?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 export interface MarkManualRollInput {
   sessionId: string;
   studentId: string;
