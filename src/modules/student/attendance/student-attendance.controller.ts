@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { studentAttendanceService } from "./student-attendance.service.js";
-import { sharedAttendanceService } from "../../shared/attendance/shared-attendance.service.js";
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
+import { sharedAttendanceService } from "../../shared/attendance/shared-attendance.service.js";
 
 class StudentAttendanceController {
   async getStudentDashboard(req: Request, res: Response, next: NextFunction) {

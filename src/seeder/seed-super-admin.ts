@@ -31,7 +31,10 @@ export async function seedSuperAdmin(): Promise<void> {
   const existing = await usersRepo.findOne({ where: { email } });
 
   if (existing) {
-    logger.info({ email }, "Super admin already seeded. Checking rest of the seed data...");
+    logger.info(
+      { email },
+      "Super admin already seeded. Checking rest of the seed data...",
+    );
   } else {
     const user = usersRepo.create({
       fullName,
@@ -71,17 +74,53 @@ export async function seedSuperAdmin(): Promise<void> {
 
   // 2. Seed Students
   const studentsData = [
-    { fullName: "Leo Karim", preferredName: "Leo", email: "student@example.com" },
+    {
+      fullName: "Leo Karim",
+      preferredName: "Leo",
+      email: "student@example.com",
+    },
     { fullName: "Mia Nguyen", preferredName: "Mia", email: "mia@example.com" },
-    { fullName: "Lucas Tran", preferredName: "Lucas", email: "lucas@example.com" },
-    { fullName: "Priya Sharma", preferredName: "Priya", email: "priya@example.com" },
-    { fullName: "Noah Petrov", preferredName: "Noah", email: "noah@example.com" },
+    {
+      fullName: "Lucas Tran",
+      preferredName: "Lucas",
+      email: "lucas@example.com",
+    },
+    {
+      fullName: "Priya Sharma",
+      preferredName: "Priya",
+      email: "priya@example.com",
+    },
+    {
+      fullName: "Noah Petrov",
+      preferredName: "Noah",
+      email: "noah@example.com",
+    },
     { fullName: "Ivy Zhang", preferredName: "Ivy", email: "ivy@example.com" },
-    { fullName: "Ethan Walsh", preferredName: "Ethan", email: "ethan@example.com" },
-    { fullName: "Zara Ahmed", preferredName: "Zara", email: "zara@example.com" },
-    { fullName: "Jayden Cole", preferredName: "Jayden", email: "jayden@example.com" },
-    { fullName: "Ruby Lawson", preferredName: "Ruby", email: "ruby@example.com" },
-    { fullName: "Sami Karim", preferredName: "Sami", email: "sami@example.com" },
+    {
+      fullName: "Ethan Walsh",
+      preferredName: "Ethan",
+      email: "ethan@example.com",
+    },
+    {
+      fullName: "Zara Ahmed",
+      preferredName: "Zara",
+      email: "zara@example.com",
+    },
+    {
+      fullName: "Jayden Cole",
+      preferredName: "Jayden",
+      email: "jayden@example.com",
+    },
+    {
+      fullName: "Ruby Lawson",
+      preferredName: "Ruby",
+      email: "ruby@example.com",
+    },
+    {
+      fullName: "Sami Karim",
+      preferredName: "Sami",
+      email: "sami@example.com",
+    },
   ];
 
   const studentsMap: { [key: string]: User } = {};
@@ -182,13 +221,16 @@ export async function seedSuperAdmin(): Promise<void> {
 
   // 7. Seed Sessions for Today
   const today = new Date();
-  today.setHours(16, 0, 0, 0); // 4:00 PM today
+  today.setHours(15, 45, 0, 0); // 3:45 PM today
 
   const todayEnd = new Date(today);
-  todayEnd.setHours(18, 0, 0, 0); // 6:00 PM today
+  todayEnd.setHours(16, 45, 0, 0); // 4:45 PM today
 
   // Bio session
-  let bioSession = await sessionsRepo.findOne({ where: { classId: bioClass.id } });
+  let bioSession = await sessionsRepo.findOne({
+    where: { classId: bioClass.id },
+  });
+
   if (!bioSession) {
     bioSession = sessionsRepo.create({
       classId: bioClass.id,
@@ -197,12 +239,21 @@ export async function seedSuperAdmin(): Promise<void> {
       room: "Room 4",
       gracePeriodMinutes: 25,
     });
-    await sessionsRepo.save(bioSession);
-    logger.info("Seeded Biology Session for today 4:00-6:00pm");
+  } else {
+    bioSession.startAt = today;
+    bioSession.endAt = todayEnd;
+    bioSession.room = "Room 4";
+    bioSession.gracePeriodMinutes = 25;
   }
 
+  bioSession = await sessionsRepo.save(bioSession);
+
+  logger.info("Biology session set for today 3:45-4:45 PM");
+
   // Chem session
-  let chemSession = await sessionsRepo.findOne({ where: { classId: chemClass.id } });
+  let chemSession = await sessionsRepo.findOne({
+    where: { classId: chemClass.id },
+  });
   if (!chemSession) {
     chemSession = sessionsRepo.create({
       classId: chemClass.id,
@@ -215,7 +266,9 @@ export async function seedSuperAdmin(): Promise<void> {
   }
 
   // Math session
-  let mathSession = await sessionsRepo.findOne({ where: { classId: mathClass.id } });
+  let mathSession = await sessionsRepo.findOne({
+    where: { classId: mathClass.id },
+  });
   if (!mathSession) {
     mathSession = sessionsRepo.create({
       classId: mathClass.id,
@@ -228,7 +281,12 @@ export async function seedSuperAdmin(): Promise<void> {
   }
 
   // 8. Seed Valid/Manual Attendance Records (BIO-12-B)
-  const studentsToMarkPresent = ["mia@example.com", "leo@example.com", "priya@example.com", "noah@example.com"];
+  const studentsToMarkPresent = [
+    "mia@example.com",
+    "leo@example.com",
+    "priya@example.com",
+    "noah@example.com",
+  ];
   for (const email of studentsToMarkPresent) {
     const student = studentsMap[email];
     if (student) {
@@ -305,7 +363,11 @@ export async function seedSuperAdmin(): Promise<void> {
     const student = studentsMap[ex.email];
     if (student && ex.session) {
       const hasScan = await scansRepo.findOne({
-        where: { sessionId: ex.session.id, studentId: student.id, status: ScanStatus.PENDING },
+        where: {
+          sessionId: ex.session.id,
+          studentId: student.id,
+          status: ScanStatus.PENDING,
+        },
       });
       if (!hasScan) {
         const scanTime = new Date(today);
@@ -323,7 +385,10 @@ export async function seedSuperAdmin(): Promise<void> {
           sessionId: ex.session.id,
           scannedAt: scanTime,
           syncedAt: syncTime,
-          scannedCode: ex.reasonFlagged === ScanFlagReason.WRONG_SESSION_CODE ? "MAT-10-A-code" : "BIO-12-B-code",
+          scannedCode:
+            ex.reasonFlagged === ScanFlagReason.WRONG_SESSION_CODE
+              ? "MAT-10-A-code"
+              : "BIO-12-B-code",
           deviceSignal: ex.deviceSignal,
           isOfflineSync: !!ex.isOfflineSync,
           status: ScanStatus.PENDING,
