@@ -4,16 +4,34 @@ import { validate } from "../../common/middleware/validate.js";
 import { authController } from "./auth.controller.js";
 import {
   acceptInvitationSchema,
+  forgotPasswordSchema,
   invitation2faMethodSchema,
   invitationPasswordSchema,
   invitationPreviewQuerySchema,
   invitationSetupIdSchema,
   invitationVerify2faSchema,
   loginSchema,
+  resetPasswordQuerySchema,
+  resetPasswordSchema,
 } from "./auth.validation.js";
 
 const authRouter = Router();
 
+authRouter.post(
+  "/forgot-password",
+  validate(forgotPasswordSchema),
+  authController.requestPasswordReset,
+);
+authRouter.get(
+  "/reset-password",
+  validate(resetPasswordQuerySchema, "query"),
+  authController.getPasswordResetPreview,
+);
+authRouter.post(
+  "/reset-password",
+  validate(resetPasswordSchema),
+  authController.resetPassword,
+);
 authRouter.get(
   "/invitation",
   validate(invitationPreviewQuerySchema, "query"),
