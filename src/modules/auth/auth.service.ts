@@ -21,6 +21,19 @@ import {
   updateInvitationSetup,
 } from "../../common/utils/invitation-setup.js";
 import {
+  generateAuthenticatorSecret,
+  buildAuthenticatorUri,
+  verifyAuthenticatorCode,
+} from "../../common/utils/authenticator.js";
+import {
+  deleteLogin2faChallenge,
+  generateLoginChallengeId,
+  getLogin2faChallenge,
+  issueLogin2faCode,
+  storeLogin2faChallenge,
+  verifyLogin2faCode,
+} from "../../common/utils/login-2fa-redis.js";
+import {
   generateSecurityCode,
   storeInvitation2faCode,
   verifyInvitation2faCode,
@@ -48,7 +61,9 @@ import type {
   InvitationPasswordResult,
   InvitationPreview,
   InvitationVerify2faInput,
+  Login2faRequiredResult,
   LoginInput,
+  LoginResult,
   PublicUser,
   ResetPasswordInput,
 } from "./types/auth.types.js";
@@ -112,6 +127,7 @@ export class AuthService {
           config?.twilioAuthToken &&
           config?.twilioFromNumber,
       ),
+      authenticator2faAvailable: true,
     };
   }
 
@@ -184,22 +200,35 @@ export class AuthService {
       );
     }
 
-    if (input.method === TwoFactorMethod.AUTHENTICATOR) {
-      throw new AppError(
-        501,
-        "This verification method is not available yet",
-        "METHOD_NOT_AVAILABLE",
-      );
-    }
-
     if (
       input.method !== TwoFactorMethod.EMAIL &&
-      input.method !== TwoFactorMethod.SMS
+      input.method !== TwoFactorMethod.SMS &&
+      input.method !== TwoFactorMethod.AUTHENTICATOR
     ) {
       throw new AppError(400, "Invalid verification method", "INVALID_METHOD");
     }
 
     setup.twoFactorMethod = input.method;
+
+    if (input.method === TwoFactorMethod.AUTHENTICATOR) {
+      const secret = generateAuthenticatorSecret();
+      setup.authenticatorSecret = secret;
+      await updateInvitationSetup(input.setupId, setup);
+
+      logger.info(
+        { userId: setup.userId, setupId: input.setupId },
+        "Authenticator enrollment started for invitation setup",
+      );
+
+      return {
+        setupId: input.setupId,
+        method: input.method,
+        codeSent: false,
+        otpauthUrl: buildAuthenticatorUri(setup.email, secret),
+        authenticatorSecret: secret,
+      };
+    }
+
     if (input.method === TwoFactorMethod.SMS) {
       const mobile = input.mobile?.trim() || setup.mobile;
       if (!mobile) {
@@ -211,6 +240,8 @@ export class AuthService {
       }
       setup.mobile = mobile;
     }
+
+    setup.authenticatorSecret = undefined;
     await updateInvitationSetup(input.setupId, setup);
 
     const code = generateSecurityCode();
@@ -253,6 +284,14 @@ export class AuthService {
       );
     }
 
+    if (setup.twoFactorMethod === TwoFactorMethod.AUTHENTICATOR) {
+      throw new AppError(
+        400,
+        "Authenticator codes come from your app. Scan the QR code and enter the current code.",
+        "NO_RESEND",
+      );
+    }
+
     if (
       setup.twoFactorMethod !== TwoFactorMethod.EMAIL &&
       setup.twoFactorMethod !== TwoFactorMethod.SMS
@@ -281,7 +320,7 @@ export class AuthService {
       });
     }
 
-    logger.info({ userId: setup.userId, setupId }, "2FA email code resent");
+    logger.info({ userId: setup.userId, setupId }, "2FA code resent");
   }
 
   async verifyInvitation2faAndActivate(
@@ -305,9 +344,22 @@ export class AuthService {
       );
     }
 
-    const codeValid = await verifyInvitation2faCode(input.setupId, input.code);
-    if (!codeValid) {
-      throw new AppError(400, "Wrong code. Try again.", "INVALID_CODE");
+    if (setup.twoFactorMethod === TwoFactorMethod.AUTHENTICATOR) {
+      if (!setup.authenticatorSecret) {
+        throw new AppError(
+          400,
+          "Authenticator setup is incomplete. Choose the method again.",
+          "SETUP_INCOMPLETE",
+        );
+      }
+      if (!verifyAuthenticatorCode(input.code, setup.authenticatorSecret)) {
+        throw new AppError(400, "Wrong code. Try again.", "INVALID_CODE");
+      }
+    } else {
+      const codeValid = await verifyInvitation2faCode(input.setupId, input.code);
+      if (!codeValid) {
+        throw new AppError(400, "Wrong code. Try again.", "INVALID_CODE");
+      }
     }
 
     // Consume the one-time invitation token
@@ -342,6 +394,10 @@ export class AuthService {
     user.mobile = setup.mobile;
     user.passwordHash = setup.passwordHash;
     user.twoFactorMethod = setup.twoFactorMethod;
+    user.authenticatorSecret =
+      setup.twoFactorMethod === TwoFactorMethod.AUTHENTICATOR
+        ? setup.authenticatorSecret ?? null
+        : null;
     user.status = UserStatus.ACTIVE;
     user.securitySetupComplete = true;
     user.invitationTokenHash = null;
@@ -352,7 +408,7 @@ export class AuthService {
     await deleteInvitationSetup(input.setupId);
 
     logger.info(
-      { userId: user.id, email: user.email },
+      { userId: user.id, email: user.email, method: setup.twoFactorMethod },
       "User accepted invitation with 2FA and account activated",
     );
 
@@ -517,7 +573,7 @@ export class AuthService {
     return { user: toPublicUser(user), tokens };
   }
 
-  async login(input: LoginInput): Promise<AuthResult> {
+  async login(input: LoginInput): Promise<LoginResult> {
     const email = input.email.toLowerCase();
 
     const lock = await getLoginLockStatus(email);
@@ -567,11 +623,157 @@ export class AuthService {
     }
 
     await clearLoginLockout(email);
+
+    if (user.securitySetupComplete && user.twoFactorMethod) {
+      return this.startLogin2faChallenge(user);
+    }
+
     user.lastSignedInAt = new Date();
     await this.users.save(user);
 
     const tokens = await this.issueTokens(user);
     return { user: toPublicUser(user), tokens };
+  }
+
+  async verifyLogin2fa(input: {
+    challengeId: string;
+    code: string;
+  }): Promise<AuthResult> {
+    const challenge = await getLogin2faChallenge(input.challengeId);
+    if (!challenge) {
+      throw new AppError(
+        400,
+        "This sign-in code has expired. Sign in again.",
+        "CHALLENGE_EXPIRED",
+      );
+    }
+
+    const user = await this.users.findOne({ where: { id: challenge.userId } });
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      await deleteLogin2faChallenge(input.challengeId);
+      throw new AppError(403, "Account is not active", "INACTIVE");
+    }
+
+    let codeValid = false;
+    if (challenge.method === TwoFactorMethod.AUTHENTICATOR) {
+      if (!user.authenticatorSecret) {
+        throw new AppError(
+          400,
+          "Authenticator is not set up for this account",
+          "SETUP_INCOMPLETE",
+        );
+      }
+      codeValid = verifyAuthenticatorCode(input.code, user.authenticatorSecret);
+    } else {
+      codeValid = await verifyLogin2faCode(input.challengeId, input.code);
+    }
+
+    if (!codeValid) {
+      throw new AppError(400, "Wrong code. Try again.", "INVALID_CODE");
+    }
+
+    await deleteLogin2faChallenge(input.challengeId);
+    user.lastSignedInAt = new Date();
+    await this.users.save(user);
+
+    const tokens = await this.issueTokens(user);
+    return { user: toPublicUser(user), tokens };
+  }
+
+  async resendLogin2faCode(challengeId: string): Promise<void> {
+    const challenge = await getLogin2faChallenge(challengeId);
+    if (!challenge) {
+      throw new AppError(
+        400,
+        "This sign-in code has expired. Sign in again.",
+        "CHALLENGE_EXPIRED",
+      );
+    }
+
+    if (challenge.method === TwoFactorMethod.AUTHENTICATOR) {
+      throw new AppError(
+        400,
+        "Authenticator codes come from your app. Enter the current code.",
+        "NO_RESEND",
+      );
+    }
+
+    const user = await this.users.findOne({ where: { id: challenge.userId } });
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      throw new AppError(403, "Account is not active", "INACTIVE");
+    }
+
+    const code = await issueLogin2faCode(challengeId);
+    if (challenge.method === TwoFactorMethod.EMAIL) {
+      await emailService.sendSecurityCodeEmail({
+        to: user.email,
+        fullName: user.preferredName || user.fullName,
+        code,
+      });
+    } else if (challenge.method === TwoFactorMethod.SMS) {
+      if (!user.mobile) {
+        throw new AppError(
+          400,
+          "No mobile number is on this account",
+          "MOBILE_REQUIRED",
+        );
+      }
+      await emailService.sendSecurityCodeSms({
+        to: user.mobile,
+        fullName: user.preferredName || user.fullName,
+        code,
+      });
+    }
+  }
+
+  private async startLogin2faChallenge(
+    user: User,
+  ): Promise<Login2faRequiredResult> {
+    const method = user.twoFactorMethod!;
+    const challengeId = generateLoginChallengeId();
+    await storeLogin2faChallenge(challengeId, {
+      userId: user.id,
+      email: user.email,
+      method,
+    });
+
+    let codeSent = false;
+    if (method === TwoFactorMethod.EMAIL || method === TwoFactorMethod.SMS) {
+      const code = await issueLogin2faCode(challengeId);
+      if (method === TwoFactorMethod.EMAIL) {
+        await emailService.sendSecurityCodeEmail({
+          to: user.email,
+          fullName: user.preferredName || user.fullName,
+          code,
+        });
+      } else {
+        if (!user.mobile) {
+          throw new AppError(
+            400,
+            "No mobile number is on this account",
+            "MOBILE_REQUIRED",
+          );
+        }
+        await emailService.sendSecurityCodeSms({
+          to: user.mobile,
+          fullName: user.preferredName || user.fullName,
+          code,
+        });
+      }
+      codeSent = true;
+    }
+
+    logger.info(
+      { userId: user.id, method },
+      "Login 2FA challenge started",
+    );
+
+    return {
+      requires2fa: true,
+      challengeId,
+      method,
+      codeSent,
+    };
   }
 
   async refresh(rawRefreshToken: string): Promise<AuthResult> {

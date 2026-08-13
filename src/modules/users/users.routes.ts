@@ -22,5 +22,6 @@ usersRouter.post("/", validate(createUserSchema), usersController.invite);
 usersRouter.patch("/:id", validate(updateUserSchema), usersController.update);
 usersRouter.post("/:id/resend-invitation", usersController.resendInvitation);
 usersRouter.post("/:id/deactivate", usersController.deactivate);
+usersRouter.delete("/:id", usersController.remove);
 
 export default usersRouter;

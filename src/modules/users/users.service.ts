@@ -7,6 +7,7 @@ import {
   storeInvitationToken,
   deleteUserInvitationTokens,
 } from "../../common/utils/invitation-redis.js";
+import { deleteUserPasswordResetTokens } from "../../common/utils/password-reset-redis.js";
 import { User } from "../../entities/index.js";
 import { emailService } from "../email/email.service.js";
 import type {
@@ -249,9 +250,45 @@ export class UsersService {
     }
 
     const user = await this.findUserOrThrow(id);
+    await this.assertNotLastOwner(user);
     user.status = UserStatus.DEACTIVATED;
     await this.users.save(user);
     return toPersonDto(user);
+  }
+
+  async remove(id: string, actorId: string): Promise<void> {
+    if (id === actorId) {
+      throw new AppError(
+        400,
+        "You cannot delete your own account",
+        "SELF_DELETE",
+      );
+    }
+
+    const user = await this.findUserOrThrow(id);
+    await this.assertNotLastOwner(user);
+
+    await deleteUserInvitationTokens(user.id);
+    await deleteUserPasswordResetTokens(user.id);
+    await this.users.remove(user);
+
+    logger.info({ userId: id, email: user.email }, "User deleted");
+  }
+
+  private async assertNotLastOwner(user: User): Promise<void> {
+    if (user.role !== UserRole.SUPER_ADMIN) return;
+
+    const ownerCount = await this.users.count({
+      where: { role: UserRole.SUPER_ADMIN },
+    });
+
+    if (ownerCount <= 1) {
+      throw new AppError(
+        400,
+        "At least one Application Owner must remain",
+        "LAST_OWNER",
+      );
+    }
   }
 
   private async findUserOrThrow(id: string): Promise<User> {

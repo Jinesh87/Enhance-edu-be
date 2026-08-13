@@ -11,6 +11,8 @@ import {
   invitationSetupIdSchema,
   invitationVerify2faSchema,
   loginSchema,
+  loginChallengeIdSchema,
+  loginVerify2faSchema,
   resetPasswordQuerySchema,
   resetPasswordSchema,
 } from "./auth.validation.js";
@@ -63,6 +65,16 @@ authRouter.post(
   authController.acceptInvitation,
 );
 authRouter.post("/login", validate(loginSchema), authController.login);
+authRouter.post(
+  "/login/verify-2fa",
+  validate(loginVerify2faSchema),
+  authController.verifyLogin2fa,
+);
+authRouter.post(
+  "/login/resend-code",
+  validate(loginChallengeIdSchema),
+  authController.resendLogin2faCode,
+);
 authRouter.post("/refresh", authController.refresh);
 authRouter.post("/logout", authController.logout);
 authRouter.get("/me", authenticate, authController.me);

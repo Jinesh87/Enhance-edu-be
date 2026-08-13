@@ -60,5 +60,17 @@ export const invitationVerify2faSchema = Joi.object({
   }),
 });
 
+export const loginVerify2faSchema = Joi.object({
+  challengeId: Joi.string().trim().min(20).required(),
+  code: Joi.string().trim().length(6).pattern(/^\d+$/).required().messages({
+    "string.length": "Code must be 6 digits",
+    "string.pattern.base": "Code must be 6 digits",
+  }),
+});
+
+export const loginChallengeIdSchema = Joi.object({
+  challengeId: Joi.string().trim().min(20).required(),
+});
+
 // Kept for backward compatibility
 export const acceptInvitationSchema = invitationPasswordSchema;

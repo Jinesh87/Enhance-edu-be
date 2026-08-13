@@ -89,6 +89,15 @@ export class UsersController {
       next(error);
     }
   };
+
+  remove = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await usersService.remove(req.params.id as string, req.user!.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const usersController = new UsersController();

@@ -110,8 +110,39 @@ export class AuthController {
         password: req.body.password,
       });
 
+      if ("requires2fa" in result) {
+        res.status(200).json(result);
+        return;
+      }
+
       setAuthCookies(res, result.tokens);
       res.status(200).json({ user: result.user });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  verifyLogin2fa = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await authService.verifyLogin2fa({
+        challengeId: req.body.challengeId,
+        code: req.body.code,
+      });
+      setAuthCookies(res, result.tokens);
+      res.status(200).json({ user: result.user });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  resendLogin2faCode = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      await authService.resendLogin2faCode(req.body.challengeId);
+      res.status(204).send();
     } catch (error) {
       next(error);
     }
