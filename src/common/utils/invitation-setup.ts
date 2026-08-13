@@ -47,12 +47,15 @@ export async function getInvitationSetup(
 export async function updateInvitationSetup(
   setupId: string,
   data: InvitationSetupData,
-): Promise<void> {
+): Promise<boolean> {
   const key = `${SETUP_PREFIX}${setupId}`;
-  const ttl = await redis.ttl(key);
-  if (ttl <= 0) return;
+  const exists = await redis.exists(key);
+  if (!exists) return false;
 
-  await redis.setex(key, ttl, JSON.stringify(data));
+  const ttl = await redis.ttl(key);
+  const persistTtl = ttl > 0 ? ttl : SETUP_TTL_SECONDS;
+  await redis.setex(key, persistTtl, JSON.stringify(data));
+  return true;
 }
 
 export async function deleteInvitationSetup(setupId: string): Promise<void> {
