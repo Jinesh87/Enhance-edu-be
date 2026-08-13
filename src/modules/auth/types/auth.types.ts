@@ -36,6 +36,7 @@ export type InvitationPreview = {
   role: UserRole;
   email2faAvailable: boolean;
   sms2faAvailable: boolean;
+  authenticator2faAvailable: boolean;
 };
 
 export type InvitationPasswordInput = {
@@ -62,7 +63,18 @@ export type Invitation2faMethodResult = {
   setupId: string;
   method: TwoFactorMethod;
   codeSent: boolean;
+  otpauthUrl?: string;
+  authenticatorSecret?: string;
 };
+
+export type Login2faRequiredResult = {
+  requires2fa: true;
+  challengeId: string;
+  method: TwoFactorMethod;
+  codeSent: boolean;
+};
+
+export type LoginResult = AuthResult | Login2faRequiredResult;
 
 export type InvitationVerify2faInput = {
   setupId: string;

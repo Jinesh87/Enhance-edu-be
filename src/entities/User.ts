@@ -49,6 +49,9 @@ export class User {
   @Column({ type: "enum", enum: TwoFactorMethod, nullable: true })
   twoFactorMethod!: TwoFactorMethod | null;
 
+  @Column({ type: "varchar", length: 255, nullable: true })
+  authenticatorSecret!: string | null;
+
   @Index()
   @Column({ type: "varchar", length: 255, nullable: true })
   invitationTokenHash!: string | null;

@@ -15,6 +15,7 @@ export interface InvitationSetupData {
   preferredName: string | null;
   mobile: string | null;
   twoFactorMethod?: TwoFactorMethod;
+  authenticatorSecret?: string;
 }
 
 export function generateSetupId(): string {
