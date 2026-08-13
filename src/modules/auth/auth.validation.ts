@@ -6,6 +6,22 @@ export const loginSchema = Joi.object({
   password: Joi.string().required(),
 });
 
+export const forgotPasswordSchema = Joi.object({
+  email: Joi.string().trim().email().required(),
+});
+
+export const resetPasswordQuerySchema = Joi.object({
+  token: Joi.string().trim().min(20).required(),
+});
+
+export const resetPasswordSchema = Joi.object({
+  token: Joi.string().trim().min(20).required(),
+  password: Joi.string().min(8).max(128).required(),
+  confirmPassword: Joi.string().valid(Joi.ref("password")).required().messages({
+    "any.only": "Passwords do not match",
+  }),
+});
+
 export const invitationPreviewQuerySchema = Joi.object({
   token: Joi.string().trim().min(20).required(),
 });
