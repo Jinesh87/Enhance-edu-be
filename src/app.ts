@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import { errorHandler } from "./common/middleware/error-handler.js";
 import { logger } from "./config/logger.js";
+import { env } from "./config/env.js";
 import authRouter from "./modules/auth/auth.routes.js";
 import healthRouter from "./modules/health/health.routes.js";
 import usersRouter from "./modules/users/users.routes.js";
@@ -16,7 +17,7 @@ const app = express();
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN?.split(",").map((value) => value.trim()) ?? true,
+    origin: env.CORS_ORIGIN?.split(",").map((value) => value.trim()) ?? true,
     credentials: true,
   }),
 );

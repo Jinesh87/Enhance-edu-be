@@ -1,10 +1,11 @@
 import type { CookieOptions, Response } from "express";
+import { env } from "../../config/env.js";
 
 const ACCESS_COOKIE = "access_token";
 const REFRESH_COOKIE = "refresh_token";
 
 function baseCookieOptions(): CookieOptions {
-  const isProduction = process.env.NODE_ENV === "production";
+  const isProduction = env.NODE_ENV === "production";
 
   return {
     httpOnly: true,
@@ -20,12 +21,12 @@ export function setAuthCookies(
 ) {
   res.cookie(ACCESS_COOKIE, tokens.accessToken, {
     ...baseCookieOptions(),
-    maxAge: parseDurationMs(process.env.JWT_ACCESS_EXPIRES_IN ?? "15m"),
+    maxAge: parseDurationMs(env.JWT_ACCESS_EXPIRES_IN),
   });
 
   res.cookie(REFRESH_COOKIE, tokens.refreshToken, {
     ...baseCookieOptions(),
-    maxAge: parseDurationMs(process.env.JWT_REFRESH_EXPIRES_IN ?? "7d"),
+    maxAge: parseDurationMs(env.JWT_REFRESH_EXPIRES_IN),
   });
 }
 

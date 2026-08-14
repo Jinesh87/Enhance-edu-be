@@ -1,23 +1,33 @@
 import { Response } from "express";
-import { EventEmitter } from "events";
+import { redis, redisSubscriber } from "../../../config/redis.js";
 
 class LiveUpdateManager {
   private clients: Map<string, Set<Response>> = new Map();
-  private emitter = new EventEmitter();
 
   constructor() {
-    this.emitter.on("update", (sessionId: string, data: any) => {
-      const sessionClients = this.clients.get(sessionId);
-      if (!sessionClients) return;
-
-      const message = `data: ${JSON.stringify(data)}\n\n`;
-      for (const client of sessionClients) {
+    redisSubscriber.on("message", (channel: string, message: string) => {
+      if (channel === "attendance:update") {
         try {
-          client.write(message);
+          const { sessionId, data } = JSON.parse(message);
+          const sessionClients = this.clients.get(sessionId);
+          if (!sessionClients) return;
+
+          const sseMessage = `data: ${JSON.stringify(data)}\n\n`;
+          for (const client of sessionClients) {
+            try {
+              client.write(sseMessage);
+            } catch (err) {
+              console.error("Error writing to SSE client:", err);
+            }
+          }
         } catch (err) {
-          console.error("Error writing to SSE client:", err);
+          console.error("Error handling Redis message:", err);
         }
       }
+    });
+
+    redisSubscriber.subscribe("attendance:update").catch((err) => {
+      console.error("Failed to subscribe to Redis channel:", err);
     });
   }
 
@@ -39,7 +49,11 @@ class LiveUpdateManager {
   }
 
   broadcast(sessionId: string, data: any) {
-    this.emitter.emit("update", sessionId, data);
+    redis
+      .publish("attendance:update", JSON.stringify({ sessionId, data }))
+      .catch((err) => {
+        console.error("Failed to publish live update to Redis:", err);
+      });
   }
 }
 

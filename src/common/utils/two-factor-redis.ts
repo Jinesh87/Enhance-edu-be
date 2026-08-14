@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import { redis } from "../../config/redis.js";
 import { logger } from "../../config/logger.js";
+import { env } from "../../config/env.js";
 
 const CODE_PREFIX = "invitation-2fa:";
 const CODE_TTL_SECONDS = 10 * 60; // 10 minutes
@@ -16,7 +17,7 @@ export async function storeInvitation2faCode(
   const key = `${CODE_PREFIX}${setupId}`;
   await redis.setex(key, CODE_TTL_SECONDS, code);
 
-  if (process.env.NODE_ENV !== "production") {
+  if (env.NODE_ENV !== "production") {
     logger.debug({ setupId, code }, "2FA code generated (dev only)");
   }
 }

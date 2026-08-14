@@ -1,10 +1,9 @@
 import crypto from "crypto";
+import { env } from "../../../config/env.js";
 
-const QR_SECRET = process.env.QR_SECRET ?? "enhance-edu-qr-secret-key-2026";
+const QR_SECRET = env.QR_SECRET;
 
-export const QR_ROTATION_WINDOW_MS = Number(
-  process.env.QR_ROTATION_WINDOW_MS ?? 30_000,
-);
+export const QR_ROTATION_WINDOW_MS = env.QR_ROTATION_WINDOW_MS;
 
 function createSignature(sessionId: string, windowIndex: number) {
   return crypto

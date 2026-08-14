@@ -1,5 +1,9 @@
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
-import { AttendanceStatus, ScanStatus } from "../../../entities/index.js";
+import {
+  AttendanceStatus,
+  ScanStatus,
+  AdminDecision,
+} from "../../../entities/index.js";
 import { AppError } from "../../../common/errors/AppError.js";
 
 export class AdminAttendanceService {
@@ -7,7 +11,9 @@ export class AdminAttendanceService {
 
   async getExceptionsAndAbsences() {
     const exceptions = await this.repo.findFlaggedScans();
-    const totalScans = await this.repo.countTotalScans();
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+    const totalScans = await this.repo.countTotalScans(since);
     const pendingCount = exceptions.length;
     const unresolvedAbsences = await this.repo.findUnresolvedAbsences();
 
@@ -30,29 +36,50 @@ export class AdminAttendanceService {
         id: ua.id,
         studentName: ua.student.fullName,
         sessionName: `${ua.session.class.code} - ${ua.session.class.name}`,
-        graceClosed: new Date(ua.session.startAt.getTime() + ua.session.gracePeriodMinutes * 60000),
+        graceClosed: new Date(
+          ua.session.startAt.getTime() + ua.session.gracePeriodMinutes * 60000,
+        ),
       })),
     };
   }
 
-  async resolveScanException(scanEventId: string, decision: string, resolvedByUserId: string) {
+  async resolveScanException(
+    scanEventId: string,
+    decision: AdminDecision,
+    resolvedByUserId: string,
+  ) {
     const scan = await this.repo.findScanEventById(scanEventId);
     if (!scan) {
       throw new AppError(404, "Scan event not found", "SCAN_EVENT_NOT_FOUND");
     }
 
-    scan.status = decision === "Reject" ? ScanStatus.REJECTED : ScanStatus.ACCEPTED;
+    if (decision === AdminDecision.REJECT) {
+      scan.status = ScanStatus.REJECTED;
+    } else if (decision === AdminDecision.IGNORE) {
+      scan.status = ScanStatus.IGNORED;
+    } else {
+      scan.status = ScanStatus.ACCEPTED;
+    }
     scan.adminDecision = decision;
     scan.resolvedAt = new Date();
     scan.resolvedByUserId = resolvedByUserId;
     await this.repo.saveScanEvent(scan);
 
-    const record = await this.repo.findAttendanceRecord(scan.sessionId, scan.studentId);
+    const record = await this.repo.findAttendanceRecord(
+      scan.sessionId,
+      scan.studentId,
+    );
     if (record) {
-      if (decision === "Accept as late" || decision === "Accept") {
+      if (decision === AdminDecision.ACCEPT_AS_LATE) {
         record.status = AttendanceStatus.LATE;
         record.scannedAt = scan.scannedAt;
-      } else if (decision === "Reject" || decision === "Ignore") {
+      } else if (decision === AdminDecision.ACCEPT) {
+        record.status = AttendanceStatus.PRESENT;
+        record.scannedAt = scan.scannedAt;
+      } else if (
+        decision === AdminDecision.REJECT ||
+        decision === AdminDecision.IGNORE
+      ) {
         record.status = AttendanceStatus.ABSENT;
       }
       await this.repo.saveAttendanceRecord(record);

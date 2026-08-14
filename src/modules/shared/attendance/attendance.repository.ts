@@ -1,5 +1,5 @@
 import { AppDataSource } from "../../../config/data-source.js";
-import { In } from "typeorm";
+import { In, MoreThanOrEqual, LessThanOrEqual } from "typeorm";
 import {
   Session,
   Class,
@@ -33,21 +33,32 @@ export class AttendanceRepository {
     return this.sessions.findOne({
       where: { id },
       relations: {
-        class: true,
+        class: {
+          teacher: true,
+        },
       },
     });
   }
 
-  async findSessionsByClassIds(classIds: string[]): Promise<Session[]> {
+  async findSessionsByClassIds(
+    classIds: string[],
+    since?: Date,
+    until?: Date,
+  ): Promise<Session[]> {
+    const where: any = {
+      classId: In(classIds),
+    };
+    if (since) {
+      where.endAt = MoreThanOrEqual(since);
+    }
+    if (until) {
+      where.startAt = LessThanOrEqual(until);
+    }
     return this.sessions.find({
-      where: {
-        classId: In(classIds),
-      },
-
+      where,
       relations: {
         class: true,
       },
-
       order: {
         startAt: "ASC",
       },
@@ -224,7 +235,11 @@ export class AttendanceRepository {
     });
   }
 
-  async countTotalScans(): Promise<number> {
-    return this.scans.count();
+  async countTotalScans(since?: Date): Promise<number> {
+    const where: any = {};
+    if (since) {
+      where.scannedAt = MoreThanOrEqual(since);
+    }
+    return this.scans.count({ where });
   }
 }

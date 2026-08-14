@@ -2,9 +2,33 @@ import { AttendanceRepository } from "../../shared/attendance/attendance.reposit
 import { AppError } from "../../../common/errors/AppError.js";
 import { MarkManualRollInput } from "../../shared/attendance/attendance.types.js";
 import { generateAttendanceQr } from "../../shared/attendance/attendance-qr.js";
+import { UserRole } from "../../../common/constants/roles.js";
+import { Session } from "../../../entities/Session.js";
 
 export class TeacherAttendanceService {
   private readonly repo = new AttendanceRepository();
+
+  async getAuthorizedSession(
+    sessionId: string,
+    userId: string,
+    role: UserRole,
+  ): Promise<Session> {
+    const session = await this.repo.findSessionWithClassById(sessionId);
+
+    if (!session) {
+      throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
+    }
+
+    if (role !== UserRole.SUPER_ADMIN && session.class.teacher?.id !== userId) {
+      throw new AppError(
+        403,
+        "You are not authorized to manage this session",
+        "FORBIDDEN",
+      );
+    }
+
+    return session;
+  }
 
   async getTeacherDashboardData(teacherId: string) {
     const classes = await this.repo.findClassesByTeacherId(teacherId);
@@ -18,7 +42,17 @@ export class TeacherAttendanceService {
       };
     }
 
-    const sessions = await this.repo.findSessionsByClassIds(classIds);
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+
+    const until = new Date();
+    until.setHours(23, 59, 59, 999);
+
+    const sessions = await this.repo.findSessionsByClassIds(
+      classIds,
+      since,
+      until,
+    );
 
     return {
       classes: classes.map((classItem) => ({
@@ -41,13 +75,7 @@ export class TeacherAttendanceService {
     };
   }
 
-  async generateSessionQrCode(sessionId: string) {
-    const session = await this.repo.findSessionById(sessionId);
-
-    if (!session) {
-      throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
-    }
-
+  async generateSessionQrCode(session: Session) {
     const now = Date.now();
 
     const gracePeriodMinutes = session.gracePeriodMinutes ?? 25;
@@ -72,7 +100,7 @@ export class TeacherAttendanceService {
       );
     }
 
-    const qr = generateAttendanceQr(sessionId);
+    const qr = generateAttendanceQr(session.id);
 
     return {
       ...qr,
@@ -81,8 +109,11 @@ export class TeacherAttendanceService {
     };
   }
 
-  async markManualRoll(input: MarkManualRollInput) {
-    const { sessionId, studentId, status, reason, markedByUserId } = input;
+  async markManualRoll(
+    session: Session,
+    input: Omit<MarkManualRollInput, "sessionId">,
+  ) {
+    const { studentId, status, reason, markedByUserId } = input;
 
     if (!reason?.trim()) {
       throw new AppError(
@@ -90,12 +121,6 @@ export class TeacherAttendanceService {
         "Reason is required for manual attendance",
         "MANUAL_REASON_REQUIRED",
       );
-    }
-
-    const session = await this.repo.findSessionById(sessionId);
-
-    if (!session) {
-      throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
 
     const isEnrolled = await this.repo.isStudentEnrolled(
@@ -111,11 +136,11 @@ export class TeacherAttendanceService {
       );
     }
 
-    let record = await this.repo.findAttendanceRecord(sessionId, studentId);
+    let record = await this.repo.findAttendanceRecord(session.id, studentId);
 
     if (!record) {
       record = await this.repo.createAttendanceRecord({
-        sessionId,
+        sessionId: session.id,
         studentId,
         status,
         scannedAt: new Date(),

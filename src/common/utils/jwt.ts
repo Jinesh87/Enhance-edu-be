@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { UserRole } from "../constants/roles.js";
 import { AppError } from "../errors/AppError.js";
+import { env } from "../../config/env.js";
 
 export type AccessTokenPayload = {
   sub: string;
@@ -23,8 +24,8 @@ function requireSecret(name: string, value: string | undefined): string {
 }
 
 export function signAccessToken(payload: Omit<AccessTokenPayload, "type">) {
-  const secret = requireSecret("JWT_ACCESS_SECRET", process.env.JWT_ACCESS_SECRET);
-  const expiresIn = process.env.JWT_ACCESS_EXPIRES_IN ?? "15m";
+  const secret = requireSecret("JWT_ACCESS_SECRET", env.JWT_ACCESS_SECRET);
+  const expiresIn = env.JWT_ACCESS_EXPIRES_IN;
 
   return jwt.sign({ ...payload, type: "access" }, secret, { expiresIn } as jwt.SignOptions);
 }
@@ -34,9 +35,9 @@ export function signRefreshToken(
 ) {
   const secret = requireSecret(
     "JWT_REFRESH_SECRET",
-    process.env.JWT_REFRESH_SECRET,
+    env.JWT_REFRESH_SECRET,
   );
-  const expiresIn = process.env.JWT_REFRESH_EXPIRES_IN ?? "7d";
+  const expiresIn = env.JWT_REFRESH_EXPIRES_IN;
 
   return jwt.sign({ ...payload, type: "refresh" }, secret, {
     expiresIn,
@@ -44,7 +45,7 @@ export function signRefreshToken(
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {
-  const secret = requireSecret("JWT_ACCESS_SECRET", process.env.JWT_ACCESS_SECRET);
+  const secret = requireSecret("JWT_ACCESS_SECRET", env.JWT_ACCESS_SECRET);
   const payload = jwt.verify(token, secret) as AccessTokenPayload;
 
   if (payload.type !== "access") {
@@ -57,7 +58,7 @@ export function verifyAccessToken(token: string): AccessTokenPayload {
 export function verifyRefreshToken(token: string): RefreshTokenPayload {
   const secret = requireSecret(
     "JWT_REFRESH_SECRET",
-    process.env.JWT_REFRESH_SECRET,
+    env.JWT_REFRESH_SECRET,
   );
   const payload = jwt.verify(token, secret) as RefreshTokenPayload;
 
@@ -69,7 +70,7 @@ export function verifyRefreshToken(token: string): RefreshTokenPayload {
 }
 
 export function getRefreshExpiresAt(): Date {
-  const raw = process.env.JWT_REFRESH_EXPIRES_IN ?? "7d";
+  const raw = env.JWT_REFRESH_EXPIRES_IN;
   const match = /^(\d+)([smhd])$/.exec(raw);
 
   if (!match) {
