@@ -5,3 +5,4 @@ export * from "./ClassStudent.js";
 export * from "./Session.js";
 export * from "./AttendanceRecord.js";
 export * from "./ScanEvent.js";
+export * from "./Task.js";

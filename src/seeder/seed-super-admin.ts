@@ -220,12 +220,11 @@ export async function seedSuperAdmin(): Promise<void> {
     }
   }
 
-  // 7. Seed Sessions for Today
-  const today = new Date();
-  today.setHours(15, 45, 0, 0); // 3:45 PM today
-
-  const todayEnd = new Date(today);
-  todayEnd.setHours(16, 45, 0, 0); // 4:45 PM today
+  // 7. Seed Sessions — start two hours ago so the grace window is already closed.
+  const sessionStart = new Date();
+  sessionStart.setHours(sessionStart.getHours() - 2, 0, 0, 0);
+  const sessionEnd = new Date(sessionStart);
+  sessionEnd.setHours(sessionEnd.getHours() + 1);
 
   // Bio session
   let bioSession = await sessionsRepo.findOne({
@@ -235,21 +234,21 @@ export async function seedSuperAdmin(): Promise<void> {
   if (!bioSession) {
     bioSession = sessionsRepo.create({
       classId: bioClass.id,
-      startAt: today,
-      endAt: todayEnd,
+      startAt: sessionStart,
+      endAt: sessionEnd,
       room: "Room 4",
       gracePeriodMinutes: 25,
     });
   } else {
-    bioSession.startAt = today;
-    bioSession.endAt = todayEnd;
+    bioSession.startAt = sessionStart;
+    bioSession.endAt = sessionEnd;
     bioSession.room = "Room 4";
     bioSession.gracePeriodMinutes = 25;
   }
 
   bioSession = await sessionsRepo.save(bioSession);
 
-  logger.info("Biology session set for today 3:45-4:45 PM");
+  logger.info("Biology session set with closed grace window");
 
   // Chem session
   let chemSession = await sessionsRepo.findOne({
@@ -258,13 +257,17 @@ export async function seedSuperAdmin(): Promise<void> {
   if (!chemSession) {
     chemSession = sessionsRepo.create({
       classId: chemClass.id,
-      startAt: today,
-      endAt: todayEnd,
+      startAt: sessionStart,
+      endAt: sessionEnd,
       room: "Room 2",
       gracePeriodMinutes: 25,
     });
-    await sessionsRepo.save(chemSession);
+  } else {
+    chemSession.startAt = sessionStart;
+    chemSession.endAt = sessionEnd;
+    chemSession.gracePeriodMinutes = 25;
   }
+  chemSession = await sessionsRepo.save(chemSession);
 
   // Math session
   let mathSession = await sessionsRepo.findOne({
@@ -273,13 +276,17 @@ export async function seedSuperAdmin(): Promise<void> {
   if (!mathSession) {
     mathSession = sessionsRepo.create({
       classId: mathClass.id,
-      startAt: today,
-      endAt: todayEnd,
+      startAt: sessionStart,
+      endAt: sessionEnd,
       room: "Room 1",
       gracePeriodMinutes: 25,
     });
-    await sessionsRepo.save(mathSession);
+  } else {
+    mathSession.startAt = sessionStart;
+    mathSession.endAt = sessionEnd;
+    mathSession.gracePeriodMinutes = 25;
   }
+  mathSession = await sessionsRepo.save(mathSession);
 
   // 8. Seed Valid/Manual Attendance Records (BIO-12-B)
   const studentsToMarkPresent = [
@@ -295,13 +302,13 @@ export async function seedSuperAdmin(): Promise<void> {
         where: { sessionId: bioSession.id, studentId: student.id },
       });
       if (!hasRecord) {
-        const timeScanned = new Date(today);
+        const timeScanned = new Date(sessionStart);
         if (email === "mia@example.com") timeScanned.setMinutes(0, 41);
         if (email === "leo@example.com") timeScanned.setMinutes(1, 12);
         if (email === "priya@example.com") timeScanned.setMinutes(-1, 52);
         if (email === "noah@example.com") timeScanned.setMinutes(2, 30);
 
-        const isLate = timeScanned.getTime() > today.getTime();
+        const isLate = timeScanned.getTime() > sessionStart.getTime();
         const record = attendanceRepo.create({
           sessionId: bioSession.id,
           studentId: student.id,
@@ -371,8 +378,8 @@ export async function seedSuperAdmin(): Promise<void> {
         },
       });
       if (!hasScan) {
-        const scanTime = new Date(today);
-        scanTime.setMinutes(ex.scannedAtOffsetMin);
+        const scanTime = new Date(sessionStart);
+        scanTime.setMinutes(sessionStart.getMinutes() + ex.scannedAtOffsetMin);
 
         const syncTime = new Date(scanTime);
         if (ex.isOfflineSync) {

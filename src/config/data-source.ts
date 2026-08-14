@@ -8,6 +8,7 @@ import {
   ClassStudent,
   AttendanceRecord,
   ScanEvent,
+  Task,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -30,6 +31,7 @@ export const AppDataSource = new DataSource({
     ClassStudent,
     AttendanceRecord,
     ScanEvent,
+    Task,
   ],
 
   migrations: [],

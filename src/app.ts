@@ -11,6 +11,7 @@ import emailRouter from "./modules/email/email.routes.js";
 import studentAttendanceRouter from "./modules/student/attendance/student-attendance.routes.js";
 import teacherAttendanceRouter from "./modules/teacher/attendance/teacher-attendance.routes.js";
 import adminAttendanceRouter from "./modules/admin/attendance/admin-attendance.routes.js";
+import adminTasksRouter from "./modules/admin/tasks/admin-tasks.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -51,6 +52,7 @@ attendanceRouter.use(teacherAttendanceRouter);
 attendanceRouter.use(adminAttendanceRouter);
 
 app.use("/api/attendance", attendanceRouter);
+app.use("/api/tasks", adminTasksRouter);
 
 app.use(errorHandler);
 

@@ -40,6 +40,20 @@ export class AttendanceRepository {
     });
   }
 
+  async findSessionsStartedSince(since: Date): Promise<Session[]> {
+    return this.sessions.find({
+      where: {
+        startAt: MoreThanOrEqual(since),
+      },
+      relations: {
+        class: true,
+      },
+      order: {
+        startAt: "ASC",
+      },
+    });
+  }
+
   async findSessionsByClassIds(
     classIds: string[],
     since?: Date,
