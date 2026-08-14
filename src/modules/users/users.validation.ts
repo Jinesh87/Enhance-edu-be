@@ -6,6 +6,25 @@ import {
   UserStatus,
 } from "../../common/constants/roles.js";
 
+const enrollmentStudentSchema = Joi.object({
+  fullName: Joi.string().trim().min(2).max(120).required(),
+  preferredName: Joi.string().trim().max(80).allow(null, ""),
+  dateOfBirth: Joi.string()
+    .trim()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .allow(null, "")
+    .messages({
+      "string.pattern.base": "Date of birth must be in YYYY-MM-DD format",
+    }),
+  yearLevel: Joi.number().integer().min(1).max(13).allow(null),
+});
+
+const enrollmentDetailsSchema = Joi.object({
+  termId: Joi.string().uuid().required(),
+  subjectIds: Joi.array().items(Joi.string().uuid()).min(1).required(),
+  fee: Joi.number().min(0).precision(2).required(),
+});
+
 export const createUserSchema = Joi.object({
   fullName: Joi.string().trim().min(2).max(120).required(),
   preferredName: Joi.string().trim().max(80).allow(null, ""),
@@ -22,6 +41,16 @@ export const createUserSchema = Joi.object({
       then: Joi.required(),
       otherwise: Joi.optional(),
     }),
+  student: enrollmentStudentSchema.when("role", {
+    is: UserRole.GUARDIAN,
+    then: Joi.required(),
+    otherwise: Joi.forbidden(),
+  }),
+  enrollment: enrollmentDetailsSchema.when("role", {
+    is: UserRole.GUARDIAN,
+    then: Joi.required(),
+    otherwise: Joi.forbidden(),
+  }),
 });
 
 export const updateUserSchema = Joi.object({

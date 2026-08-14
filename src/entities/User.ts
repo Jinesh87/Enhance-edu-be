@@ -3,6 +3,7 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from "typeorm";
@@ -12,6 +13,8 @@ import {
   UserRole,
   UserStatus,
 } from "../common/constants/roles.js";
+import { GuardianStudent } from "./GuardianStudent.js";
+import { PendingEnrollment } from "./PendingEnrollment.js";
 
 @Entity("users")
 export class User {
@@ -25,8 +28,12 @@ export class User {
   preferredName!: string | null;
 
   @Index({ unique: true })
-  @Column({ type: "varchar", length: 255 })
-  email!: string;
+  @Column({ type: "varchar", length: 255, nullable: true })
+  email!: string | null;
+
+  @Index({ unique: true })
+  @Column({ type: "varchar", length: 50, nullable: true })
+  username!: string | null;
 
   @Column({ type: "varchar", length: 30, nullable: true })
   mobile!: string | null;
@@ -61,6 +68,12 @@ export class User {
 
   @Column({ type: "timestamptz", nullable: true })
   lastSignedInAt!: Date | null;
+
+  @OneToMany(() => GuardianStudent, (link) => link.guardian)
+  studentLinks!: GuardianStudent[];
+
+  @OneToMany(() => PendingEnrollment, (row) => row.guardian)
+  pendingEnrollments!: PendingEnrollment[];
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

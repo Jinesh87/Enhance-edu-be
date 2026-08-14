@@ -7,11 +7,10 @@ export enum UserRole {
 
 export const USER_ROLES = Object.values(UserRole);
 
-/** Roles a Super Admin can invite (not another bootstrap Super Admin via People). */
+/** Roles a Super Admin can invite directly (students enrol via guardian invite). */
 export const INVITABLE_ROLES = [
   UserRole.SUPER_ADMIN,
   UserRole.STAFF,
-  UserRole.STUDENT,
   UserRole.GUARDIAN,
 ] as const;
 

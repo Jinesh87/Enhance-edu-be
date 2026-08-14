@@ -11,6 +11,7 @@ import {
 import { deleteUserPasswordResetTokens } from "../../common/utils/password-reset-redis.js";
 import { User } from "../../entities/index.js";
 import { emailService } from "../email/email.service.js";
+import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
 import type {
   InvitePersonInput,
   InvitePersonResult,
@@ -58,7 +59,18 @@ export class UsersService {
     return toPersonDto(user);
   }
 
-  async invite(input: InvitePersonInput): Promise<InvitePersonResult> {
+  async invite(
+    input: InvitePersonInput,
+    actorId: string,
+  ): Promise<InvitePersonResult> {
+    if (input.role === UserRole.STUDENT) {
+      throw new AppError(
+        400,
+        "Students are enrolled by inviting a guardian with student details",
+        "STUDENT_INVITE_DISABLED",
+      );
+    }
+
     const email = input.email.toLowerCase();
     const existing = await this.users.findOne({ where: { email } });
 
@@ -99,21 +111,49 @@ export class UsersService {
       "User created with INVITED status",
     );
 
+    const result: InvitePersonResult = {
+      person: toPersonDto(user),
+      invitationToken: "",
+    };
+
+    if (
+      input.role === UserRole.GUARDIAN &&
+      input.student &&
+      input.enrollment
+    ) {
+      await adminEnrollmentsService.queuePendingEnrollmentForGuardian(
+        user.id,
+        input.student,
+        input.enrollment,
+        actorId,
+      );
+      result.pendingEnrollment = {
+        studentFullName: input.student.fullName.trim(),
+        status: "AWAITING_GUARDIAN",
+      };
+    }
+
     // Generate one-time invitation token and store in Redis
     const invitationToken = generateInvitationToken();
     await storeInvitationToken(invitationToken, {
       userId: user.id,
-      email: user.email,
+      email: user.email!,
       fullName: user.fullName,
     });
+    result.invitationToken = invitationToken;
 
     const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
+    const enrollments =
+      input.role === UserRole.GUARDIAN
+        ? await adminEnrollmentsService.listPendingEnrollmentEmailDetails(user.id)
+        : [];
     
     try {
       await emailService.sendInvitationEmail({
-        to: user.email,
+        to: user.email!,
         fullName: user.fullName,
         invitationLink,
+        enrollments,
       });
       
       logger.info(
@@ -128,7 +168,7 @@ export class UsersService {
       );
     }
 
-    return { person: toPersonDto(user), invitationToken };
+    return result;
   }
 
   async update(id: string, input: UpdatePersonInput): Promise<PersonDto> {
@@ -169,7 +209,16 @@ export class UsersService {
     if (input.mobile !== undefined) {
       user.mobile = input.mobile?.trim() || null;
     }
-    if (input.role !== undefined) user.role = input.role;
+    if (input.role !== undefined) {
+      if (input.role === UserRole.STUDENT) {
+        throw new AppError(
+          400,
+          "Students are enrolled by inviting a guardian with student details",
+          "STUDENT_INVITE_DISABLED",
+        );
+      }
+      user.role = input.role;
+    }
     if (input.employmentType !== undefined) {
       user.employmentType = input.employmentType;
     }
@@ -209,7 +258,7 @@ export class UsersService {
     const invitationToken = generateInvitationToken();
     await storeInvitationToken(invitationToken, {
       userId: user.id,
-      email: user.email,
+      email: user.email!,
       fullName: user.fullName,
     });
 
@@ -217,12 +266,17 @@ export class UsersService {
 
     // Resend invitation email
     const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
+    const enrollments =
+      user.role === UserRole.GUARDIAN
+        ? await adminEnrollmentsService.listPendingEnrollmentEmailDetails(user.id)
+        : [];
     
     try {
       await emailService.sendInvitationEmail({
-        to: user.email,
+        to: user.email!,
         fullName: user.fullName,
         invitationLink,
+        enrollments,
       });
       
       logger.info(

@@ -30,17 +30,23 @@ export class UsersController {
 
   invite = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const result = await usersService.invite({
-        fullName: req.body.fullName,
-        preferredName: req.body.preferredName,
-        email: req.body.email,
-        mobile: req.body.mobile,
-        role: req.body.role as UserRole,
-        employmentType: req.body.employmentType as EmploymentType | null,
-      });
+      const result = await usersService.invite(
+        {
+          fullName: req.body.fullName,
+          preferredName: req.body.preferredName,
+          email: req.body.email,
+          mobile: req.body.mobile,
+          role: req.body.role as UserRole,
+          employmentType: req.body.employmentType as EmploymentType | null,
+          student: req.body.student,
+          enrollment: req.body.enrollment,
+        },
+        req.user!.id,
+      );
 
       res.status(201).json({
         person: result.person,
+        pendingEnrollment: result.pendingEnrollment ?? null,
         // Temporary until email delivery exists
         invitationToken: result.invitationToken,
       });

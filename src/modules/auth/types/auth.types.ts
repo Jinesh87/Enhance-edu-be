@@ -5,7 +5,8 @@ export type PublicUser = {
   id: string;
   fullName: string;
   preferredName: string | null;
-  email: string;
+  email: string | null;
+  username: string | null;
   mobile: string | null;
   role: UserRole;
   status: UserStatus;
@@ -37,6 +38,12 @@ export type InvitationPreview = {
   email2faAvailable: boolean;
   sms2faAvailable: boolean;
   authenticator2faAvailable: boolean;
+  pendingStudents: {
+    pendingEnrollmentId: string;
+    fullName: string;
+    preferredName: string | null;
+    yearLevel: number | null;
+  }[];
 };
 
 export type InvitationPasswordInput = {
@@ -51,6 +58,22 @@ export type InvitationPasswordResult = {
   email: string;
   fullName: string;
   role: UserRole;
+  pendingStudents: InvitationPreview["pendingStudents"];
+};
+
+export type InvitationStudentAccountsInput = {
+  setupId: string;
+  students: {
+    pendingEnrollmentId: string;
+    username: string;
+    password: string;
+    confirmPassword: string;
+  }[];
+};
+
+export type InvitationStudentAccountsResult = {
+  setupId: string;
+  configuredCount: number;
 };
 
 export type Invitation2faMethodInput = {
@@ -82,7 +105,7 @@ export type InvitationVerify2faInput = {
 };
 
 export type LoginInput = {
-  email: string;
+  identifier: string;
   password: string;
 };
 

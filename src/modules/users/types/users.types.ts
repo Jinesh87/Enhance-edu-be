@@ -8,7 +8,7 @@ export type PersonDto = {
   id: string;
   fullName: string;
   preferredName: string | null;
-  email: string;
+  email: string | null;
   mobile: string | null;
   role: UserRole;
   employmentType: EmploymentType | null;
@@ -20,6 +20,19 @@ export type PersonDto = {
   updatedAt: Date;
 };
 
+export type EnrollmentStudentInput = {
+  fullName: string;
+  preferredName?: string | null;
+  dateOfBirth?: string | null;
+  yearLevel?: number | null;
+};
+
+export type EnrollmentDetailsInput = {
+  termId: string;
+  subjectIds: string[];
+  fee: number;
+};
+
 export type InvitePersonInput = {
   fullName: string;
   preferredName?: string | null;
@@ -27,6 +40,8 @@ export type InvitePersonInput = {
   mobile?: string | null;
   role: UserRole;
   employmentType?: EmploymentType | null;
+  student?: EnrollmentStudentInput;
+  enrollment?: EnrollmentDetailsInput;
 };
 
 export type UpdatePersonInput = {
@@ -47,4 +62,8 @@ export type ListPeopleFilters = {
 export type InvitePersonResult = {
   person: PersonDto;
   invitationToken: string;
+  pendingEnrollment?: {
+    studentFullName: string;
+    status: "AWAITING_GUARDIAN";
+  };
 };

@@ -10,6 +10,7 @@ import {
   invitationPreviewQuerySchema,
   invitationSetupIdSchema,
   invitationVerify2faSchema,
+  invitationStudentAccountsSchema,
   loginSchema,
   loginChallengeIdSchema,
   loginVerify2faSchema,
@@ -43,6 +44,11 @@ authRouter.post(
   "/invitation/password",
   validate(invitationPasswordSchema),
   authController.setupInvitationPassword,
+);
+authRouter.post(
+  "/invitation/student-accounts",
+  validate(invitationStudentAccountsSchema),
+  authController.setupInvitationStudentAccounts,
 );
 authRouter.post(
   "/invitation/2fa-method",

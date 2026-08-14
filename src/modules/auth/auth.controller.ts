@@ -40,6 +40,22 @@ export class AuthController {
     }
   };
 
+  setupInvitationStudentAccounts = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await authService.setupInvitationStudentAccounts({
+        setupId: req.body.setupId,
+        students: req.body.students,
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   chooseInvitation2faMethod = async (
     req: Request,
     res: Response,
@@ -106,7 +122,7 @@ export class AuthController {
   login = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await authService.login({
-        email: req.body.email,
+        identifier: req.body.identifier ?? req.body.email,
         password: req.body.password,
       });
 

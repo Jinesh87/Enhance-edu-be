@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../../config/data-source.js";
-import { UserStatus } from "../../common/constants/roles.js";
+import { TwoFactorMethod, UserRole, UserStatus } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
 import { env } from "../../config/env.js";
 import {
@@ -40,7 +40,7 @@ import {
   verifyInvitation2faCode,
 } from "../../common/utils/two-factor-redis.js";
 import { emailService } from "../email/email.service.js";
-import { TwoFactorMethod } from "../../common/constants/roles.js";
+import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
 import { hashValue, verifyHash } from "../../common/utils/hash.js";
 import {
   getRefreshExpiresAt,
@@ -61,6 +61,8 @@ import type {
   InvitationPasswordInput,
   InvitationPasswordResult,
   InvitationPreview,
+  InvitationStudentAccountsInput,
+  InvitationStudentAccountsResult,
   InvitationVerify2faInput,
   Login2faRequiredResult,
   LoginInput,
@@ -80,6 +82,7 @@ function toPublicUser(user: User): PublicUser {
     fullName: user.fullName,
     preferredName: user.preferredName,
     email: user.email,
+    username: user.username,
     mobile: user.mobile,
     role: user.role,
     status: user.status,
@@ -116,9 +119,13 @@ export class AuthService {
     }
 
     const config = await emailService.getConfig();
+    const pendingStudents =
+      user.role === UserRole.GUARDIAN
+        ? await adminEnrollmentsService.listPendingStudentsForGuardian(user.id)
+        : [];
 
     return {
-      email: user.email,
+      email: user.email!,
       fullName: user.fullName,
       role: user.role,
       email2faAvailable: Boolean(config?.enabled && config?.resendApiKey),
@@ -129,6 +136,7 @@ export class AuthService {
           config?.twilioFromNumber,
       ),
       authenticator2faAvailable: true,
+      pendingStudents,
     };
   }
 
@@ -167,10 +175,15 @@ export class AuthService {
     }
 
     const setupId = generateSetupId();
+    const pendingStudents =
+      user.role === UserRole.GUARDIAN
+        ? await adminEnrollmentsService.listPendingStudentsForGuardian(user.id)
+        : [];
+
     await storeInvitationSetup(setupId, {
       invitationToken: input.token,
       userId: user.id,
-      email: user.email,
+      email: user.email!,
       fullName: user.fullName,
       role: user.role,
       passwordHash: await hashPassword(input.password),
@@ -182,9 +195,110 @@ export class AuthService {
 
     return {
       setupId,
-      email: user.email,
+      email: user.email!,
       fullName: user.fullName,
       role: user.role,
+      pendingStudents,
+    };
+  }
+
+  async setupInvitationStudentAccounts(
+    input: InvitationStudentAccountsInput,
+  ): Promise<InvitationStudentAccountsResult> {
+    const setup = await getInvitationSetup(input.setupId);
+
+    if (!setup) {
+      throw new AppError(
+        400,
+        "Setup session has expired. Please start again from your invitation link.",
+        "SETUP_EXPIRED",
+      );
+    }
+
+    if (setup.role !== UserRole.GUARDIAN) {
+      throw new AppError(
+        400,
+        "Student login setup is only for guardian invitations",
+        "NOT_A_GUARDIAN",
+      );
+    }
+
+    const pendingStudents =
+      await adminEnrollmentsService.listPendingStudentsForGuardian(setup.userId);
+
+    if (pendingStudents.length === 0) {
+      throw new AppError(
+        400,
+        "There are no students to configure",
+        "NO_PENDING_STUDENTS",
+      );
+    }
+
+    if (input.students.length !== pendingStudents.length) {
+      throw new AppError(
+        400,
+        "Set up login details for every student",
+        "STUDENT_ACCOUNTS_INCOMPLETE",
+      );
+    }
+
+    const usernames = new Set<string>();
+    const studentAccounts: NonNullable<
+      typeof setup.studentAccounts
+    > = [];
+
+    for (const row of input.students) {
+      if (
+        !pendingStudents.some(
+          (pending) => pending.pendingEnrollmentId === row.pendingEnrollmentId,
+        )
+      ) {
+        throw new AppError(
+          400,
+          "One or more student records are invalid",
+          "INVALID_PENDING_STUDENT",
+        );
+      }
+
+      const username = row.username.trim().toLowerCase();
+      if (usernames.has(username)) {
+        throw new AppError(
+          400,
+          "Each student needs a unique username",
+          "DUPLICATE_USERNAME",
+        );
+      }
+      usernames.add(username);
+
+      const existing = await this.users.findOne({ where: { username } });
+      if (existing) {
+        throw new AppError(
+          409,
+          `Username "${row.username}" is already taken`,
+          "USERNAME_IN_USE",
+        );
+      }
+
+      studentAccounts.push({
+        pendingEnrollmentId: row.pendingEnrollmentId,
+        username,
+        passwordHash: await hashPassword(row.password),
+      });
+    }
+
+    setup.studentAccounts = studentAccounts;
+    const updated = await updateInvitationSetup(input.setupId, setup);
+    if (!updated) {
+      throw new AppError(
+        400,
+        "Setup session has expired. Please start again from your invitation link.",
+        "SETUP_EXPIRED",
+      );
+    }
+
+    return {
+      setupId: input.setupId,
+      configuredCount: studentAccounts.length,
     };
   }
 
@@ -199,6 +313,21 @@ export class AuthService {
         "Setup session has expired. Please start again from your invitation link.",
         "SETUP_EXPIRED",
       );
+    }
+
+    if (setup.role === UserRole.GUARDIAN) {
+      const pendingStudents =
+        await adminEnrollmentsService.listPendingStudentsForGuardian(setup.userId);
+      if (
+        pendingStudents.length > 0 &&
+        setup.studentAccounts?.length !== pendingStudents.length
+      ) {
+        throw new AppError(
+          400,
+          "Set up student login details before continuing",
+          "STUDENT_ACCOUNTS_REQUIRED",
+        );
+      }
     }
 
     if (
@@ -421,6 +550,13 @@ export class AuthService {
 
     await this.users.save(user);
 
+    if (user.role === UserRole.GUARDIAN) {
+      await adminEnrollmentsService.fulfillPendingEnrollmentsForGuardian(
+        user.id,
+        setup.studentAccounts ?? [],
+      );
+    }
+
     if (
       setup.twoFactorMethod === TwoFactorMethod.AUTHENTICATOR &&
       setup.authenticatorSecret
@@ -498,6 +634,18 @@ export class AuthService {
 
     await this.users.save(user);
 
+    if (user.role === UserRole.GUARDIAN) {
+      const pendingStudents =
+        await adminEnrollmentsService.listPendingStudentsForGuardian(user.id);
+      if (pendingStudents.length > 0) {
+        throw new AppError(
+          400,
+          "Use the full invitation flow to configure student login details",
+          "STUDENT_ACCOUNTS_REQUIRED",
+        );
+      }
+    }
+
     logger.info(
       { userId: user.id, email: user.email },
       "User accepted invitation and account activated",
@@ -512,7 +660,7 @@ export class AuthService {
     const user = await this.users.findOne({ where: { email } });
 
     // Always return quietly — never reveal whether the address exists.
-    if (!user || user.status !== UserStatus.ACTIVE || !user.passwordHash) {
+    if (!user || user.status !== UserStatus.ACTIVE || !user.passwordHash || !user.email) {
       logger.info(
         { email },
         "Password reset requested for unknown or inactive account",
@@ -525,7 +673,7 @@ export class AuthService {
     const token = generatePasswordResetToken();
     await storePasswordResetToken(token, {
       userId: user.id,
-      email: user.email,
+      email: user.email!,
     });
 
     const frontendUrl = (
@@ -535,7 +683,7 @@ export class AuthService {
 
     try {
       await emailService.sendPasswordResetEmail({
-        to: user.email,
+        to: user.email!,
         fullName: user.preferredName || user.fullName,
         resetLink,
       });
@@ -563,7 +711,7 @@ export class AuthService {
 
     const user = await this.users.findOne({ where: { id: data.userId } });
 
-    if (!user || user.status !== UserStatus.ACTIVE) {
+    if (!user || user.status !== UserStatus.ACTIVE || !user.email) {
       throw new AppError(
         400,
         "This reset link is invalid or has expired",
@@ -590,7 +738,9 @@ export class AuthService {
     user.lastSignedInAt = new Date();
     await this.users.save(user);
 
-    await clearLoginLockout(user.email.toLowerCase());
+    await clearLoginLockout(
+      (user.email ?? user.username ?? user.id).toLowerCase(),
+    );
 
     logger.info({ userId: user.id }, "User reset password and signed in");
 
@@ -599,9 +749,10 @@ export class AuthService {
   }
 
   async login(input: LoginInput): Promise<LoginResult> {
-    const email = input.email.toLowerCase();
+    const identifier = input.identifier.trim();
+    const lockKey = identifier.toLowerCase();
 
-    const lock = await getLoginLockStatus(email);
+    const lock = await getLoginLockStatus(lockKey);
     if (lock.locked) {
       throw new AppError(
         429,
@@ -611,11 +762,19 @@ export class AuthService {
       );
     }
 
-    const user = await this.users.findOne({ where: { email } });
+    const user = identifier.includes("@")
+      ? await this.users.findOne({ where: { email: identifier.toLowerCase() } })
+      : await this.users.findOne({
+          where: { username: identifier.toLowerCase() },
+        });
 
     if (!user || !user.passwordHash) {
-      await recordFailedLoginAttempt(email);
-      throw new AppError(401, "Invalid email or password", "INVALID_CREDENTIALS");
+      await recordFailedLoginAttempt(lockKey);
+      throw new AppError(
+        401,
+        "Invalid username or password",
+        "INVALID_CREDENTIALS",
+      );
     }
 
     if (user.status === UserStatus.DEACTIVATED) {
@@ -633,7 +792,7 @@ export class AuthService {
     const valid = await verifyPassword(input.password, user.passwordHash);
 
     if (!valid) {
-      const afterFail = await recordFailedLoginAttempt(email);
+      const afterFail = await recordFailedLoginAttempt(lockKey);
 
       if (afterFail.locked) {
         throw new AppError(
@@ -644,10 +803,14 @@ export class AuthService {
         );
       }
 
-      throw new AppError(401, "Invalid email or password", "INVALID_CREDENTIALS");
+      throw new AppError(
+        401,
+        "Invalid username or password",
+        "INVALID_CREDENTIALS",
+      );
     }
 
-    await clearLoginLockout(email);
+    await clearLoginLockout(lockKey);
 
     if (user.securitySetupComplete && user.twoFactorMethod) {
       return this.startLogin2faChallenge(user);
@@ -730,6 +893,13 @@ export class AuthService {
 
     const code = await issueLogin2faCode(challengeId);
     if (challenge.method === TwoFactorMethod.EMAIL) {
+      if (!user.email) {
+        throw new AppError(
+          400,
+          "No email address is on this account",
+          "EMAIL_REQUIRED",
+        );
+      }
       await emailService.sendSecurityCodeEmail({
         to: user.email,
         fullName: user.preferredName || user.fullName,
@@ -766,7 +936,7 @@ export class AuthService {
     const challengeId = generateLoginChallengeId();
     await storeLogin2faChallenge(challengeId, {
       userId: user.id,
-      email: user.email,
+      email: user.email ?? user.username ?? user.id,
       method,
     });
 
@@ -774,6 +944,13 @@ export class AuthService {
     if (method === TwoFactorMethod.EMAIL || method === TwoFactorMethod.SMS) {
       const code = await issueLogin2faCode(challengeId);
       if (method === TwoFactorMethod.EMAIL) {
+        if (!user.email) {
+          throw new AppError(
+            400,
+            "No email address is on this account",
+            "EMAIL_REQUIRED",
+          );
+        }
         await emailService.sendSecurityCodeEmail({
           to: user.email,
           fullName: user.preferredName || user.fullName,
@@ -878,7 +1055,7 @@ export class AuthService {
     const refreshToken = signRefreshToken({ sub: user.id, tokenId });
     const accessToken = signAccessToken({
       sub: user.id,
-      email: user.email,
+      email: user.email ?? user.username ?? user.id,
       role: user.role,
     });
 

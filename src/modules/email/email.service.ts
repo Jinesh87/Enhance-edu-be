@@ -5,10 +5,23 @@ import { logger } from "../../config/logger.js";
 import { AppError } from "../../common/errors/AppError.js";
 import { MessagingConfig } from "../../entities/EmailConfig.js";
 
+export interface InvitationEnrollmentDetails {
+  studentFullName: string;
+  studentPreferredName?: string | null;
+  yearLevel?: number | null;
+  termName: string;
+  termStartDate: string;
+  termEndDate: string;
+  subjects: string[];
+  fee: number;
+}
+
 export interface SendInvitationEmailParams {
   to: string;
   fullName: string;
   invitationLink: string;
+  roleLabel?: string;
+  enrollments?: InvitationEnrollmentDetails[];
 }
 
 export interface SendSecurityCodeEmailParams {
@@ -110,7 +123,9 @@ export class EmailService {
       const { data, error } = await resend.emails.send({
         from: `${config.fromName} <${config.fromEmail}>`,
         to: params.to,
-        subject: "You've been invited to join",
+        subject: params.enrollments?.length
+          ? `Enrolment invitation for ${params.enrollments[0].studentFullName}`
+          : "You've been invited to join",
         html: this.buildInvitationEmailHtml(params),
       });
 
@@ -344,6 +359,12 @@ export class EmailService {
   }
 
   private buildInvitationEmailHtml(params: SendInvitationEmailParams): string {
+    const enrollmentsHtml = this.buildEnrollmentDetailsHtml(params.enrollments);
+    const greetingName = escapeHtml(params.fullName);
+    const intro = params.enrollments?.length
+      ? "You've been invited as a guardian. Please review the enrolment details below, then accept the invitation to set up your account and your student's login."
+      : "You've been invited to join Enhance Education. Click the button below to accept your invitation and set up your account.";
+
     return `
 <!DOCTYPE html>
 <html lang="en">
@@ -354,16 +375,16 @@ export class EmailService {
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
   <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
-    <h1 style="color: #2c3e50; margin-bottom: 20px;">You've been invited</h1>
+    <h1 style="color: #002117; margin-bottom: 20px;">You've been invited</h1>
     
-    <p>Hi ${params.fullName},</p>
+    <p>Hi ${greetingName},</p>
     
-    <p>You've been invited to join our platform. Click the button below to accept your invitation and set up your account.</p>
-    
+    <p>${intro}</p>
+    ${enrollmentsHtml}
     <div style="text-align: center; margin: 30px 0;">
       <a href="${params.invitationLink}" 
-         style="background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: 600;">
-        Accept Invitation
+         style="background-color: #e18f33; color: #002117; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: 700;">
+        Accept invitation
       </a>
     </div>
     
@@ -373,13 +394,94 @@ export class EmailService {
     
     <p style="color: #7f8c8d; font-size: 14px; margin-top: 20px;">
       If the button doesn't work, copy and paste this link into your browser:<br>
-      <a href="${params.invitationLink}" style="color: #3498db; word-break: break-all;">${params.invitationLink}</a>
+      <a href="${params.invitationLink}" style="color: #e18f33; word-break: break-all;">${params.invitationLink}</a>
     </p>
   </div>
 </body>
 </html>
     `.trim();
   }
+
+  private buildEnrollmentDetailsHtml(
+    enrollments?: InvitationEnrollmentDetails[],
+  ): string {
+    if (!enrollments?.length) return "";
+
+    const cards = enrollments
+      .map((enrollment) => {
+        const preferred = enrollment.studentPreferredName
+          ? ` (${escapeHtml(enrollment.studentPreferredName)})`
+          : "";
+        const yearLevel = enrollment.yearLevel
+          ? `<tr><td style="padding: 6px 0; color: #5c6b66;">Year level</td><td style="padding: 6px 0; font-weight: 600;">Year ${enrollment.yearLevel}</td></tr>`
+          : "";
+        const subjects = enrollment.subjects.length
+          ? escapeHtml(enrollment.subjects.join(", "))
+          : "—";
+        const fee = formatAud(enrollment.fee);
+        const dates = `${formatMailDate(enrollment.termStartDate)} – ${formatMailDate(enrollment.termEndDate)}`;
+
+        return `
+        <div style="background: #ffffff; border: 1px solid #e6e0d8; border-radius: 8px; padding: 16px 18px; margin: 16px 0;">
+          <p style="margin: 0 0 10px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #e18f33; font-weight: 700;">Enrolment</p>
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr>
+              <td style="padding: 6px 0; color: #5c6b66; width: 38%;">Student</td>
+              <td style="padding: 6px 0; font-weight: 600;">${escapeHtml(enrollment.studentFullName)}${preferred}</td>
+            </tr>
+            ${yearLevel}
+            <tr>
+              <td style="padding: 6px 0; color: #5c6b66;">Term</td>
+              <td style="padding: 6px 0; font-weight: 600;">${escapeHtml(enrollment.termName)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #5c6b66;">Dates</td>
+              <td style="padding: 6px 0;">${dates}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #5c6b66;">Subjects</td>
+              <td style="padding: 6px 0;">${subjects}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #5c6b66;">Fee</td>
+              <td style="padding: 6px 0; font-weight: 700;">${fee}</td>
+            </tr>
+          </table>
+        </div>`;
+      })
+      .join("");
+
+    return `
+      <p style="margin: 20px 0 8px; font-weight: 700;">Enrolment details</p>
+      ${cards}
+      <p style="font-size: 14px; color: #5c6b66;">When you accept, you will set a unique username and password for each student.</p>
+    `;
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatAud(value: number): string {
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency",
+    currency: "AUD",
+  }).format(value);
+}
+
+function formatMailDate(value: string): string {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-AU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 export const emailService = new EmailService();
