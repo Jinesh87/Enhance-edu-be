@@ -40,6 +40,7 @@ export class UsersController {
           employmentType: req.body.employmentType as EmploymentType | null,
           student: req.body.student,
           enrollment: req.body.enrollment,
+          subjectIds: req.body.subjectIds,
         },
         req.user!.id,
       );
@@ -65,6 +66,7 @@ export class UsersController {
         role: req.body.role,
         employmentType: req.body.employmentType,
         status: req.body.status,
+        subjectIds: req.body.subjectIds,
       });
       res.status(200).json({ person });
     } catch (error) {

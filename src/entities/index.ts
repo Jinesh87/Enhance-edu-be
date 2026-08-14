@@ -14,3 +14,5 @@ export * from "./Enrollment.js";
 export * from "./EnrollmentSubject.js";
 export * from "./PendingEnrollment.js";
 export * from "./PendingEnrollmentSubject.js";
+export * from "./TeacherSubject.js";
+

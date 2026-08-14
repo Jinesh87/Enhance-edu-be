@@ -51,6 +51,11 @@ export const createUserSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.forbidden(),
   }),
+  subjectIds: Joi.array().items(Joi.string().uuid()).when("role", {
+    is: UserRole.STAFF,
+    then: Joi.optional(),
+    otherwise: Joi.forbidden(),
+  }),
 });
 
 export const updateUserSchema = Joi.object({
@@ -63,6 +68,7 @@ export const updateUserSchema = Joi.object({
     .valid(...EMPLOYMENT_TYPES)
     .allow(null),
   status: Joi.string().valid(UserStatus.ACTIVE, UserStatus.DEACTIVATED),
+  subjectIds: Joi.array().items(Joi.string().uuid()).optional(),
 })
   .min(1)
   .messages({

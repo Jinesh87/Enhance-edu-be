@@ -18,6 +18,7 @@ export type PersonDto = {
   invitationExpiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  subjectIds?: string[];
 };
 
 export type EnrollmentStudentInput = {
@@ -42,6 +43,7 @@ export type InvitePersonInput = {
   employmentType?: EmploymentType | null;
   student?: EnrollmentStudentInput;
   enrollment?: EnrollmentDetailsInput;
+  subjectIds?: string[];
 };
 
 export type UpdatePersonInput = {
@@ -52,6 +54,7 @@ export type UpdatePersonInput = {
   role?: UserRole;
   employmentType?: EmploymentType | null;
   status?: UserStatus.ACTIVE | UserStatus.DEACTIVATED;
+  subjectIds?: string[];
 };
 
 export type ListPeopleFilters = {
