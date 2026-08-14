@@ -2,6 +2,7 @@ import { AppDataSource } from "../../config/data-source.js";
 import { logger } from "../../config/logger.js";
 import { UserRole, UserStatus } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
+import { env } from "../../config/env.js";
 import {
   generateInvitationToken,
   storeInvitationToken,
@@ -106,8 +107,7 @@ export class UsersService {
       fullName: user.fullName,
     });
 
-    // Send invitation email
-    const invitationLink = `${process.env.FRONTEND_URL ?? "http://localhost:5173"}/accept-invitation?token=${invitationToken}`;
+    const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
     
     try {
       await emailService.sendInvitationEmail({
@@ -216,7 +216,7 @@ export class UsersService {
     logger.info({ userId: user.id }, "New invitation token generated");
 
     // Resend invitation email
-    const invitationLink = `${process.env.FRONTEND_URL ?? "http://localhost:5173"}/accept-invitation?token=${invitationToken}`;
+    const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
     
     try {
       await emailService.sendInvitationEmail({

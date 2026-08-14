@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -16,12 +17,20 @@ export enum ScanStatus {
   IGNORED = "IGNORED",
 }
 
+export enum AdminDecision {
+  ACCEPT = "Accept",
+  ACCEPT_AS_LATE = "Accept as late",
+  REJECT = "Reject",
+  IGNORE = "Ignore",
+}
+
 export enum ScanFlagReason {
   NONE = "NONE",
   TOKEN_EXPIRED = "TOKEN_EXPIRED",
   DUPLICATE_SCAN = "DUPLICATE_SCAN",
   OFF_NETWORK = "OFF_NETWORK",
   WRONG_SESSION_CODE = "WRONG_SESSION_CODE",
+  SUSPICIOUS_OFFLINE_TIMESTAMP = "SUSPICIOUS_OFFLINE_TIMESTAMP",
 }
 
 @Entity("scan_events")
@@ -30,12 +39,14 @@ export class ScanEvent {
   id!: string;
 
   @Column({ type: "uuid" })
+  @Index()
   studentId!: string;
 
   @ManyToOne(() => User, { onDelete: "CASCADE" })
   student!: User;
 
   @Column({ type: "uuid" })
+  @Index()
   sessionId!: string;
 
   @ManyToOne(() => Session, { onDelete: "CASCADE" })
@@ -61,6 +72,7 @@ export class ScanEvent {
     enum: ScanStatus,
     default: ScanStatus.PENDING,
   })
+  @Index()
   status!: ScanStatus;
 
   @Column({
@@ -70,8 +82,12 @@ export class ScanEvent {
   })
   reasonFlagged!: ScanFlagReason;
 
-  @Column({ type: "varchar", length: 50, nullable: true })
-  adminDecision!: string | null;
+  @Column({
+    type: "enum",
+    enum: AdminDecision,
+    nullable: true,
+  })
+  adminDecision!: AdminDecision | null;
 
   @Column({ type: "timestamptz", nullable: true })
   resolvedAt!: Date | null;

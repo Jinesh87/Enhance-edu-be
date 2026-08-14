@@ -2,6 +2,8 @@ import { NextFunction, Request, Response } from "express";
 import { adminAttendanceService } from "./admin-attendance.service.js";
 import { sharedAttendanceService } from "../../shared/attendance/shared-attendance.service.js";
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
+import { AdminDecision } from "../../../entities/index.js";
+import { AppError } from "../../../common/errors/AppError.js";
 
 class AdminAttendanceController {
   async listExceptions(req: Request, res: Response, next: NextFunction) {
@@ -18,9 +20,14 @@ class AdminAttendanceController {
       const scanEventId = req.params.id as string;
       const resolvedByUserId = req.user!.id;
       const { decision } = req.body;
+
+      if (!Object.values(AdminDecision).includes(decision)) {
+        throw new AppError(400, "Invalid exception decision", "INVALID_DECISION");
+      }
+
       const result = await adminAttendanceService.resolveScanException(
         scanEventId,
-        decision,
+        decision as AdminDecision,
         resolvedByUserId
       );
 

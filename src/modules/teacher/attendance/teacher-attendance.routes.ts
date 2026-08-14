@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { teacherAttendanceController } from "./teacher-attendance.controller.js";
+import { authorize } from "../../../common/middleware/authenticate.js";
+import { UserRole } from "../../../common/constants/roles.js";
 
 const router = Router();
+
+router.use(authorize(UserRole.SUPER_ADMIN, UserRole.STAFF));
 
 router.get("/tutor/dashboard", teacherAttendanceController.getTeacherDashboard);
 router.get("/sessions/:id/qr-code", teacherAttendanceController.getQrCode);

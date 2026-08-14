@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -14,12 +15,14 @@ export class Session {
   id!: string;
 
   @Column({ type: "uuid" })
+  @Index()
   classId!: string;
 
   @ManyToOne(() => Class, { onDelete: "CASCADE" })
   class!: Class;
 
   @Column({ type: "timestamptz" })
+  @Index()
   startAt!: Date;
 
   @Column({ type: "timestamptz" })

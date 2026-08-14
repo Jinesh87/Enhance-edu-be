@@ -10,16 +10,16 @@ import {
   ScanEvent,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
+import { env } from "./env.js";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
-  host: process.env.DB_HOST ?? "localhost",
-  port: Number(process.env.DB_PORT ?? 5432),
-  username: process.env.DB_USER ?? "edu",
-  password: process.env.DB_PASSWORD ?? "edu",
-  database: process.env.DB_NAME ?? "edu",
-  synchronize:
-    process.env.DB_SYNC === "true" || process.env.NODE_ENV !== "production",
+  host: env.DB_HOST,
+  port: env.DB_PORT,
+  username: env.DB_USER,
+  password: env.DB_PASSWORD,
+  database: env.DB_NAME,
+  synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
   logging: false,
   entities: [
     User,

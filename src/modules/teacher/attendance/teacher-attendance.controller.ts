@@ -17,7 +17,12 @@ class TeacherAttendanceController {
   async getQrCode(req: Request, res: Response, next: NextFunction) {
     try {
       const sessionId = req.params.id as string;
-      const result = await teacherAttendanceService.generateSessionQrCode(sessionId);
+      const session = await teacherAttendanceService.getAuthorizedSession(
+        sessionId,
+        req.user!.id,
+        req.user!.role,
+      );
+      const result = await teacherAttendanceService.generateSessionQrCode(session);
       res.status(200).json(result);
     } catch (error) {
       next(error);
@@ -27,6 +32,11 @@ class TeacherAttendanceController {
   async getLiveRoll(req: Request, res: Response, next: NextFunction) {
     try {
       const sessionId = req.params.id as string;
+      await teacherAttendanceService.getAuthorizedSession(
+        sessionId,
+        req.user!.id,
+        req.user!.role,
+      );
       const result = await sharedAttendanceService.getLiveRollData(sessionId);
       res.status(200).json(result);
     } catch (error) {
@@ -37,10 +47,14 @@ class TeacherAttendanceController {
   async markManual(req: Request, res: Response, next: NextFunction) {
     try {
       const sessionId = req.params.id as string;
+      const session = await teacherAttendanceService.getAuthorizedSession(
+        sessionId,
+        req.user!.id,
+        req.user!.role,
+      );
       const markedByUserId = req.user!.id;
       const { studentId, status, reason } = req.body;
-      const record = await teacherAttendanceService.markManualRoll({
-        sessionId,
+      const record = await teacherAttendanceService.markManualRoll(session, {
         studentId,
         status,
         reason,
@@ -63,6 +77,11 @@ class TeacherAttendanceController {
   async streamLiveUpdates(req: Request, res: Response, next: NextFunction) {
     try {
       const sessionId = req.params.id as string;
+      await teacherAttendanceService.getAuthorizedSession(
+        sessionId,
+        req.user!.id,
+        req.user!.role,
+      );
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");

@@ -2,8 +2,10 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
 } from "typeorm";
 import { Session } from "./Session.js";
@@ -18,17 +20,20 @@ export enum AttendanceStatus {
 }
 
 @Entity("attendance_records")
+@Unique(["sessionId", "studentId"])
 export class AttendanceRecord {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
   @Column({ type: "uuid" })
+  @Index()
   sessionId!: string;
 
   @ManyToOne(() => Session, { onDelete: "CASCADE" })
   session!: Session;
 
   @Column({ type: "uuid" })
+  @Index()
   studentId!: string;
 
   @ManyToOne(() => User, { onDelete: "CASCADE" })
@@ -39,6 +44,7 @@ export class AttendanceRecord {
     enum: AttendanceStatus,
     default: AttendanceStatus.ABSENT,
   })
+  @Index()
   status!: AttendanceStatus;
 
   @Column({ type: "timestamptz", nullable: true })

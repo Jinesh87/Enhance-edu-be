@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { redis } from "../../config/redis.js";
 import { logger } from "../../config/logger.js";
+import { env } from "../../config/env.js";
 import type { TwoFactorMethod } from "../constants/roles.js";
 import { generateSecurityCode } from "./two-factor-redis.js";
 
@@ -51,7 +52,7 @@ export async function storeLogin2faCode(
   code: string,
 ): Promise<void> {
   await redis.setex(`${CODE_PREFIX}${challengeId}`, TTL_SECONDS, code);
-  if (process.env.NODE_ENV !== "production") {
+  if (env.NODE_ENV !== "production") {
     logger.debug({ challengeId, code }, "Login 2FA code generated (dev only)");
   }
 }

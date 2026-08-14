@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../../config/data-source.js";
 import { UserStatus } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
+import { env } from "../../config/env.js";
 import {
   deleteUserPasswordResetTokens,
   generatePasswordResetToken,
@@ -528,7 +529,7 @@ export class AuthService {
     });
 
     const frontendUrl = (
-      process.env.FRONTEND_URL ?? "http://localhost:5173"
+      env.FRONTEND_URL
     ).replace(/\/$/, "");
     const resetLink = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
 
@@ -543,7 +544,7 @@ export class AuthService {
         { error, userId: user.id, email: user.email },
         "Failed to send password reset email",
       );
-      if (process.env.NODE_ENV !== "production") {
+      if (env.NODE_ENV !== "production") {
         logger.info({ resetLink }, "Password reset link (dev fallback)");
       }
     }

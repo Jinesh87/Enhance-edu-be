@@ -2,6 +2,7 @@ import { AppDataSource } from "../config/data-source.js";
 import { logger } from "../config/logger.js";
 import { UserRole, UserStatus } from "../common/constants/roles.js";
 import { hashPassword } from "../common/utils/password.js";
+import { env } from "../config/env.js";
 import {
   User,
   Class,
@@ -15,11 +16,11 @@ import {
 } from "../entities/index.js";
 
 export async function seedSuperAdmin(): Promise<void> {
-  const email = (process.env.SEED_SUPER_ADMIN_EMAIL ?? "superadmin@example.com")
+  const email = env.SEED_SUPER_ADMIN_EMAIL
     .trim()
     .toLowerCase();
-  const password = process.env.SEED_SUPER_ADMIN_PASSWORD ?? "Superadmin@123";
-  const fullName = process.env.SEED_SUPER_ADMIN_NAME ?? "Super Admin";
+  const password = env.SEED_SUPER_ADMIN_PASSWORD;
+  const fullName = env.SEED_SUPER_ADMIN_NAME;
 
   const usersRepo = AppDataSource.getRepository(User);
   const classesRepo = AppDataSource.getRepository(Class);

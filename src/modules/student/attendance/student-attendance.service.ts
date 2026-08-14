@@ -29,7 +29,17 @@ export class StudentAttendanceService {
       };
     }
 
-    const sessions = await this.repo.findSessionsByClassIds(classIds);
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+
+    const until = new Date();
+    until.setHours(23, 59, 59, 999);
+
+    const sessions = await this.repo.findSessionsByClassIds(
+      classIds,
+      since,
+      until,
+    );
 
     const attendanceRecords =
       await this.repo.findAttendanceRecordsByStudentId(studentId);
@@ -177,6 +187,18 @@ export class StudentAttendanceService {
 
     if (scanTime < checkInOpensAt || scanTime > checkInClosesAt) {
       reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
+    }
+
+    if (reasonFlagged === ScanFlagReason.NONE && isOfflineSync) {
+      const nowTime = Date.now();
+      const isFuture = scanTime > nowTime + 60_000;
+      const isTooOld = nowTime - scanTime > 24 * 60 * 60 * 1000;
+      const syncDelayMs = nowTime - scanTime;
+      const isSuspiciousDelay = syncDelayMs > 4 * 60 * 60 * 1000;
+
+      if (isFuture || isTooOld || isSuspiciousDelay) {
+        reasonFlagged = ScanFlagReason.SUSPICIOUS_OFFLINE_TIMESTAMP;
+      }
     }
 
     /*

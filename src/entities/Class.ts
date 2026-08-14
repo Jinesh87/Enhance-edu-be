@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -23,6 +24,7 @@ export class Class {
   room!: string;
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
+  @Index()
   teacher!: User | null;
 
   @CreateDateColumn({ type: "timestamptz" })
