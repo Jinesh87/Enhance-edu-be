@@ -6,3 +6,5 @@ export * from "./Session.js";
 export * from "./AttendanceRecord.js";
 export * from "./ScanEvent.js";
 export * from "./Task.js";
+export * from "./Subject.js";
+export * from "./Term.js";
