@@ -9,7 +9,8 @@ import {
   deleteUserInvitationTokens,
 } from "../../common/utils/invitation-redis.js";
 import { deleteUserPasswordResetTokens } from "../../common/utils/password-reset-redis.js";
-import { User } from "../../entities/index.js";
+import { In } from "typeorm";
+import { User, TeacherSubject } from "../../entities/index.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
 import type {
@@ -40,6 +41,7 @@ function toPersonDto(user: User): PersonDto {
 
 export class UsersService {
   private readonly users = AppDataSource.getRepository(User);
+  private readonly teacherSubjects = AppDataSource.getRepository(TeacherSubject);
 
   async list(filters: ListPeopleFilters): Promise<PersonDto[]> {
     const where: { status?: UserStatus; role?: UserRole } = {};
@@ -51,12 +53,40 @@ export class UsersService {
       order: { createdAt: "DESC" },
     });
 
-    return people.map(toPersonDto);
+    // Efficiently load teacher subjects to avoid N+1 query
+    const staffIds = people.filter((p) => p.role === UserRole.STAFF).map((p) => p.id);
+    const subjectsMap: Record<string, string[]> = {};
+    if (staffIds.length > 0) {
+      const tsRecords = await this.teacherSubjects.find({
+        where: { teacherId: In(staffIds) },
+      });
+      for (const ts of tsRecords) {
+        if (!subjectsMap[ts.teacherId]) {
+          subjectsMap[ts.teacherId] = [];
+        }
+        subjectsMap[ts.teacherId].push(ts.subjectId);
+      }
+    }
+
+    return people.map((user) => {
+      const dto = toPersonDto(user);
+      if (user.role === UserRole.STAFF) {
+        dto.subjectIds = subjectsMap[user.id] || [];
+      }
+      return dto;
+    });
   }
 
   async getById(id: string): Promise<PersonDto> {
     const user = await this.findUserOrThrow(id);
-    return toPersonDto(user);
+    const dto = toPersonDto(user);
+    if (user.role === UserRole.STAFF) {
+      const tsRecords = await this.teacherSubjects.find({
+        where: { teacherId: user.id },
+      });
+      dto.subjectIds = tsRecords.map((ts) => ts.subjectId);
+    }
+    return dto;
   }
 
   async invite(
@@ -111,8 +141,23 @@ export class UsersService {
       "User created with INVITED status",
     );
 
+    const dto = toPersonDto(user);
+
+    if (input.role === UserRole.STAFF && input.subjectIds && input.subjectIds.length > 0) {
+      const tsRecords = input.subjectIds.map((subjectId) =>
+        this.teacherSubjects.create({
+          teacherId: user.id,
+          subjectId,
+        })
+      );
+      await this.teacherSubjects.save(tsRecords);
+      dto.subjectIds = input.subjectIds;
+    } else if (input.role === UserRole.STAFF) {
+      dto.subjectIds = [];
+    }
+
     const result: InvitePersonResult = {
-      person: toPersonDto(user),
+      person: dto,
       invitationToken: "",
     };
 
@@ -237,7 +282,31 @@ export class UsersService {
     }
 
     await this.users.save(user);
-    return toPersonDto(user);
+
+    if (user.role === UserRole.STAFF && input.subjectIds !== undefined) {
+      await this.teacherSubjects.delete({ teacherId: user.id });
+      if (input.subjectIds.length > 0) {
+        const tsRecords = input.subjectIds.map((subjectId) =>
+          this.teacherSubjects.create({
+            teacherId: user.id,
+            subjectId,
+          })
+        );
+        await this.teacherSubjects.save(tsRecords);
+      }
+    } else if (input.role !== undefined && input.role !== UserRole.STAFF) {
+      // If role was updated from STAFF to something else, remove teacher subjects
+      await this.teacherSubjects.delete({ teacherId: user.id });
+    }
+
+    const dto = toPersonDto(user);
+    if (user.role === UserRole.STAFF) {
+      const tsRecords = await this.teacherSubjects.find({
+        where: { teacherId: user.id },
+      });
+      dto.subjectIds = tsRecords.map((ts) => ts.subjectId);
+    }
+    return dto;
   }
 
   async resendInvitation(id: string): Promise<InvitePersonResult> {
