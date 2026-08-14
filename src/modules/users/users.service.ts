@@ -111,38 +111,9 @@ export class UsersService {
       "User created with INVITED status",
     );
 
-    // Generate one-time invitation token and store in Redis
-    const invitationToken = generateInvitationToken();
-    await storeInvitationToken(invitationToken, {
-      userId: user.id,
-      email: user.email!,
-      fullName: user.fullName,
-    });
-
-    const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
-    
-    try {
-      await emailService.sendInvitationEmail({
-        to: user.email!,
-        fullName: user.fullName,
-        invitationLink,
-      });
-      
-      logger.info(
-        { userId: user.id, email: user.email },
-        "Invitation email sent successfully",
-      );
-    } catch (error) {
-      // Log but don't fail - the invitation is still created
-      logger.warn(
-        { userId: user.id, error },
-        "Failed to send invitation email, but invitation was created",
-      );
-    }
-
     const result: InvitePersonResult = {
       person: toPersonDto(user),
-      invitationToken,
+      invitationToken: "",
     };
 
     if (
@@ -160,6 +131,41 @@ export class UsersService {
         studentFullName: input.student.fullName.trim(),
         status: "AWAITING_GUARDIAN",
       };
+    }
+
+    // Generate one-time invitation token and store in Redis
+    const invitationToken = generateInvitationToken();
+    await storeInvitationToken(invitationToken, {
+      userId: user.id,
+      email: user.email!,
+      fullName: user.fullName,
+    });
+    result.invitationToken = invitationToken;
+
+    const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
+    const enrollments =
+      input.role === UserRole.GUARDIAN
+        ? await adminEnrollmentsService.listPendingEnrollmentEmailDetails(user.id)
+        : [];
+    
+    try {
+      await emailService.sendInvitationEmail({
+        to: user.email!,
+        fullName: user.fullName,
+        invitationLink,
+        enrollments,
+      });
+      
+      logger.info(
+        { userId: user.id, email: user.email },
+        "Invitation email sent successfully",
+      );
+    } catch (error) {
+      // Log but don't fail - the invitation is still created
+      logger.warn(
+        { userId: user.id, error },
+        "Failed to send invitation email, but invitation was created",
+      );
     }
 
     return result;
@@ -260,12 +266,17 @@ export class UsersService {
 
     // Resend invitation email
     const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
+    const enrollments =
+      user.role === UserRole.GUARDIAN
+        ? await adminEnrollmentsService.listPendingEnrollmentEmailDetails(user.id)
+        : [];
     
     try {
       await emailService.sendInvitationEmail({
         to: user.email!,
         fullName: user.fullName,
         invitationLink,
+        enrollments,
       });
       
       logger.info(

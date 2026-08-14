@@ -15,6 +15,7 @@ import adminTasksRouter from "./modules/admin/tasks/admin-tasks.routes.js";
 import adminSubjectsRouter from "./modules/admin/subjects/admin-subjects.routes.js";
 import adminTermsRouter from "./modules/admin/terms/admin-terms.routes.js";
 import adminEnrollmentsRouter from "./modules/admin/enrollments/admin-enrollments.routes.js";
+import guardianStudentsRouter from "./modules/guardian/students/guardian-students.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -59,6 +60,7 @@ app.use("/api/tasks", adminTasksRouter);
 app.use("/api/subjects", adminSubjectsRouter);
 app.use("/api/terms", adminTermsRouter);
 app.use("/api/enrollments", adminEnrollmentsRouter);
+app.use("/api/guardian/students", guardianStudentsRouter);
 
 app.use(errorHandler);
 

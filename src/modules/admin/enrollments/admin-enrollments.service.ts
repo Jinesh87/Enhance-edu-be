@@ -25,6 +25,7 @@ import {
   User,
 } from "../../../entities/index.js";
 import { emailService } from "../../email/email.service.js";
+import type { InvitationEnrollmentDetails } from "../../email/email.service.js";
 import { hashPassword } from "../../../common/utils/password.js";
 
 export type StudentLoginInput = {
@@ -210,6 +211,34 @@ export class AdminEnrollmentsService {
     }));
   }
 
+  async listPendingEnrollmentEmailDetails(
+    guardianId: string,
+  ): Promise<InvitationEnrollmentDetails[]> {
+    const pendingRows = await this.pendingEnrollments.find({
+      where: {
+        guardianId,
+        status: PendingEnrollmentStatus.PENDING,
+      },
+      relations: {
+        term: true,
+        subjects: { subject: true },
+      },
+      order: { createdAt: "ASC" },
+    });
+
+    return pendingRows.map((row) => ({
+      studentFullName: row.studentFullName,
+      studentPreferredName: row.studentPreferredName,
+      yearLevel: row.studentYearLevel,
+      termName: row.term?.name ?? "Term",
+      termStartDate: row.term?.startDate ?? "",
+      termEndDate: row.term?.endDate ?? "",
+      subjects:
+        row.subjects?.map((link) => link.subject?.name).filter(Boolean) ?? [],
+      fee: Number(row.fee),
+    }));
+  }
+
   async inviteWithEnrollment(
     input: {
       guardianId?: string;
@@ -224,19 +253,11 @@ export class AdminEnrollmentsService {
       input.enrollment,
     );
 
-    const { guardian, invitationSent, invitationToken } = input.guardianId
+    const { guardian } = input.guardianId
       ? await this.loadExistingGuardian(input.guardianId)
       : await this.resolveGuardian(input.guardian!);
 
     if (guardian.status === UserStatus.ACTIVE) {
-      if (!input.studentLogin) {
-        throw new AppError(
-          400,
-          "Username and password are required when enrolling for an active guardian",
-          "STUDENT_LOGIN_REQUIRED",
-        );
-      }
-
       const result = await this.materializeEnrollment(
         guardian,
         input.student,
@@ -252,7 +273,7 @@ export class AdminEnrollmentsService {
         student: result.student,
         enrollment: result.enrollment,
         invitationSent: false,
-        invitationToken,
+        invitationToken: undefined,
         awaitingGuardianAcceptance: false,
       };
     }
@@ -268,6 +289,14 @@ export class AdminEnrollmentsService {
 
     pending.guardian = guardian;
     pending.term = term;
+
+    let invitationSent = false;
+    let invitationToken: string | undefined;
+    if (guardian.status === UserStatus.INVITED) {
+      const invite = await this.sendGuardianInvitation(guardian);
+      invitationSent = true;
+      invitationToken = invite.invitationToken;
+    }
 
     return {
       guardian: toGuardianDto(guardian),
@@ -308,13 +337,6 @@ export class AdminEnrollmentsService {
     const { term, subjectRows } = await this.validateEnrollmentCatalogue(enrollment);
 
     if (guardian.status === UserStatus.ACTIVE) {
-      if (!studentLogin) {
-        throw new AppError(
-          400,
-          "Username and password are required when enrolling for an active guardian",
-          "STUDENT_LOGIN_REQUIRED",
-        );
-      }
       return this.materializeEnrollment(
         guardian,
         student,
@@ -618,8 +640,6 @@ export class AdminEnrollmentsService {
   private async resolveGuardian(input: GuardianInput) {
     const email = input.email.trim().toLowerCase();
     let guardian = await this.users.findOne({ where: { email } });
-    let invitationSent = false;
-    let invitationToken: string | undefined;
 
     if (guardian) {
       if (guardian.role !== UserRole.GUARDIAN) {
@@ -653,13 +673,7 @@ export class AdminEnrollmentsService {
       }
       await this.users.save(guardian);
 
-      if (guardian.status === UserStatus.INVITED) {
-        const invite = await this.sendGuardianInvitation(guardian);
-        invitationSent = true;
-        invitationToken = invite.invitationToken;
-      }
-
-      return { guardian, invitationSent, invitationToken };
+      return { guardian };
     }
 
     guardian = this.users.create({
@@ -677,11 +691,7 @@ export class AdminEnrollmentsService {
     });
     await this.users.save(guardian);
 
-    const invite = await this.sendGuardianInvitation(guardian);
-    invitationSent = true;
-    invitationToken = invite.invitationToken;
-
-    return { guardian, invitationSent, invitationToken };
+    return { guardian };
   }
 
   private async sendGuardianInvitation(guardian: User) {
@@ -702,12 +712,16 @@ export class AdminEnrollmentsService {
     });
 
     const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
+    const enrollments =
+      await this.listPendingEnrollmentEmailDetails(guardian.id);
 
     try {
       await emailService.sendInvitationEmail({
         to: guardian.email,
         fullName: guardian.fullName,
         invitationLink,
+        roleLabel: "Guardian",
+        enrollments,
       });
       logger.info(
         { userId: guardian.id, email: guardian.email },
