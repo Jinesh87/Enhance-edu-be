@@ -2,8 +2,37 @@ import Joi from "joi";
 import { TwoFactorMethod } from "../../common/constants/roles.js";
 
 export const loginSchema = Joi.object({
-  email: Joi.string().trim().email().required(),
+  identifier: Joi.string().trim().min(3).max(255).required(),
   password: Joi.string().required(),
+});
+
+export const invitationStudentAccountsSchema = Joi.object({
+  setupId: Joi.string().trim().min(20).required(),
+  students: Joi.array()
+    .items(
+      Joi.object({
+        pendingEnrollmentId: Joi.string().uuid().required(),
+        username: Joi.string()
+          .trim()
+          .min(3)
+          .max(50)
+          .pattern(/^[a-zA-Z0-9._-]+$/)
+          .required()
+          .messages({
+            "string.pattern.base":
+              "Username may only contain letters, numbers, dots, underscores, and hyphens",
+          }),
+        password: Joi.string().min(8).max(128).required(),
+        confirmPassword: Joi.string()
+          .valid(Joi.ref("password"))
+          .required()
+          .messages({
+            "any.only": "Passwords do not match",
+          }),
+      }),
+    )
+    .min(1)
+    .required(),
 });
 
 export const forgotPasswordSchema = Joi.object({

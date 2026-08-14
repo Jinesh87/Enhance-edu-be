@@ -11,6 +11,12 @@ import {
   Task,
   Subject,
   Term,
+  Student,
+  GuardianStudent,
+  Enrollment,
+  EnrollmentSubject,
+  PendingEnrollment,
+  PendingEnrollmentSubject,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -36,6 +42,12 @@ export const AppDataSource = new DataSource({
     Task,
     Subject,
     Term,
+    Student,
+    GuardianStudent,
+    Enrollment,
+    EnrollmentSubject,
+    PendingEnrollment,
+    PendingEnrollmentSubject,
   ],
 
   migrations: [],

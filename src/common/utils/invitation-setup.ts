@@ -5,6 +5,12 @@ import type { TwoFactorMethod, UserRole } from "../constants/roles.js";
 const SETUP_PREFIX = "invitation-setup:";
 const SETUP_TTL_SECONDS = 2 * 60 * 60; // 2 hours
 
+export interface InvitationSetupStudentAccount {
+  pendingEnrollmentId: string;
+  username: string;
+  passwordHash: string;
+}
+
 export interface InvitationSetupData {
   invitationToken: string;
   userId: string;
@@ -16,6 +22,7 @@ export interface InvitationSetupData {
   mobile: string | null;
   twoFactorMethod?: TwoFactorMethod;
   authenticatorSecret?: string;
+  studentAccounts?: InvitationSetupStudentAccount[];
 }
 
 export function generateSetupId(): string {
