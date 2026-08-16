@@ -10,12 +10,16 @@ const dateField = Joi.string()
 
 export const createTermSchema = Joi.object({
   name: Joi.string().trim().min(1).max(120).required(),
+  academicYear: Joi.number().integer().min(1900).max(2100).required(),
+  yearLevel: Joi.string().trim().min(1).max(40).required(),
   startDate: dateField,
   endDate: dateField,
 });
 
 export const updateTermSchema = Joi.object({
   name: Joi.string().trim().min(1).max(120).required(),
+  academicYear: Joi.number().integer().min(1900).max(2100).required(),
+  yearLevel: Joi.string().trim().min(1).max(40).required(),
   startDate: dateField,
   endDate: dateField,
 });

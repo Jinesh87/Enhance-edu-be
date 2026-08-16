@@ -88,7 +88,9 @@ function toEnrollmentDto(
     term: enrollment.term
       ? {
           id: enrollment.term.id,
-          name: enrollment.term.name,
+          name: enrollment.term.academicYear && enrollment.term.yearLevel
+            ? `${enrollment.term.name} · ${enrollment.term.academicYear.year} · ${enrollment.term.yearLevel.name}`
+            : enrollment.term.name,
           startDate: enrollment.term.startDate,
           endDate: enrollment.term.endDate,
         }
@@ -115,7 +117,9 @@ function toPendingEnrollmentDto(
     term: pending.term
       ? {
           id: pending.term.id,
-          name: pending.term.name,
+          name: pending.term.academicYear && pending.term.yearLevel
+            ? `${pending.term.name} · ${pending.term.academicYear.year} · ${pending.term.yearLevel.name}`
+            : pending.term.name,
           startDate: pending.term.startDate,
           endDate: pending.term.endDate,
         }
@@ -158,7 +162,7 @@ export class AdminEnrollmentsService {
         relations: {
           student: true,
           guardian: true,
-          term: true,
+          term: { academicYear: true, yearLevel: true },
           subjects: { subject: true },
         },
         order: { createdAt: "DESC" },
@@ -167,7 +171,7 @@ export class AdminEnrollmentsService {
         where: { status: PendingEnrollmentStatus.PENDING },
         relations: {
           guardian: true,
-          term: true,
+          term: { academicYear: true, yearLevel: true },
           subjects: { subject: true },
         },
         order: { createdAt: "DESC" },
@@ -220,7 +224,7 @@ export class AdminEnrollmentsService {
         status: PendingEnrollmentStatus.PENDING,
       },
       relations: {
-        term: true,
+        term: { academicYear: true, yearLevel: true },
         subjects: { subject: true },
       },
       order: { createdAt: "ASC" },
@@ -230,7 +234,11 @@ export class AdminEnrollmentsService {
       studentFullName: row.studentFullName,
       studentPreferredName: row.studentPreferredName,
       yearLevel: row.studentYearLevel,
-      termName: row.term?.name ?? "Term",
+      termName: row.term
+        ? (row.term.academicYear && row.term.yearLevel
+          ? `${row.term.name} · ${row.term.academicYear.year} · ${row.term.yearLevel.name}`
+          : row.term.name)
+        : "Term",
       termStartDate: row.term?.startDate ?? "",
       termEndDate: row.term?.endDate ?? "",
       subjects:
@@ -377,7 +385,7 @@ export class AdminEnrollmentsService {
         guardianId,
         status: PendingEnrollmentStatus.PENDING,
       },
-      relations: { subjects: { subject: true }, term: true },
+      relations: { subjects: { subject: true }, term: { academicYear: true, yearLevel: true } },
       order: { createdAt: "ASC" },
     });
 

@@ -6,7 +6,6 @@ import { logger } from "./config/logger.js";
 import { connectRedis } from "./config/redis.js";
 import { seedSuperAdmin } from "./seeder/seed-super-admin.js";
 import { adminTasksService } from "./modules/admin/tasks/admin-tasks.service.js";
-
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
 
