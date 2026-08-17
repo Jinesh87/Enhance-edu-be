@@ -1,4 +1,4 @@
-import { In } from "typeorm";
+import { In, IsNull } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   EnrollmentStatus,
@@ -24,6 +24,7 @@ import {
   Term,
   User,
 } from "../../../entities/index.js";
+import type { EnrollmentSnapshot } from "../../../entities/PendingEnrollment.js";
 import { emailService } from "../../email/email.service.js";
 import type { InvitationEnrollmentDetails } from "../../email/email.service.js";
 import { hashPassword } from "../../../common/utils/password.js";
@@ -52,6 +53,19 @@ export type EnrollmentInput = {
   subjectIds: string[];
   fee: number;
 };
+
+function termDto(term: Term | null) {
+  if (!term) return null;
+  return {
+    id: term.id,
+    name:
+      term.academicYear && term.yearLevel
+        ? `${term.name} · ${term.academicYear.year} · ${term.yearLevel.name}`
+        : term.name,
+    startDate: term.startDate,
+    endDate: term.endDate,
+  };
+}
 
 function toGuardianDto(user: User) {
   return {
@@ -85,16 +99,7 @@ function toEnrollmentDto(
     pendingId: pendingId ?? null,
     status: enrollment.status,
     fee: Number(enrollment.fee),
-    term: enrollment.term
-      ? {
-          id: enrollment.term.id,
-          name: enrollment.term.academicYear && enrollment.term.yearLevel
-            ? `${enrollment.term.name} · ${enrollment.term.academicYear.year} · ${enrollment.term.yearLevel.name}`
-            : enrollment.term.name,
-          startDate: enrollment.term.startDate,
-          endDate: enrollment.term.endDate,
-        }
-      : null,
+    term: termDto(enrollment.term),
     subjects: subjects.map((subject) => ({
       id: subject.id,
       name: subject.name,
@@ -102,6 +107,11 @@ function toEnrollmentDto(
     guardian: enrollment.guardian ? toGuardianDto(enrollment.guardian) : null,
     student: enrollment.student ? toStudentDto(enrollment.student) : null,
     createdAt: enrollment.createdAt,
+    isModification: false,
+    replacesEnrollmentId: null as string | null,
+    previous: null as EnrollmentSnapshot | null,
+    hasPendingModification: false,
+    pendingModification: null as ReturnType<typeof toPendingEnrollmentDto> | null,
   };
 }
 
@@ -114,16 +124,7 @@ function toPendingEnrollmentDto(
     pendingId: pending.id,
     status: EnrollmentStatus.AWAITING_GUARDIAN,
     fee: Number(pending.fee),
-    term: pending.term
-      ? {
-          id: pending.term.id,
-          name: pending.term.academicYear && pending.term.yearLevel
-            ? `${pending.term.name} · ${pending.term.academicYear.year} · ${pending.term.yearLevel.name}`
-            : pending.term.name,
-          startDate: pending.term.startDate,
-          endDate: pending.term.endDate,
-        }
-      : null,
+    term: termDto(pending.term),
     subjects: subjects.map((subject) => ({
       id: subject.id,
       name: subject.name,
@@ -138,6 +139,48 @@ function toPendingEnrollmentDto(
       createdAt: pending.createdAt,
     },
     createdAt: pending.createdAt,
+    isModification: Boolean(pending.replacesEnrollmentId),
+    replacesEnrollmentId: pending.replacesEnrollmentId,
+    previous: pending.previousSnapshot ?? null,
+    hasPendingModification: false,
+    pendingModification: null,
+  };
+}
+
+function snapshotFromEnrollment(
+  enrollment: Enrollment,
+  subjects: Subject[],
+): EnrollmentSnapshot {
+  return {
+    student: enrollment.student ? toStudentDto(enrollment.student) : null,
+    term: termDto(enrollment.term),
+    subjects: subjects.map((subject) => ({
+      id: subject.id,
+      name: subject.name,
+    })),
+    fee: Number(enrollment.fee),
+  };
+}
+
+function snapshotFromPending(
+  pending: PendingEnrollment,
+  subjects: Subject[],
+): EnrollmentSnapshot {
+  return {
+    student: {
+      id: null,
+      fullName: pending.studentFullName,
+      preferredName: pending.studentPreferredName,
+      dateOfBirth: pending.studentDateOfBirth,
+      yearLevel: pending.studentYearLevel,
+      createdAt: pending.createdAt,
+    },
+    term: termDto(pending.term),
+    subjects: subjects.map((subject) => ({
+      id: subject.id,
+      name: subject.name,
+    })),
+    fee: Number(pending.fee),
   };
 }
 
@@ -178,23 +221,235 @@ export class AdminEnrollmentsService {
       }),
     ]);
 
-    const fulfilled = rows.map((row) =>
-      toEnrollmentDto(
+    const fulfilled = rows.map((row) => {
+      const dto = toEnrollmentDto(
         row,
         row.subjects?.map((link) => link.subject).filter(Boolean) ?? [],
-      ),
-    );
+      );
+      const modification = pendingRows.find(
+        (pending) => pending.replacesEnrollmentId === row.id,
+      );
+      if (modification) {
+        dto.hasPendingModification = true;
+        dto.pendingModification = toPendingEnrollmentDto(
+          modification,
+          modification.subjects?.map((link) => link.subject).filter(Boolean) ?? [],
+        );
+        dto.previous = modification.previousSnapshot ?? snapshotFromEnrollment(
+          row,
+          row.subjects?.map((link) => link.subject).filter(Boolean) ?? [],
+        );
+      }
+      return dto;
+    });
 
-    const awaiting = pendingRows.map((row) =>
-      toPendingEnrollmentDto(
-        row,
-        row.subjects?.map((link) => link.subject).filter(Boolean) ?? [],
-      ),
-    );
+    const awaiting = pendingRows
+      .filter((row) => !row.replacesEnrollmentId)
+      .map((row) =>
+        toPendingEnrollmentDto(
+          row,
+          row.subjects?.map((link) => link.subject).filter(Boolean) ?? [],
+        ),
+      );
 
     return [...awaiting, ...fulfilled].sort(
       (a, b) =>
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }
+
+  async getById(id: string) {
+    const enrollment = await this.enrollments.findOne({
+      where: { id },
+      relations: {
+        student: true,
+        guardian: true,
+        term: { academicYear: true, yearLevel: true },
+        subjects: { subject: true },
+      },
+    });
+
+    if (enrollment) {
+      const subjects =
+        enrollment.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
+      const dto = toEnrollmentDto(enrollment, subjects);
+      const modification = await this.pendingEnrollments.findOne({
+        where: {
+          replacesEnrollmentId: enrollment.id,
+          status: PendingEnrollmentStatus.PENDING,
+        },
+        relations: {
+          guardian: true,
+          term: { academicYear: true, yearLevel: true },
+          subjects: { subject: true },
+        },
+      });
+      if (modification) {
+        const modificationSubjects =
+          modification.subjects?.map((link) => link.subject).filter(Boolean) ??
+          [];
+        dto.hasPendingModification = true;
+        dto.pendingModification = toPendingEnrollmentDto(
+          modification,
+          modificationSubjects,
+        );
+        dto.previous =
+          modification.previousSnapshot ??
+          snapshotFromEnrollment(enrollment, subjects);
+      }
+      return dto;
+    }
+
+    const pending = await this.pendingEnrollments.findOne({
+      where: { id },
+      relations: {
+        guardian: true,
+        term: { academicYear: true, yearLevel: true },
+        subjects: { subject: true },
+      },
+    });
+    if (!pending) {
+      throw new AppError(404, "Enrolment not found", "ENROLLMENT_NOT_FOUND");
+    }
+
+    return toPendingEnrollmentDto(
+      pending,
+      pending.subjects?.map((link) => link.subject).filter(Boolean) ?? [],
+    );
+  }
+
+  async proposeModification(
+    id: string,
+    input: { student: StudentInput; enrollment: EnrollmentInput },
+    actorId: string,
+  ) {
+    const { term, subjectRows } = await this.validateEnrollmentCatalogue(
+      input.enrollment,
+    );
+
+    const enrollment = await this.enrollments.findOne({
+      where: { id },
+      relations: {
+        student: true,
+        guardian: true,
+        term: { academicYear: true, yearLevel: true },
+        subjects: { subject: true },
+      },
+    });
+
+    if (enrollment) {
+      const currentSubjects =
+        enrollment.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
+      const snapshot = snapshotFromEnrollment(enrollment, currentSubjects);
+
+      let pending = await this.pendingEnrollments.findOne({
+        where: {
+          replacesEnrollmentId: enrollment.id,
+          status: PendingEnrollmentStatus.PENDING,
+        },
+        relations: { subjects: true },
+      });
+
+      if (pending) {
+        await this.updatePendingEnrollment(
+          pending,
+          input.student,
+          input.enrollment,
+          term,
+          subjectRows,
+          snapshot,
+        );
+      } else {
+        pending = await this.queuePendingEnrollment(
+          enrollment.guardianId,
+          input.student,
+          input.enrollment,
+          term,
+          subjectRows,
+          actorId,
+          {
+            replacesEnrollmentId: enrollment.id,
+            previousSnapshot: snapshot,
+          },
+        );
+      }
+
+      pending.guardian = enrollment.guardian;
+      pending.term = term;
+      await this.notifyGuardianOfChange(enrollment.guardian, pending, subjectRows);
+
+      return {
+        enrollment: toEnrollmentDto(enrollment, currentSubjects),
+        pendingModification: toPendingEnrollmentDto(pending, subjectRows),
+        awaitingGuardianAcceptance: true,
+      };
+    }
+
+    const pending = await this.pendingEnrollments.findOne({
+      where: { id, status: PendingEnrollmentStatus.PENDING },
+      relations: {
+        guardian: true,
+        term: { academicYear: true, yearLevel: true },
+        subjects: { subject: true },
+      },
+    });
+    if (!pending) {
+      throw new AppError(404, "Enrolment not found", "ENROLLMENT_NOT_FOUND");
+    }
+
+    const currentSubjects =
+      pending.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
+    const snapshot =
+      pending.previousSnapshot ?? snapshotFromPending(pending, currentSubjects);
+
+    await this.updatePendingEnrollment(
+      pending,
+      input.student,
+      input.enrollment,
+      term,
+      subjectRows,
+      snapshot,
+    );
+    pending.guardian = pending.guardian;
+    pending.term = term;
+    await this.notifyGuardianOfChange(pending.guardian, pending, subjectRows);
+
+    return {
+      enrollment: toPendingEnrollmentDto(pending, subjectRows),
+      pendingModification: null,
+      awaitingGuardianAcceptance: true,
+    };
+  }
+
+  async acceptPendingEnrollment(pendingId: string, guardianId: string) {
+    const pending = await this.pendingEnrollments.findOne({
+      where: {
+        id: pendingId,
+        guardianId,
+        status: PendingEnrollmentStatus.PENDING,
+      },
+      relations: {
+        subjects: { subject: true },
+        term: { academicYear: true, yearLevel: true },
+        guardian: true,
+      },
+    });
+    if (!pending) {
+      throw new AppError(
+        404,
+        "Pending enrolment change not found",
+        "PENDING_ENROLLMENT_NOT_FOUND",
+      );
+    }
+
+    if (pending.replacesEnrollmentId) {
+      return this.applyModification(pending);
+    }
+
+    throw new AppError(
+      400,
+      "This enrolment still needs student login setup during invitation acceptance",
+      "STUDENT_LOGIN_REQUIRED",
     );
   }
 
@@ -203,6 +458,7 @@ export class AdminEnrollmentsService {
       where: {
         guardianId,
         status: PendingEnrollmentStatus.PENDING,
+        replacesEnrollmentId: IsNull(),
       },
       order: { createdAt: "ASC" },
     });
@@ -213,6 +469,133 @@ export class AdminEnrollmentsService {
       preferredName: row.studentPreferredName,
       yearLevel: row.studentYearLevel,
     }));
+  }
+
+  async listConnectedStudentsForGuardian(guardianId: string) {
+    const [links, pendingRows] = await Promise.all([
+      this.guardianStudents.find({
+        where: { guardianId },
+        relations: { student: true },
+        order: { createdAt: "DESC" },
+      }),
+      this.pendingEnrollments.find({
+        where: {
+          guardianId,
+          status: PendingEnrollmentStatus.PENDING,
+        },
+        relations: {
+          term: { academicYear: true, yearLevel: true },
+          subjects: { subject: true },
+        },
+        order: { createdAt: "DESC" },
+      }),
+    ]);
+
+    const studentIds = links.map((link) => link.studentId);
+    const enrollmentRows = studentIds.length
+      ? await this.enrollments.find({
+          where: { guardianId, studentId: In(studentIds) },
+          relations: {
+            term: { academicYear: true, yearLevel: true },
+            subjects: { subject: true },
+          },
+          order: { createdAt: "DESC" },
+        })
+      : [];
+
+    const enrollmentsByStudent = new Map<string, Enrollment[]>();
+    for (const enrollment of enrollmentRows) {
+      const current = enrollmentsByStudent.get(enrollment.studentId) ?? [];
+      current.push(enrollment);
+      enrollmentsByStudent.set(enrollment.studentId, current);
+    }
+
+    const linked = links.map((link) => {
+      const enrollments = enrollmentsByStudent.get(link.studentId) ?? [];
+      return {
+        id: link.student.id,
+        fullName: link.student.fullName,
+        preferredName: link.student.preferredName,
+        dateOfBirth: link.student.dateOfBirth,
+        yearLevel: link.student.yearLevel,
+        status: "LINKED" as const,
+        enrollments: enrollments.map((enrollment) => ({
+          id: enrollment.id,
+          status: enrollment.status,
+          fee: Number(enrollment.fee),
+          term: enrollment.term
+            ? {
+                id: enrollment.term.id,
+                name:
+                  enrollment.term.academicYear && enrollment.term.yearLevel
+                    ? `${enrollment.term.name} · ${enrollment.term.academicYear.year} · ${enrollment.term.yearLevel.name}`
+                    : enrollment.term.name,
+              }
+            : null,
+          subjects:
+            enrollment.subjects
+              ?.map((row) => row.subject)
+              .filter(Boolean)
+              .map((subject) => ({ id: subject.id, name: subject.name })) ?? [],
+        })),
+      };
+    });
+
+    const pending = pendingRows.map((row) => ({
+      id: null as string | null,
+      fullName: row.studentFullName,
+      preferredName: row.studentPreferredName,
+      dateOfBirth: row.studentDateOfBirth,
+      yearLevel: row.studentYearLevel,
+      status: "AWAITING_GUARDIAN" as const,
+      enrollments: [
+        {
+          id: row.id,
+          status: EnrollmentStatus.AWAITING_GUARDIAN,
+          fee: Number(row.fee),
+          term: row.term
+            ? {
+                id: row.term.id,
+                name:
+                  row.term.academicYear && row.term.yearLevel
+                    ? `${row.term.name} · ${row.term.academicYear.year} · ${row.term.yearLevel.name}`
+                    : row.term.name,
+              }
+            : null,
+          subjects:
+            row.subjects
+              ?.map((link) => link.subject)
+              .filter(Boolean)
+              .map((subject) => ({ id: subject.id, name: subject.name })) ?? [],
+        },
+      ],
+    }));
+
+    return [...pending, ...linked];
+  }
+
+  async listGuardiansForStudentUser(userId: string) {
+    const student = await this.students.findOne({ where: { userId } });
+    if (!student) {
+      return [];
+    }
+
+    const links = await this.guardianStudents.find({
+      where: { studentId: student.id },
+      relations: { guardian: true },
+      order: { createdAt: "DESC" },
+    });
+
+    return links
+      .filter((link) => Boolean(link.guardian))
+      .map((link) => ({
+        id: link.guardian.id,
+        fullName: link.guardian.fullName,
+        preferredName: link.guardian.preferredName,
+        email: link.guardian.email,
+        mobile: link.guardian.mobile,
+        status: link.guardian.status,
+      }));
   }
 
   async listPendingEnrollmentEmailDetails(
@@ -391,7 +774,16 @@ export class AdminEnrollmentsService {
 
     if (pendingRows.length === 0) return;
 
-    if (studentAccounts.length !== pendingRows.length) {
+    const modifications = pendingRows.filter((row) => row.replacesEnrollmentId);
+    const freshRows = pendingRows.filter((row) => !row.replacesEnrollmentId);
+
+    for (const pending of modifications) {
+      await this.applyModification(pending);
+    }
+
+    if (freshRows.length === 0) return;
+
+    if (studentAccounts.length !== freshRows.length) {
       throw new AppError(
         400,
         "Set up login details for every student before continuing",
@@ -402,7 +794,7 @@ export class AdminEnrollmentsService {
     const guardian = await this.users.findOne({ where: { id: guardianId } });
     if (!guardian) return;
 
-    for (const pending of pendingRows) {
+    for (const pending of freshRows) {
       const account = studentAccounts.find(
         (row) => row.pendingEnrollmentId === pending.id,
       );
@@ -591,6 +983,10 @@ export class AdminEnrollmentsService {
     term: Term,
     subjectRows: Subject[],
     actorId: string,
+    options?: {
+      replacesEnrollmentId?: string | null;
+      previousSnapshot?: EnrollmentSnapshot | null;
+    },
   ) {
     const pending = this.pendingEnrollments.create({
       guardianId,
@@ -602,6 +998,8 @@ export class AdminEnrollmentsService {
       fee: enrollmentInput.fee.toFixed(2),
       status: PendingEnrollmentStatus.PENDING,
       createdByUserId: actorId,
+      replacesEnrollmentId: options?.replacesEnrollmentId ?? null,
+      previousSnapshot: options?.previousSnapshot ?? null,
     });
     await this.pendingEnrollments.save(pending);
 
@@ -621,6 +1019,117 @@ export class AdminEnrollmentsService {
     })) as PendingEnrollmentSubject[];
 
     return pending;
+  }
+
+  private async updatePendingEnrollment(
+    pending: PendingEnrollment,
+    studentInput: StudentInput,
+    enrollmentInput: EnrollmentInput,
+    term: Term,
+    subjectRows: Subject[],
+    previousSnapshot: EnrollmentSnapshot,
+  ) {
+    pending.studentFullName = studentInput.fullName.trim();
+    pending.studentPreferredName = studentInput.preferredName?.trim() || null;
+    pending.studentDateOfBirth = studentInput.dateOfBirth?.trim() || null;
+    pending.studentYearLevel = studentInput.yearLevel ?? null;
+    pending.termId = term.id;
+    pending.fee = enrollmentInput.fee.toFixed(2);
+    pending.previousSnapshot = previousSnapshot;
+    await this.pendingEnrollments.save(pending);
+
+    await this.pendingEnrollmentSubjects.delete({
+      pendingEnrollmentId: pending.id,
+    });
+    for (const subject of subjectRows) {
+      await this.pendingEnrollmentSubjects.save(
+        this.pendingEnrollmentSubjects.create({
+          pendingEnrollmentId: pending.id,
+          subjectId: subject.id,
+        }),
+      );
+    }
+
+    pending.subjects = subjectRows.map((subject) => ({
+      pendingEnrollmentId: pending.id,
+      subjectId: subject.id,
+      subject,
+    })) as PendingEnrollmentSubject[];
+    pending.term = term;
+  }
+
+  private async applyModification(pending: PendingEnrollment) {
+    if (!pending.replacesEnrollmentId) {
+      throw new AppError(
+        400,
+        "This pending enrolment is not a modification",
+        "NOT_A_MODIFICATION",
+      );
+    }
+
+    const enrollment = await this.enrollments.findOne({
+      where: { id: pending.replacesEnrollmentId },
+      relations: { student: true, subjects: true },
+    });
+    if (!enrollment) {
+      throw new AppError(404, "Enrolment not found", "ENROLLMENT_NOT_FOUND");
+    }
+
+    const subjectRows =
+      pending.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
+
+    if (enrollment.student) {
+      enrollment.student.fullName = pending.studentFullName;
+      enrollment.student.preferredName = pending.studentPreferredName;
+      enrollment.student.dateOfBirth = pending.studentDateOfBirth;
+      enrollment.student.yearLevel = pending.studentYearLevel;
+      await this.students.save(enrollment.student);
+    }
+
+    enrollment.termId = pending.termId;
+    enrollment.fee = pending.fee;
+    await this.enrollments.save(enrollment);
+
+    await this.enrollmentSubjects.delete({ enrollmentId: enrollment.id });
+    for (const subject of subjectRows) {
+      await this.enrollmentSubjects.save(
+        this.enrollmentSubjects.create({
+          enrollmentId: enrollment.id,
+          subjectId: subject.id,
+        }),
+      );
+    }
+
+    pending.status = PendingEnrollmentStatus.FULFILLED;
+    pending.fulfilledStudentId = enrollment.studentId;
+    pending.fulfilledEnrollmentId = enrollment.id;
+    await this.pendingEnrollments.save(pending);
+
+    return { enrollment, student: enrollment.student };
+  }
+
+  private async notifyGuardianOfChange(
+    guardian: User | null,
+    pending: PendingEnrollment,
+    _subjectRows: Subject[],
+  ) {
+    if (!guardian?.email || guardian.status !== UserStatus.ACTIVE) {
+      return;
+    }
+
+    try {
+      await emailService.sendEnrollmentChangeEmail({
+        to: guardian.email,
+        fullName: guardian.fullName,
+        studentFullName: pending.studentFullName,
+        reviewLink: `${env.FRONTEND_URL}/guardian/students`,
+      });
+    } catch (error) {
+      logger.warn(
+        { guardianId: guardian.id, err: error },
+        "Failed to send enrolment change email",
+      );
+    }
   }
 
   private async loadExistingGuardian(guardianId: string) {

@@ -9,9 +9,29 @@ import {
   UpdateDateColumn,
 } from "typeorm";
 import { PendingEnrollmentStatus } from "../common/constants/enrollment.js";
+import { Enrollment } from "./Enrollment.js";
 import { Term } from "./Term.js";
 import { User } from "./User.js";
 import { PendingEnrollmentSubject } from "./PendingEnrollmentSubject.js";
+
+export type EnrollmentSnapshot = {
+  student: {
+    id: string | null;
+    fullName: string;
+    preferredName: string | null;
+    dateOfBirth: string | null;
+    yearLevel: number | null;
+    createdAt?: string | Date;
+  } | null;
+  term: {
+    id: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+  } | null;
+  subjects: { id: string; name: string }[];
+  fee: number;
+};
 
 @Entity("pending_enrollments")
 export class PendingEnrollment {
@@ -60,6 +80,16 @@ export class PendingEnrollment {
 
   @Column({ type: "uuid", nullable: true })
   fulfilledEnrollmentId!: string | null;
+
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  replacesEnrollmentId!: string | null;
+
+  @ManyToOne(() => Enrollment, { nullable: true, onDelete: "CASCADE" })
+  replacesEnrollment!: Enrollment | null;
+
+  @Column({ type: "jsonb", nullable: true })
+  previousSnapshot!: EnrollmentSnapshot | null;
 
   @Column({ type: "uuid", nullable: true })
   createdByUserId!: string | null;
