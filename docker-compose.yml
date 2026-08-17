@@ -37,28 +37,28 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      environment:
-        NODE_ENV: production
-        PORT: 3000
-        CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173,http://localhost:8080}
-        LOG_LEVEL: ${LOG_LEVEL:-info}
-        DB_HOST: db
-        DB_PORT: 5432
-        DB_USER: ${DB_USER:-edu}
-        DB_PASSWORD: ${DB_PASSWORD:-edu}
-        DB_NAME: ${DB_NAME:-edu}
-        DB_SYNC: ${DB_SYNC:-true}
-        REDIS_URL: redis://redis:6379
-        SEED_SUPER_ADMIN_EMAIL: ${SEED_SUPER_ADMIN_EMAIL:-superadmin@example.com}
-        SEED_SUPER_ADMIN_PASSWORD: ${SEED_SUPER_ADMIN_PASSWORD:-Superadmin@123}
-        SEED_SUPER_ADMIN_NAME: ${SEED_SUPER_ADMIN_NAME:-Super Admin}
-        JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
-        JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-        JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
-        JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
-        FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
-      ports:
-        - "${BACKEND_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173,http://localhost:8080}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-edu}
+      DB_PASSWORD: ${DB_PASSWORD:-edu}
+      DB_NAME: ${DB_NAME:-edu}
+      DB_SYNC: ${DB_SYNC:-true}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SEED_SUPER_ADMIN_EMAIL: ${SEED_SUPER_ADMIN_EMAIL:-superadmin@example.com}
+      SEED_SUPER_ADMIN_PASSWORD: ${SEED_SUPER_ADMIN_PASSWORD:-Superadmin@123}
+      SEED_SUPER_ADMIN_NAME: ${SEED_SUPER_ADMIN_NAME:-Super Admin}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
 
 volumes:
   postgres_data:
