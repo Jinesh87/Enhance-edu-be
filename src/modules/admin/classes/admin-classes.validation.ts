@@ -31,3 +31,12 @@ export const updateClassSchema = Joi.object({
 export const classIdParamsSchema = Joi.object({
   id: Joi.string().uuid().required(),
 });
+
+export const bulkReplaceClassSchema = Joi.object({
+  termId: Joi.string().uuid().required(),
+  classes: Joi.array()
+    .items(createClassSchema)
+    .min(1)
+    .max(500)
+    .required(),
+});

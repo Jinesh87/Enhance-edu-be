@@ -10,6 +10,7 @@ import {
   classIdParamsSchema,
   createClassSchema,
   updateClassSchema,
+  bulkReplaceClassSchema,
 } from "./admin-classes.validation.js";
 
 const adminClassesRouter = Router();
@@ -17,6 +18,11 @@ const adminClassesRouter = Router();
 adminClassesRouter.use(authenticate, authorize(UserRole.SUPER_ADMIN));
 
 adminClassesRouter.get("/", adminClassesController.list);
+adminClassesRouter.post(
+  "/bulk-replace",
+  validate(bulkReplaceClassSchema),
+  adminClassesController.bulkReplace,
+);
 adminClassesRouter.get(
   "/:id",
   validate(classIdParamsSchema, "params"),
