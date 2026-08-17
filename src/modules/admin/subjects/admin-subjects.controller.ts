@@ -13,7 +13,10 @@ class AdminSubjectsController {
 
   create = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const subject = await adminSubjectsService.create(req.body.name);
+      const subject = await adminSubjectsService.create(
+        req.body.name,
+        req.body.yearLevelId,
+      );
       res.status(201).json({ subject });
     } catch (error) {
       next(error);
@@ -25,6 +28,7 @@ class AdminSubjectsController {
       const subject = await adminSubjectsService.update(
         req.params.id as string,
         req.body.name,
+        req.body.yearLevelId,
       );
       res.status(200).json({ subject });
     } catch (error) {
