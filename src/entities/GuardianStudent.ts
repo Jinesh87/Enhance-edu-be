@@ -5,6 +5,7 @@ import {
   Index,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   Unique,
   UpdateDateColumn,
 } from "typeorm";
@@ -22,7 +23,7 @@ export class GuardianStudent {
   guardianId!: string;
 
   @ManyToOne(() => User, (user) => user.studentLinks, { onDelete: "CASCADE" })
-  guardian!: User;
+  guardian!: Relation<User>;
 
   @Column({ type: "uuid" })
   @Index()
@@ -31,7 +32,7 @@ export class GuardianStudent {
   @ManyToOne(() => Student, (student) => student.guardianLinks, {
     onDelete: "CASCADE",
   })
-  student!: Student;
+  student!: Relation<Student>;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

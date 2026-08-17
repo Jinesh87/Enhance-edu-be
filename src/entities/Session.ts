@@ -5,6 +5,7 @@ import {
   Index,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { Class } from "./Class.js";
@@ -19,7 +20,7 @@ export class Session {
   classId!: string;
 
   @ManyToOne(() => Class, { onDelete: "CASCADE" })
-  class!: Class;
+  class!: Relation<Class>;
 
   @Column({ type: "timestamptz" })
   @Index()

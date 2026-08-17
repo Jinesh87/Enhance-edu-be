@@ -4,6 +4,7 @@ import {
   Entity,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { YearLevel } from "./YearLevel.js";
@@ -17,7 +18,7 @@ export class Subject {
   name!: string;
 
   @ManyToOne(() => YearLevel, { nullable: true, onDelete: "SET NULL" })
-  yearLevel!: YearLevel | null;
+  yearLevel!: Relation<YearLevel> | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

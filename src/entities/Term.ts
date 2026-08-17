@@ -4,6 +4,7 @@ import {
   Entity,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { AcademicYear } from "./AcademicYear.js";
@@ -18,10 +19,10 @@ export class Term {
   name!: string;
 
   @ManyToOne(() => AcademicYear, { nullable: true, onDelete: "SET NULL" })
-  academicYear!: AcademicYear | null;
+  academicYear!: Relation<AcademicYear> | null;
 
   @ManyToOne(() => YearLevel, { nullable: true, onDelete: "SET NULL" })
-  yearLevel!: YearLevel | null;
+  yearLevel!: Relation<YearLevel> | null;
 
   @Column({ type: "date" })
   startDate!: string;

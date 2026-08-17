@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
+  Relation,
 } from "typeorm";
 import { UserRole } from "../common/constants/roles.js";
 import { AttendanceRecord } from "./AttendanceRecord.js";
@@ -50,7 +51,7 @@ export class Task {
 
   @ManyToOne(() => User, { onDelete: "CASCADE" })
   @JoinColumn({ name: "studentId" })
-  student!: User;
+  student!: Relation<User>;
 
   @Column({ type: "uuid" })
   @Index()
@@ -58,14 +59,14 @@ export class Task {
 
   @ManyToOne(() => Session, { onDelete: "CASCADE" })
   @JoinColumn({ name: "sessionId" })
-  session!: Session;
+  session!: Relation<Session>;
 
   @Column({ type: "uuid", nullable: true })
   attendanceRecordId!: string | null;
 
   @ManyToOne(() => AttendanceRecord, { onDelete: "SET NULL", nullable: true })
   @JoinColumn({ name: "attendanceRecordId" })
-  attendanceRecord!: AttendanceRecord | null;
+  attendanceRecord!: Relation<AttendanceRecord> | null;
 
   @Column({ type: "timestamptz" })
   dueAt!: Date;
@@ -78,7 +79,7 @@ export class Task {
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
   @JoinColumn({ name: "completedByUserId" })
-  completedByUser!: User | null;
+  completedByUser!: Relation<User> | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

@@ -5,6 +5,7 @@ import {
   Index,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   Unique,
 } from "typeorm";
 import { PendingEnrollment } from "./PendingEnrollment.js";
@@ -23,14 +24,14 @@ export class PendingEnrollmentSubject {
   @ManyToOne(() => PendingEnrollment, (row) => row.subjects, {
     onDelete: "CASCADE",
   })
-  pendingEnrollment!: PendingEnrollment;
+  pendingEnrollment!: Relation<PendingEnrollment>;
 
   @Column({ type: "uuid" })
   @Index()
   subjectId!: string;
 
   @ManyToOne(() => Subject, { onDelete: "RESTRICT" })
-  subject!: Subject;
+  subject!: Relation<Subject>;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
