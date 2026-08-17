@@ -49,6 +49,18 @@ class AdminClassesController {
       next(error);
     }
   };
+
+  bulkReplace = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const classes = await adminClassesService.bulkReplace(
+        req.body.termId,
+        req.body.classes,
+      );
+      res.status(201).json({ classes });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const adminClassesController = new AdminClassesController();

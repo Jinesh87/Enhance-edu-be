@@ -1,6 +1,16 @@
+import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
-import { Class, User, Term } from "../../../entities/index.js";
+import {
+  Class,
+  User,
+  Term,
+  ClassStudent,
+  Session,
+  AttendanceRecord,
+  ScanEvent,
+  Task,
+} from "../../../entities/index.js";
 
 export type ClassInput = {
   name?: string;
@@ -144,6 +154,104 @@ export class AdminClassesService {
 
     await this.classes.save(cls);
     return toClassDto(cls);
+  }
+
+  async bulkReplace(termId: string, classesToCreate: ClassInput[]) {
+    return await AppDataSource.transaction(async (transactionManager) => {
+      const repo = transactionManager.getRepository(Class);
+
+      // 1. Fetch matching classes for the term
+      const existingClasses = await repo.find({
+        where: { term: { id: termId } },
+      });
+
+      if (existingClasses.length > 0) {
+        const classIds = existingClasses.map((c) => c.id);
+
+        // Check if students are enrolled
+        const enrollmentCount = await transactionManager.getRepository(ClassStudent).count({
+          where: { classId: In(classIds) },
+        });
+        if (enrollmentCount > 0) {
+          throw new AppError(
+            400,
+            "Cannot modify timetable: students are already enrolled in classes for this term.",
+            "TIMETABLE_LOCKED"
+          );
+        }
+
+        // Check if session history exists
+        const sessions = await transactionManager.getRepository(Session).find({
+          where: { classId: In(classIds) },
+        });
+        if (sessions.length > 0) {
+          const sessionIds = sessions.map((s) => s.id);
+
+          const attendanceCount = await transactionManager.getRepository(AttendanceRecord).count({
+            where: { sessionId: In(sessionIds) },
+          });
+          const scanCount = await transactionManager.getRepository(ScanEvent).count({
+            where: { sessionId: In(sessionIds) },
+          });
+          const taskCount = await transactionManager.getRepository(Task).count({
+            where: { sessionId: In(sessionIds) },
+          });
+
+          if (attendanceCount > 0 || scanCount > 0 || taskCount > 0) {
+            throw new AppError(
+              400,
+              "Cannot modify timetable: class sessions already have attendance or task history recorded.",
+              "TIMETABLE_LOCKED"
+            );
+          }
+
+          // Safe to delete old sessions
+          await transactionManager.getRepository(Session).remove(sessions);
+        }
+
+        // Safe to delete old classes
+        await repo.remove(existingClasses);
+      }
+
+      // 2. Pre-fetch dependencies for bulk insertion
+      const teacherIds = Array.from(
+        new Set(classesToCreate.map((c) => c.teacherId).filter(Boolean))
+      ) as string[];
+
+      const teacherMap = new Map<string, User>();
+      if (teacherIds.length > 0) {
+        const teachers = await transactionManager.getRepository(User).find({
+          where: { id: In(teacherIds) },
+        });
+        teachers.forEach((t) => teacherMap.set(t.id, t));
+      }
+
+      const termObj = await transactionManager.getRepository(Term).findOne({
+        where: { id: termId },
+      });
+
+      // 3. Create all class entities synchronously
+      const entities = classesToCreate.map((input) => {
+        const teacher = input.teacherId ? teacherMap.get(input.teacherId) || null : null;
+        return repo.create({
+          name: input.name?.trim() || `${input.subject ?? "Subject"} Class`,
+          code: input.code.trim(),
+          room: input.room.trim(),
+          subject: input.subject?.trim() || null,
+          lesson: input.lesson?.trim() || null,
+          dayTime: input.dayTime?.trim() || null,
+          capacity: input.capacity ?? 20,
+          contentGroup: input.contentGroup?.trim() || null,
+          termName: input.term?.trim() || "Term 3 2026",
+          term: termObj,
+          teacher,
+        });
+      });
+
+      // 4. Perform a single database bulk save
+      const savedEntities = await repo.save(entities);
+      return savedEntities.map(toClassDto);
+    });
   }
 
   async remove(id: string) {
