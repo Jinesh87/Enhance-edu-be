@@ -6,6 +6,7 @@ import {
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { GuardianStudent } from "./GuardianStudent.js";
@@ -33,10 +34,10 @@ export class Student {
   userId!: string | null;
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
-  user!: User | null;
+  user!: Relation<User> | null;
 
   @OneToMany(() => GuardianStudent, (link) => link.student)
-  guardianLinks!: GuardianStudent[];
+  guardianLinks!: Relation<GuardianStudent>[];
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

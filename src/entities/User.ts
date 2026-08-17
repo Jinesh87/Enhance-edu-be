@@ -5,6 +5,7 @@ import {
   Index,
   OneToMany,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import {
@@ -70,10 +71,10 @@ export class User {
   lastSignedInAt!: Date | null;
 
   @OneToMany(() => GuardianStudent, (link) => link.guardian)
-  studentLinks!: GuardianStudent[];
+  studentLinks!: Relation<GuardianStudent>[];
 
   @OneToMany(() => PendingEnrollment, (row) => row.guardian)
-  pendingEnrollments!: PendingEnrollment[];
+  pendingEnrollments!: Relation<PendingEnrollment>[];
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

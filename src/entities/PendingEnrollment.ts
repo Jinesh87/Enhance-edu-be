@@ -6,6 +6,7 @@ import {
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { PendingEnrollmentStatus } from "../common/constants/enrollment.js";
@@ -43,7 +44,7 @@ export class PendingEnrollment {
   guardianId!: string;
 
   @ManyToOne(() => User, (user) => user.pendingEnrollments, { onDelete: "CASCADE" })
-  guardian!: User;
+  guardian!: Relation<User>;
 
   @Column({ type: "varchar", length: 120 })
   studentFullName!: string;
@@ -62,7 +63,7 @@ export class PendingEnrollment {
   termId!: string;
 
   @ManyToOne(() => Term, { onDelete: "RESTRICT" })
-  term!: Term;
+  term!: Relation<Term>;
 
   @Column({ type: "numeric", precision: 10, scale: 2 })
   fee!: string;
@@ -86,7 +87,7 @@ export class PendingEnrollment {
   replacesEnrollmentId!: string | null;
 
   @ManyToOne(() => Enrollment, { nullable: true, onDelete: "CASCADE" })
-  replacesEnrollment!: Enrollment | null;
+  replacesEnrollment!: Relation<Enrollment> | null;
 
   @Column({ type: "jsonb", nullable: true })
   previousSnapshot!: EnrollmentSnapshot | null;
@@ -95,10 +96,10 @@ export class PendingEnrollment {
   createdByUserId!: string | null;
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
-  createdByUser!: User | null;
+  createdByUser!: Relation<User> | null;
 
   @OneToMany(() => PendingEnrollmentSubject, (row) => row.pendingEnrollment)
-  subjects!: PendingEnrollmentSubject[];
+  subjects!: Relation<PendingEnrollmentSubject>[];
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
+  Relation,
 } from "typeorm";
 import { Class } from "./Class.js";
 import { User } from "./User.js";
@@ -22,14 +23,14 @@ export class ClassStudent {
   classId!: string;
 
   @ManyToOne(() => Class, { onDelete: "CASCADE" })
-  class!: Class;
+  class!: Relation<Class>;
 
   @Column({ type: "uuid" })
   @Index()
   studentId!: string;
 
   @ManyToOne(() => User, { onDelete: "CASCADE" })
-  student!: User;
+  student!: Relation<User>;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

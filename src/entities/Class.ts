@@ -5,6 +5,7 @@ import {
   Index,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { User } from "./User.js";
@@ -44,11 +45,11 @@ export class Class {
 
   @ManyToOne(() => Term, { onDelete: "SET NULL", nullable: true })
   @Index()
-  term!: Term | null;
+  term!: Relation<Term> | null;
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
   @Index()
-  teacher!: User | null;
+  teacher!: Relation<User> | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
