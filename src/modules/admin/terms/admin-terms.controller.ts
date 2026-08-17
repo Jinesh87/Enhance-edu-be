@@ -15,6 +15,8 @@ class AdminTermsController {
     try {
       const term = await adminTermsService.create({
         name: req.body.name,
+        academicYear: req.body.academicYear,
+        yearLevel: req.body.yearLevel,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
       });
@@ -28,6 +30,8 @@ class AdminTermsController {
     try {
       const term = await adminTermsService.update(req.params.id as string, {
         name: req.body.name,
+        academicYear: req.body.academicYear,
+        yearLevel: req.body.yearLevel,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
       });

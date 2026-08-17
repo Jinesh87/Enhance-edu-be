@@ -27,7 +27,11 @@ function toClassDto(cls: Class) {
     dayTime: cls.dayTime,
     capacity: cls.capacity,
     contentGroup: cls.contentGroup,
-    term: cls.term ? cls.term.name : (cls.termName ?? "Term 3 2026"),
+    term: cls.term
+      ? (cls.term.academicYear && cls.term.yearLevel
+        ? `${cls.term.name} · ${cls.term.academicYear.year} · ${cls.term.yearLevel.name}`
+        : cls.term.name)
+      : (cls.termName ?? "Term 3 2026"),
     termId: cls.term ? cls.term.id : null,
     teacher: cls.teacher
       ? {
@@ -47,7 +51,7 @@ export class AdminClassesService {
 
   async list() {
     const list = await this.classes.find({
-      relations: { teacher: true, term: true },
+      relations: { teacher: true, term: { academicYear: true, yearLevel: true } },
       order: { createdAt: "DESC" },
     });
     return list.map(toClassDto);
@@ -56,7 +60,7 @@ export class AdminClassesService {
   async getById(id: string) {
     const cls = await this.classes.findOne({
       where: { id },
-      relations: { teacher: true, term: true },
+      relations: { teacher: true, term: { academicYear: true, yearLevel: true } },
     });
     if (!cls) {
       throw new AppError(404, "Class not found", "CLASS_NOT_FOUND");
@@ -98,7 +102,7 @@ export class AdminClassesService {
   async update(id: string, input: Partial<ClassInput>) {
     const cls = await this.classes.findOne({
       where: { id },
-      relations: { teacher: true, term: true },
+      relations: { teacher: true, term: { academicYear: true, yearLevel: true } },
     });
 
     if (!cls) {
