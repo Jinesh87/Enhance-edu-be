@@ -6,7 +6,19 @@ class AdminClassesController {
     try {
       const page = req.query.page ? Number(req.query.page) : undefined;
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
-      const { classes, summaries, total } = await adminClassesService.list({ page, limit });
+      const search = req.query.search ? String(req.query.search) : undefined;
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      const yearLevel = req.query.yearLevel ? String(req.query.yearLevel) : undefined;
+      const term = req.query.term ? String(req.query.term) : undefined;
+
+      const { classes, summaries, total } = await adminClassesService.list({
+        page,
+        limit,
+        search,
+        year,
+        yearLevel,
+        term,
+      });
       res.status(200).json({ classes, summaries, total });
     } catch (error) {
       next(error);

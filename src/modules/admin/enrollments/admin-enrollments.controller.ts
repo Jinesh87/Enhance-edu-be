@@ -6,12 +6,14 @@ class AdminEnrollmentsController {
     try {
       const page = req.query.page ? Number(req.query.page) : undefined;
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const search = req.query.search ? String(req.query.search) : undefined;
 
-      const { enrollments, total } = await adminEnrollmentsService.list({
+      const { enrollments, total, pendingGuardiansCount } = await adminEnrollmentsService.list({
         page,
         limit,
+        search,
       });
-      res.status(200).json({ enrollments, total });
+      res.status(200).json({ enrollments, total, pendingGuardiansCount });
     } catch (error) {
       next(error);
     }

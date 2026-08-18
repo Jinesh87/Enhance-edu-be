@@ -31,7 +31,10 @@ export class AdminClassesRepository {
   private readonly users = AppDataSource.getRepository(User);
   private readonly terms = AppDataSource.getRepository(Term);
 
-  async findAll(filters?: { page?: number; limit?: number }): Promise<{ classes: Class[]; total: number }> {
+  async findAll(filters?: {
+    page?: number;
+    limit?: number;
+  }): Promise<{ classes: Class[]; total: number }> {
     const findOptions: any = {
       relations: {
         teacher: true,
@@ -99,7 +102,6 @@ export class AdminClassesRepository {
       const userRepo = transactionManager.getRepository(User);
       const termRepo = transactionManager.getRepository(Term);
 
-      // 1. Fetch matching classes for the term
       const existingClasses = await classRepo.find({
         where: { term: { id: termId } },
       });
@@ -107,7 +109,6 @@ export class AdminClassesRepository {
       if (existingClasses.length > 0) {
         const classIds = existingClasses.map((c) => c.id);
 
-        // Check if students are enrolled
         const enrollmentCount = await classStudentRepo.count({
           where: { classId: In(classIds) },
         });
@@ -119,7 +120,6 @@ export class AdminClassesRepository {
           );
         }
 
-        // Check if session history exists
         const sessions = await sessionRepo.find({
           where: { classId: In(classIds) },
         });
@@ -184,7 +184,44 @@ export class AdminClassesRepository {
         });
       });
 
-      return await classRepo.save(entities);
+      const savedClasses = await classRepo.save(entities);
+
+      const sessionsToCreate: Session[] = [];
+      for (const c of savedClasses) {
+        if (!c.dayTime) continue;
+        try {
+          const parts = c.dayTime.split(" ");
+          const startStr = parts[0];
+          const endStr = parts[1];
+          const startAt = new Date(startStr);
+          const endAt = new Date(startStr);
+          if (endStr) {
+            const [eh, em] = endStr.split(":").map(Number);
+            endAt.setHours(eh, em, 0, 0);
+          } else {
+            endAt.setHours(startAt.getHours() + 1);
+          }
+          if (!isNaN(startAt.getTime()) && !isNaN(endAt.getTime())) {
+            sessionsToCreate.push(
+              sessionRepo.create({
+                classId: c.id,
+                startAt,
+                endAt,
+                room: c.room || null,
+                gracePeriodMinutes: 25,
+              })
+            );
+          }
+        } catch (err) {
+          console.error("Failed to parse dayTime for class session:", c.dayTime, err);
+        }
+      }
+
+      if (sessionsToCreate.length > 0) {
+        await sessionRepo.save(sessionsToCreate);
+      }
+
+      return savedClasses;
     });
   }
 }

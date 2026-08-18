@@ -7,7 +7,6 @@ const router = Router();
 
 router.use(authorize(UserRole.SUPER_ADMIN, UserRole.STAFF));
 
-router.get("/tutor/dashboard", teacherAttendanceController.getTeacherDashboard);
 router.get("/sessions/:id/qr-code", teacherAttendanceController.getQrCode);
 router.get("/sessions/:id/roll", teacherAttendanceController.getLiveRoll);
 router.get("/sessions/:id/live-updates", teacherAttendanceController.streamLiveUpdates);
