@@ -12,6 +12,18 @@ class GuardianStudentsController {
       next(error);
     }
   };
+
+  acceptPending = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await guardianStudentsService.acceptPendingEnrollment(
+        req.user!.id,
+        req.params.id as string,
+      );
+      res.status(200).json({ accepted: true });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const guardianStudentsController = new GuardianStudentsController();

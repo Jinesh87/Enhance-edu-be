@@ -4,6 +4,22 @@ import {
   UserStatus,
 } from "../../../common/constants/roles.js";
 
+export type GuardianConnectedStudentDto = {
+  id: string | null;
+  fullName: string;
+  preferredName: string | null;
+  dateOfBirth: string | null;
+  yearLevel: number | null;
+  status: "LINKED" | "AWAITING_GUARDIAN";
+  enrollments: {
+    id: string;
+    status: string;
+    fee: number;
+    term: { id: string; name: string } | null;
+    subjects: { id: string; name: string }[];
+  }[];
+};
+
 export type PersonDto = {
   id: string;
   fullName: string;
@@ -19,6 +35,15 @@ export type PersonDto = {
   createdAt: Date;
   updatedAt: Date;
   subjectIds?: string[];
+  students?: GuardianConnectedStudentDto[];
+  guardians?: {
+    id: string;
+    fullName: string;
+    preferredName: string | null;
+    email: string | null;
+    mobile: string | null;
+    status: UserStatus;
+  }[];
 };
 
 export type EnrollmentStudentInput = {

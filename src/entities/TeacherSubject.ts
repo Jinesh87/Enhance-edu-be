@@ -5,6 +5,7 @@ import {
   Index,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   Unique,
 } from "typeorm";
 import { User } from "./User.js";
@@ -21,14 +22,14 @@ export class TeacherSubject {
   teacherId!: string;
 
   @ManyToOne(() => User, { onDelete: "CASCADE" })
-  teacher!: User;
+  teacher!: Relation<User>;
 
   @Column({ type: "uuid" })
   @Index()
   subjectId!: string;
 
   @ManyToOne(() => Subject, { onDelete: "CASCADE" })
-  subject!: Subject;
+  subject!: Relation<Subject>;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

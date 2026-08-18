@@ -5,6 +5,7 @@ import {
   Index,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { Session } from "./Session.js";
@@ -43,14 +44,14 @@ export class ScanEvent {
   studentId!: string;
 
   @ManyToOne(() => User, { onDelete: "CASCADE" })
-  student!: User;
+  student!: Relation<User>;
 
   @Column({ type: "uuid" })
   @Index()
   sessionId!: string;
 
   @ManyToOne(() => Session, { onDelete: "CASCADE" })
-  session!: Session;
+  session!: Relation<Session>;
 
   @Column({ type: "timestamptz" })
   scannedAt!: Date;
@@ -96,7 +97,7 @@ export class ScanEvent {
   resolvedByUserId!: string | null;
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
-  resolvedByUser!: User | null;
+  resolvedByUser!: Relation<User> | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
+  Relation,
 } from "typeorm";
 import { Session } from "./Session.js";
 import { User } from "./User.js";
@@ -30,14 +31,14 @@ export class AttendanceRecord {
   sessionId!: string;
 
   @ManyToOne(() => Session, { onDelete: "CASCADE" })
-  session!: Session;
+  session!: Relation<Session>;
 
   @Column({ type: "uuid" })
   @Index()
   studentId!: string;
 
   @ManyToOne(() => User, { onDelete: "CASCADE" })
-  student!: User;
+  student!: Relation<User>;
 
   @Column({
     type: "enum",
@@ -60,7 +61,7 @@ export class AttendanceRecord {
   markedByUserId!: string | null;
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
-  markedByUser!: User | null;
+  markedByUser!: Relation<User> | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

@@ -6,12 +6,33 @@ import {
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
+  Relation,
   UpdateDateColumn,
 } from "typeorm";
 import { PendingEnrollmentStatus } from "../common/constants/enrollment.js";
+import { Enrollment } from "./Enrollment.js";
 import { Term } from "./Term.js";
 import { User } from "./User.js";
 import { PendingEnrollmentSubject } from "./PendingEnrollmentSubject.js";
+
+export type EnrollmentSnapshot = {
+  student: {
+    id: string | null;
+    fullName: string;
+    preferredName: string | null;
+    dateOfBirth: string | null;
+    yearLevel: number | null;
+    createdAt?: string | Date;
+  } | null;
+  term: {
+    id: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+  } | null;
+  subjects: { id: string; name: string }[];
+  fee: number;
+};
 
 @Entity("pending_enrollments")
 export class PendingEnrollment {
@@ -23,7 +44,7 @@ export class PendingEnrollment {
   guardianId!: string;
 
   @ManyToOne(() => User, (user) => user.pendingEnrollments, { onDelete: "CASCADE" })
-  guardian!: User;
+  guardian!: Relation<User>;
 
   @Column({ type: "varchar", length: 120 })
   studentFullName!: string;
@@ -42,7 +63,7 @@ export class PendingEnrollment {
   termId!: string;
 
   @ManyToOne(() => Term, { onDelete: "RESTRICT" })
-  term!: Term;
+  term!: Relation<Term>;
 
   @Column({ type: "numeric", precision: 10, scale: 2 })
   fee!: string;
@@ -62,13 +83,23 @@ export class PendingEnrollment {
   fulfilledEnrollmentId!: string | null;
 
   @Column({ type: "uuid", nullable: true })
+  @Index()
+  replacesEnrollmentId!: string | null;
+
+  @ManyToOne(() => Enrollment, { nullable: true, onDelete: "CASCADE" })
+  replacesEnrollment!: Relation<Enrollment> | null;
+
+  @Column({ type: "jsonb", nullable: true })
+  previousSnapshot!: EnrollmentSnapshot | null;
+
+  @Column({ type: "uuid", nullable: true })
   createdByUserId!: string | null;
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
-  createdByUser!: User | null;
+  createdByUser!: Relation<User> | null;
 
   @OneToMany(() => PendingEnrollmentSubject, (row) => row.pendingEnrollment)
-  subjects!: PendingEnrollmentSubject[];
+  subjects!: Relation<PendingEnrollmentSubject>[];
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

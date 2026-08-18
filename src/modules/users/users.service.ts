@@ -101,7 +101,7 @@ export class UsersService {
       });
       dto.subjectIds = tsRecords.map((ts) => ts.subjectId);
     }
-    return dto;
+    return this.withRelatedPeople(dto);
   }
 
   async invite(
@@ -321,7 +321,7 @@ export class UsersService {
       });
       dto.subjectIds = tsRecords.map((ts) => ts.subjectId);
     }
-    return dto;
+    return this.withRelatedPeople(dto);
   }
 
   async resendInvitation(id: string): Promise<InvitePersonResult> {
@@ -375,7 +375,10 @@ export class UsersService {
       );
     }
 
-    return { person: toPersonDto(user), invitationToken };
+    return {
+      person: await this.withRelatedPeople(toPersonDto(user)),
+      invitationToken,
+    };
   }
 
   async deactivate(id: string, actorId: string): Promise<PersonDto> {
@@ -391,7 +394,7 @@ export class UsersService {
     await this.assertNotLastOwner(user);
     user.status = UserStatus.DEACTIVATED;
     await this.users.save(user);
-    return toPersonDto(user);
+    return this.withRelatedPeople(toPersonDto(user));
   }
 
   async remove(id: string, actorId: string): Promise<void> {
@@ -427,6 +430,18 @@ export class UsersService {
         "LAST_OWNER",
       );
     }
+  }
+
+  private async withRelatedPeople(dto: PersonDto): Promise<PersonDto> {
+    if (dto.role === UserRole.GUARDIAN) {
+      dto.students =
+        await adminEnrollmentsService.listConnectedStudentsForGuardian(dto.id);
+    }
+    if (dto.role === UserRole.STUDENT) {
+      dto.guardians =
+        await adminEnrollmentsService.listGuardiansForStudentUser(dto.id);
+    }
+    return dto;
   }
 
   private async findUserOrThrow(id: string): Promise<User> {

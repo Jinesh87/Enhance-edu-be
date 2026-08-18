@@ -34,6 +34,33 @@ class AdminEnrollmentsController {
       next(error);
     }
   };
+
+  getById = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const enrollment = await adminEnrollmentsService.getById(
+        req.params.id as string,
+      );
+      res.status(200).json({ enrollment });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  modify = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await adminEnrollmentsService.proposeModification(
+        req.params.id as string,
+        {
+          student: req.body.student,
+          enrollment: req.body.enrollment,
+        },
+        req.user!.id,
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const adminEnrollmentsController = new AdminEnrollmentsController();
