@@ -5,6 +5,12 @@ import {
   type ClassInput,
 } from "./admin-classes.repository.js";
 
+function parseDayTimeStart(dayTime: string | null): Date | null {
+  if (!dayTime) return null;
+  const start = new Date(dayTime.split(" ")[0]);
+  return Number.isNaN(start.getTime()) ? null : start;
+}
+
 function toClassDto(cls: Class) {
   return {
     id: cls.id,
@@ -69,6 +75,8 @@ export class AdminClassesService {
         }
       }
 
+      const sessionDate = parseDayTimeStart(c.dayTime);
+
       if (!groupedMap.has(key)) {
         groupedMap.set(key, {
           subject: subjectName,
@@ -79,7 +87,8 @@ export class AdminClassesService {
           enrolled: 0,
           needAttention: 0,
           dayTime: c.dayTime || "",
-          classes: [],
+          startDate: sessionDate,
+          endDate: sessionDate,
         });
       }
 
@@ -89,7 +98,14 @@ export class AdminClassesService {
       if (c.teacher?.fullName) {
         group.teachers.add(c.teacher.fullName);
       }
-      group.classes.push(toClassDto(c));
+      if (sessionDate) {
+        if (!group.startDate || sessionDate < group.startDate) {
+          group.startDate = sessionDate;
+        }
+        if (!group.endDate || sessionDate > group.endDate) {
+          group.endDate = sessionDate;
+        }
+      }
     }
 
     const summaries = Array.from(groupedMap.values()).map(g => ({
@@ -101,7 +117,8 @@ export class AdminClassesService {
       enrolled: g.enrolled,
       needAttention: g.needAttention,
       dayTime: g.dayTime,
-      classes: g.classes,
+      startDate: g.startDate,
+      endDate: g.endDate,
     }));
 
     const total = summaries.length;

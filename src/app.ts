@@ -18,6 +18,7 @@ import adminTermsRouter from "./modules/admin/terms/admin-terms.routes.js";
 import adminEnrollmentsRouter from "./modules/admin/enrollments/admin-enrollments.routes.js";
 import adminClassesRouter from "./modules/admin/classes/admin-classes.routes.js";
 import guardianStudentsRouter from "./modules/guardian/students/guardian-students.routes.js";
+import studentClassesRouter from "./modules/student/classes/student-classes.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -64,6 +65,7 @@ app.use("/api/year-levels", adminYearLevelsRouter);
 app.use("/api/terms", adminTermsRouter);
 app.use("/api/enrollments", adminEnrollmentsRouter);
 app.use("/api/classes", adminClassesRouter);
+app.use("/api/student", studentClassesRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
 
 app.use(errorHandler);
