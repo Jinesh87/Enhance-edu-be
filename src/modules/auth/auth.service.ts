@@ -997,7 +997,6 @@ export class AuthService {
 
     const stored = await this.refreshTokens.findOne({
       where: { id: payload.tokenId },
-      relations: { user: true },
     });
 
     if (
@@ -1009,15 +1008,20 @@ export class AuthService {
       throw new AppError(401, "Invalid or expired refresh token", "INVALID_TOKEN");
     }
 
-    if (stored.user.status !== UserStatus.ACTIVE) {
+    const user = await this.users.findOne({ where: { id: stored.userId } });
+    if (!user) {
+      throw new AppError(401, "Invalid or expired refresh token", "INVALID_TOKEN");
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
       throw new AppError(403, "Account is not active", "INACTIVE");
     }
 
     stored.revokedAt = new Date();
     await this.refreshTokens.save(stored);
 
-    const tokens = await this.issueTokens(stored.user);
-    return { user: toPublicUser(stored.user), tokens };
+    const tokens = await this.issueTokens(user);
+    return { user: toPublicUser(user), tokens };
   }
 
   async logout(rawRefreshToken?: string): Promise<void> {
