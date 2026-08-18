@@ -40,11 +40,18 @@ export class AdminTermsService {
   private readonly academicYears = AppDataSource.getRepository(AcademicYear);
   private readonly yearLevels = AppDataSource.getRepository(YearLevel);
 
-  async list(filters?: { page?: number; limit?: number }) {
+  async list(filters?: { page?: number; limit?: number; yearLevel?: string; year?: number }) {
     const findOptions: any = {
       relations: { academicYear: true, yearLevel: true },
       order: { startDate: "DESC" },
+      where: {},
     };
+    if (filters?.yearLevel) {
+      findOptions.where.yearLevel = { name: filters.yearLevel };
+    }
+    if (filters?.year) {
+      findOptions.where.academicYear = { year: filters.year };
+    }
     if (filters?.page && filters?.limit) {
       findOptions.skip = (filters.page - 1) * filters.limit;
       findOptions.take = filters.limit;

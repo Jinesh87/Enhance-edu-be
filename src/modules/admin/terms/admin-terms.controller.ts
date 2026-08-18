@@ -6,7 +6,9 @@ class AdminTermsController {
     try {
       const page = req.query.page ? Number(req.query.page) : undefined;
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
-      const { terms, total } = await adminTermsService.list({ page, limit });
+      const yearLevel = req.query.yearLevel ? String(req.query.yearLevel) : undefined;
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      const { terms, total } = await adminTermsService.list({ page, limit, yearLevel, year });
       res.status(200).json({ terms, total });
     } catch (error) {
       next(error);
