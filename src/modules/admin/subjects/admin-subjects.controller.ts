@@ -6,7 +6,8 @@ class AdminSubjectsController {
     try {
       const page = req.query.page ? Number(req.query.page) : undefined;
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
-      const { subjects, total, recentlyAddedCount } = await adminSubjectsService.list({ page, limit });
+      const search = req.query.search ? String(req.query.search) : undefined;
+      const { subjects, total, recentlyAddedCount } = await adminSubjectsService.list({ page, limit, search });
       res.status(200).json({ subjects, total, recentlyAddedCount });
     } catch (error) {
       next(error);

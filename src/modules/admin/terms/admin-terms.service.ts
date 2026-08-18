@@ -1,7 +1,7 @@
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { Term, AcademicYear, YearLevel } from "../../../entities/index.js";
-
+import { ILike } from "typeorm";
 type TermInput = {
   name: string;
   academicYear: number;
@@ -40,7 +40,7 @@ export class AdminTermsService {
   private readonly academicYears = AppDataSource.getRepository(AcademicYear);
   private readonly yearLevels = AppDataSource.getRepository(YearLevel);
 
-  async list(filters?: { page?: number; limit?: number; yearLevel?: string; year?: number }) {
+  async list(filters?: { page?: number; limit?: number; yearLevel?: string; year?: number; search?: string }) {
     const findOptions: any = {
       relations: { academicYear: true, yearLevel: true },
       order: { startDate: "DESC" },
@@ -51,6 +51,9 @@ export class AdminTermsService {
     }
     if (filters?.year) {
       findOptions.where.academicYear = { year: filters.year };
+    }
+    if (filters?.search) {
+      findOptions.where.name = ILike(`%${filters.search}%`);
     }
     if (filters?.page && filters?.limit) {
       findOptions.skip = (filters.page - 1) * filters.limit;

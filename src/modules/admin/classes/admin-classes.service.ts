@@ -36,12 +36,49 @@ function toClassDto(cls: Class) {
 export class AdminClassesService {
   private readonly repo = adminClassesRepository;
 
-  async list(filters?: { page?: number; limit?: number }) {
+  async list(filters?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    year?: number;
+    yearLevel?: string;
+    term?: string;
+  }) {
     const { classes } = await this.repo.findAll();
-    
-    // Group classes by subject and term
+
+    let filteredClasses = classes;
+    if (filters?.search) {
+      const searchNeedle = filters.search.trim().toLowerCase();
+      filteredClasses = filteredClasses.filter((c) => {
+        const subject = (c.subject || "").toLowerCase();
+        return subject.includes(searchNeedle);
+      });
+    }
+
+    if (filters?.year) {
+      filteredClasses = filteredClasses.filter((c) => {
+        return c.term?.academicYear?.year === filters.year;
+      });
+    }
+
+    if (filters?.yearLevel) {
+      const lvlNeedle = filters.yearLevel.trim().toLowerCase();
+      filteredClasses = filteredClasses.filter((c) => {
+        const lvlName = c.term?.yearLevel?.name?.toLowerCase() || "";
+        return lvlName.includes(lvlNeedle);
+      });
+    }
+
+    if (filters?.term) {
+      const termNeedle = filters.term.trim().toLowerCase();
+      filteredClasses = filteredClasses.filter((c) => {
+        const tName = c.term?.name?.toLowerCase() || "";
+        return tName.includes(termNeedle);
+      });
+    }
+
     const groupedMap = new Map<string, any>();
-    for (const c of classes) {
+    for (const c of filteredClasses) {
       const subjectName = c.subject || "General";
       const termName = c.term
         ? c.term.academicYear && c.term.yearLevel
@@ -80,6 +117,8 @@ export class AdminClassesService {
           needAttention: 0,
           dayTime: c.dayTime || "",
           classes: [],
+          startDate: c.term?.startDate || null,
+          endDate: c.term?.endDate || null,
         });
       }
 
@@ -92,7 +131,7 @@ export class AdminClassesService {
       group.classes.push(toClassDto(c));
     }
 
-    const summaries = Array.from(groupedMap.values()).map(g => ({
+    const summaries = Array.from(groupedMap.values()).map((g) => ({
       subject: g.subject,
       term: g.term,
       sessionCount: g.sessionCount,
@@ -102,6 +141,8 @@ export class AdminClassesService {
       needAttention: g.needAttention,
       dayTime: g.dayTime,
       classes: g.classes,
+      startDate: g.startDate,
+      endDate: g.endDate,
     }));
 
     const total = summaries.length;

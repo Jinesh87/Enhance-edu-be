@@ -199,7 +199,7 @@ export class AdminEnrollmentsService {
   private readonly terms = AppDataSource.getRepository(Term);
   private readonly subjects = AppDataSource.getRepository(Subject);
 
-  async list(filters?: { page?: number; limit?: number }) {
+  async list(filters?: { page?: number; limit?: number; search?: string }) {
     const [rows, pendingRows] = await Promise.all([
       this.enrollments.find({
         relations: {
@@ -257,6 +257,27 @@ export class AdminEnrollmentsService {
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
 
+    if (filters?.search) {
+      const needle = filters.search.trim().toLowerCase();
+      all = all.filter((item: any) => {
+        const studentName = (item.student?.fullName || item.studentName || "").toLowerCase();
+        const guardianName = (item.guardian?.fullName || item.guardianName || "").toLowerCase();
+        const guardianEmail = (item.guardian?.email || item.guardianEmail || "").toLowerCase();
+        return (
+          studentName.includes(needle) ||
+          guardianName.includes(needle) ||
+          guardianEmail.includes(needle)
+        );
+      });
+    }
+
+    const pendingGuardiansCount = await this.pendingEnrollments.count({
+      where: {
+        status: PendingEnrollmentStatus.PENDING,
+        replacesEnrollmentId: IsNull(),
+      },
+    });
+
     const total = all.length;
 
     if (filters?.page && filters?.limit) {
@@ -264,7 +285,7 @@ export class AdminEnrollmentsService {
       all = all.slice(start, start + filters.limit);
     }
 
-    return { enrollments: all, total };
+    return { enrollments: all, total, pendingGuardiansCount };
   }
 
   async getById(id: string) {

@@ -31,7 +31,10 @@ export class AdminClassesRepository {
   private readonly users = AppDataSource.getRepository(User);
   private readonly terms = AppDataSource.getRepository(Term);
 
-  async findAll(filters?: { page?: number; limit?: number }): Promise<{ classes: Class[]; total: number }> {
+  async findAll(filters?: {
+    page?: number;
+    limit?: number;
+  }): Promise<{ classes: Class[]; total: number }> {
     const findOptions: any = {
       relations: {
         teacher: true,
@@ -99,7 +102,6 @@ export class AdminClassesRepository {
       const userRepo = transactionManager.getRepository(User);
       const termRepo = transactionManager.getRepository(Term);
 
-      // 1. Fetch matching classes for the term
       const existingClasses = await classRepo.find({
         where: { term: { id: termId } },
       });
@@ -107,7 +109,6 @@ export class AdminClassesRepository {
       if (existingClasses.length > 0) {
         const classIds = existingClasses.map((c) => c.id);
 
-        // Check if students are enrolled
         const enrollmentCount = await classStudentRepo.count({
           where: { classId: In(classIds) },
         });
@@ -119,7 +120,6 @@ export class AdminClassesRepository {
           );
         }
 
-        // Check if session history exists
         const sessions = await sessionRepo.find({
           where: { classId: In(classIds) },
         });

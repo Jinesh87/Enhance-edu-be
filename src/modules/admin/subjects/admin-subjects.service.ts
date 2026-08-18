@@ -1,7 +1,7 @@
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { Subject, YearLevel } from "../../../entities/index.js";
-import { MoreThanOrEqual } from "typeorm";
+import { MoreThanOrEqual, ILike } from "typeorm";
 
 function toSubjectDto(subject: Subject) {
   return {
@@ -23,11 +23,17 @@ export class AdminSubjectsService {
   private readonly subjects = AppDataSource.getRepository(Subject);
   private readonly yearLevels = AppDataSource.getRepository(YearLevel);
 
-  async list(filters?: { page?: number; limit?: number }) {
+  async list(filters?: { page?: number; limit?: number; search?: string }) {
     const findOptions: any = {
       relations: { yearLevel: true },
       order: { name: "ASC" },
+      where: {},
     };
+    if (filters?.search) {
+      findOptions.where = {
+        name: ILike(`%${filters.search}%`),
+      };
+    }
     if (filters?.page && filters?.limit) {
       findOptions.skip = (filters.page - 1) * filters.limit;
       findOptions.take = filters.limit;
