@@ -87,7 +87,7 @@ export class AdminClassesService {
         : (c.termName ?? "Term 3 2026");
       const key = `${subjectName}|${termName}`;
 
-      let durationMins = 90;
+      let durationMins = 60;
       if (c.dayTime) {
         const parts = c.dayTime.split(" ");
         if (parts.length > 0) {

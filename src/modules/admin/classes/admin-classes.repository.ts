@@ -184,7 +184,44 @@ export class AdminClassesRepository {
         });
       });
 
-      return await classRepo.save(entities);
+      const savedClasses = await classRepo.save(entities);
+
+      const sessionsToCreate: Session[] = [];
+      for (const c of savedClasses) {
+        if (!c.dayTime) continue;
+        try {
+          const parts = c.dayTime.split(" ");
+          const startStr = parts[0];
+          const endStr = parts[1];
+          const startAt = new Date(startStr);
+          const endAt = new Date(startStr);
+          if (endStr) {
+            const [eh, em] = endStr.split(":").map(Number);
+            endAt.setHours(eh, em, 0, 0);
+          } else {
+            endAt.setHours(startAt.getHours() + 1);
+          }
+          if (!isNaN(startAt.getTime()) && !isNaN(endAt.getTime())) {
+            sessionsToCreate.push(
+              sessionRepo.create({
+                classId: c.id,
+                startAt,
+                endAt,
+                room: c.room || null,
+                gracePeriodMinutes: 25,
+              })
+            );
+          }
+        } catch (err) {
+          console.error("Failed to parse dayTime for class session:", c.dayTime, err);
+        }
+      }
+
+      if (sessionsToCreate.length > 0) {
+        await sessionRepo.save(sessionsToCreate);
+      }
+
+      return savedClasses;
     });
   }
 }

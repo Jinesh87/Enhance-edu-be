@@ -4,15 +4,7 @@ import { sharedAttendanceService } from "../../shared/attendance/shared-attendan
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
 
 class TeacherAttendanceController {
-  async getTeacherDashboard(req: Request, res: Response, next: NextFunction) {
-    try {
-      const teacherId = req.user!.id;
-      const data = await teacherAttendanceService.getTeacherDashboardData(teacherId);
-      res.status(200).json(data);
-    } catch (error) {
-      next(error);
-    }
-  }
+
 
   async getQrCode(req: Request, res: Response, next: NextFunction) {
     try {
