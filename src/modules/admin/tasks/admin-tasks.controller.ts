@@ -3,9 +3,11 @@ import { adminNotificationManager } from "./admin-task-updates.js";
 import { adminTasksService } from "./admin-tasks.service.js";
 
 class AdminTasksController {
-  list = async (_req: Request, res: Response, next: NextFunction) => {
+  list = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const data = await adminTasksService.list();
+      const page = req.query.page ? Number(req.query.page) : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const data = await adminTasksService.list({ page, limit });
       res.status(200).json(data);
     } catch (error) {
       next(error);

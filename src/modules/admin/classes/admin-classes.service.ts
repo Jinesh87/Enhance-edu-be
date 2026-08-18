@@ -36,9 +36,86 @@ function toClassDto(cls: Class) {
 export class AdminClassesService {
   private readonly repo = adminClassesRepository;
 
-  async list() {
-    const list = await this.repo.findAll();
-    return list.map(toClassDto);
+  async list(filters?: { page?: number; limit?: number }) {
+    const { classes } = await this.repo.findAll();
+    
+    // Group classes by subject and term
+    const groupedMap = new Map<string, any>();
+    for (const c of classes) {
+      const subjectName = c.subject || "General";
+      const termName = c.term
+        ? c.term.academicYear && c.term.yearLevel
+          ? `${c.term.name} · ${c.term.academicYear.year} · ${c.term.yearLevel.name}`
+          : c.term.name
+        : (c.termName ?? "Term 3 2026");
+      const key = `${subjectName}|${termName}`;
+
+      let durationMins = 90;
+      if (c.dayTime) {
+        const parts = c.dayTime.split(" ");
+        if (parts.length > 0) {
+          const startTimeStr = parts[0];
+          const tIndex = startTimeStr.indexOf("T");
+          if (tIndex !== -1) {
+            const timeStr = startTimeStr.slice(tIndex + 1, tIndex + 6);
+            const endTimeStr = parts[1] || "";
+            if (endTimeStr) {
+              const [sh, sm] = timeStr.split(":").map(Number);
+              const [eh, em] = endTimeStr.split(":").map(Number);
+              const diff = eh * 60 + em - (sh * 60 + sm);
+              if (diff > 0) durationMins = diff;
+            }
+          }
+        }
+      }
+
+      if (!groupedMap.has(key)) {
+        groupedMap.set(key, {
+          subject: subjectName,
+          term: termName,
+          sessionCount: 0,
+          totalDurationMinutes: 0,
+          teachers: new Set<string>(),
+          enrolled: 0,
+          needAttention: 0,
+          dayTime: c.dayTime || "",
+          classes: [],
+        });
+      }
+
+      const group = groupedMap.get(key);
+      group.sessionCount += 1;
+      group.totalDurationMinutes += durationMins;
+      if (c.teacher?.fullName) {
+        group.teachers.add(c.teacher.fullName);
+      }
+      group.classes.push(toClassDto(c));
+    }
+
+    const summaries = Array.from(groupedMap.values()).map(g => ({
+      subject: g.subject,
+      term: g.term,
+      sessionCount: g.sessionCount,
+      totalDurationMinutes: g.totalDurationMinutes,
+      teachers: Array.from(g.teachers),
+      enrolled: g.enrolled,
+      needAttention: g.needAttention,
+      dayTime: g.dayTime,
+      classes: g.classes,
+    }));
+
+    const total = summaries.length;
+    let paginated = summaries;
+    if (filters?.page && filters?.limit) {
+      const start = (filters.page - 1) * filters.limit;
+      paginated = summaries.slice(start, start + filters.limit);
+    }
+
+    return {
+      classes: classes.map(toClassDto),
+      summaries: paginated,
+      total,
+    };
   }
 
   async getById(id: string) {

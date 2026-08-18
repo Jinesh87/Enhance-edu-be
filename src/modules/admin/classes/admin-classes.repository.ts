@@ -31,14 +31,20 @@ export class AdminClassesRepository {
   private readonly users = AppDataSource.getRepository(User);
   private readonly terms = AppDataSource.getRepository(Term);
 
-  async findAll(): Promise<Class[]> {
-    return this.classes.find({
+  async findAll(filters?: { page?: number; limit?: number }): Promise<{ classes: Class[]; total: number }> {
+    const findOptions: any = {
       relations: {
         teacher: true,
         term: { academicYear: true, yearLevel: true },
       },
       order: { createdAt: "DESC" },
-    });
+    };
+    if (filters?.page && filters?.limit) {
+      findOptions.skip = (filters.page - 1) * filters.limit;
+      findOptions.take = filters.limit;
+    }
+    const [classes, total] = await this.classes.findAndCount(findOptions);
+    return { classes, total };
   }
 
   async findById(id: string): Promise<Class | null> {

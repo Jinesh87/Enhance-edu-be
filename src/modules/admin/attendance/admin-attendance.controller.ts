@@ -8,7 +8,17 @@ import { AppError } from "../../../common/errors/AppError.js";
 class AdminAttendanceController {
   async listExceptions(req: Request, res: Response, next: NextFunction) {
     try {
-      const data = await adminAttendanceService.getExceptionsAndAbsences();
+      const pageExceptions = req.query.pageExceptions ? Number(req.query.pageExceptions) : undefined;
+      const limitExceptions = req.query.limitExceptions ? Number(req.query.limitExceptions) : undefined;
+      const pageAbsences = req.query.pageAbsences ? Number(req.query.pageAbsences) : undefined;
+      const limitAbsences = req.query.limitAbsences ? Number(req.query.limitAbsences) : undefined;
+
+      const data = await adminAttendanceService.getExceptionsAndAbsences({
+        pageExceptions,
+        limitExceptions,
+        pageAbsences,
+        limitAbsences,
+      });
       res.status(200).json(data);
     } catch (error) {
       next(error);

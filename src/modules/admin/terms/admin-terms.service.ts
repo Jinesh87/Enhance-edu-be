@@ -40,12 +40,20 @@ export class AdminTermsService {
   private readonly academicYears = AppDataSource.getRepository(AcademicYear);
   private readonly yearLevels = AppDataSource.getRepository(YearLevel);
 
-  async list() {
-    const terms = await this.terms.find({
+  async list(filters?: { page?: number; limit?: number }) {
+    const findOptions: any = {
       relations: { academicYear: true, yearLevel: true },
       order: { startDate: "DESC" },
-    });
-    return terms.map(toTermDto);
+    };
+    if (filters?.page && filters?.limit) {
+      findOptions.skip = (filters.page - 1) * filters.limit;
+      findOptions.take = filters.limit;
+    }
+    const [terms, total] = await this.terms.findAndCount(findOptions);
+    return {
+      terms: terms.map(toTermDto),
+      total,
+    };
   }
 
   async create(input: TermInput) {

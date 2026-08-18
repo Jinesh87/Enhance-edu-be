@@ -43,18 +43,31 @@ export class UsersService {
   private readonly users = AppDataSource.getRepository(User);
   private readonly teacherSubjects = AppDataSource.getRepository(TeacherSubject);
 
-  async list(filters: ListPeopleFilters): Promise<PersonDto[]> {
+  async list(
+    filters: ListPeopleFilters,
+  ): Promise<{ people: PersonDto[]; total: number; activeCount: number; invitedCount: number }> {
     const where: { status?: UserStatus; role?: UserRole } = {};
     if (filters.status) where.status = filters.status;
     if (filters.role) where.role = filters.role;
 
-    const people = await this.users.find({
+    const findOptions: any = {
       where,
       order: { createdAt: "DESC" },
-    });
+    };
+
+    if (filters.page && filters.limit) {
+      findOptions.skip = (filters.page - 1) * filters.limit;
+      findOptions.take = filters.limit;
+    }
+
+    const [users, total] = await this.users.findAndCount(findOptions);
+    const activeCount = await this.users.count({ where: { ...where, status: UserStatus.ACTIVE } });
+    const invitedCount = await this.users.count({ where: { ...where, status: UserStatus.INVITED } });
 
     // Efficiently load teacher subjects to avoid N+1 query
-    const staffIds = people.filter((p) => p.role === UserRole.STAFF).map((p) => p.id);
+    const staffIds = users
+      .filter((p) => p.role === UserRole.STAFF)
+      .map((p) => p.id);
     const subjectsMap: Record<string, string[]> = {};
     if (staffIds.length > 0) {
       const tsRecords = await this.teacherSubjects.find({
@@ -68,13 +81,15 @@ export class UsersService {
       }
     }
 
-    return people.map((user) => {
+    const people = users.map((user) => {
       const dto = toPersonDto(user);
       if (user.role === UserRole.STAFF) {
         dto.subjectIds = subjectsMap[user.id] || [];
       }
       return dto;
     });
+
+    return { people, total, activeCount, invitedCount };
   }
 
   async getById(id: string): Promise<PersonDto> {

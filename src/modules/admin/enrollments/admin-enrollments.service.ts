@@ -156,7 +156,7 @@ export class AdminEnrollmentsService {
   private readonly terms = AppDataSource.getRepository(Term);
   private readonly subjects = AppDataSource.getRepository(Subject);
 
-  async list() {
+  async list(filters?: { page?: number; limit?: number }) {
     const [rows, pendingRows] = await Promise.all([
       this.enrollments.find({
         relations: {
@@ -192,10 +192,19 @@ export class AdminEnrollmentsService {
       ),
     );
 
-    return [...awaiting, ...fulfilled].sort(
+    let all = [...awaiting, ...fulfilled].sort(
       (a, b) =>
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
+
+    const total = all.length;
+
+    if (filters?.page && filters?.limit) {
+      const start = (filters.page - 1) * filters.limit;
+      all = all.slice(start, start + filters.limit);
+    }
+
+    return { enrollments: all, total };
   }
 
   async listPendingStudentsForGuardian(guardianId: string) {
