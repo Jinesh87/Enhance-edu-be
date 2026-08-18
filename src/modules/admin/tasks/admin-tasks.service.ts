@@ -55,7 +55,7 @@ export class AdminTasksService {
   private readonly tasks = AppDataSource.getRepository(Task);
   private readonly attendance = new AttendanceRepository();
 
-  async list() {
+  async list(filters?: { page?: number; limit?: number }) {
     await this.syncAbsenceChaseTasks();
 
     const tasks = await this.tasks.find({
@@ -71,6 +71,13 @@ export class AdminTasksService {
     const open = tasks.filter((task) => task.status === TaskStatus.OPEN);
     const overdue = open.filter((task) => task.dueAt.getTime() < now);
 
+    const total = tasks.length;
+    let paginatedTasks = tasks;
+    if (filters?.page && filters?.limit) {
+      const start = (filters.page - 1) * filters.limit;
+      paginatedTasks = tasks.slice(start, start + filters.limit);
+    }
+
     return {
       counts: {
         open: open.length,
@@ -78,7 +85,8 @@ export class AdminTasksService {
         awaitingApproval: 0,
         unassigned: 0,
       },
-      tasks: tasks.map(toTaskDto),
+      tasks: paginatedTasks.map(toTaskDto),
+      total,
     };
   }
 

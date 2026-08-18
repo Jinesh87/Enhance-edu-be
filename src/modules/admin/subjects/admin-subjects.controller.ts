@@ -2,10 +2,12 @@ import type { NextFunction, Request, Response } from "express";
 import { adminSubjectsService } from "./admin-subjects.service.js";
 
 class AdminSubjectsController {
-  list = async (_req: Request, res: Response, next: NextFunction) => {
+  list = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const subjects = await adminSubjectsService.list();
-      res.status(200).json({ subjects });
+      const page = req.query.page ? Number(req.query.page) : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const { subjects, total, recentlyAddedCount } = await adminSubjectsService.list({ page, limit });
+      res.status(200).json({ subjects, total, recentlyAddedCount });
     } catch (error) {
       next(error);
     }

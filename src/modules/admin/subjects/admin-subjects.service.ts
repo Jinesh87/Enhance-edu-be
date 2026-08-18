@@ -1,6 +1,7 @@
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { Subject, YearLevel } from "../../../entities/index.js";
+import { MoreThanOrEqual } from "typeorm";
 
 function toSubjectDto(subject: Subject) {
   return {
@@ -22,12 +23,27 @@ export class AdminSubjectsService {
   private readonly subjects = AppDataSource.getRepository(Subject);
   private readonly yearLevels = AppDataSource.getRepository(YearLevel);
 
-  async list() {
-    const subjects = await this.subjects.find({
+  async list(filters?: { page?: number; limit?: number }) {
+    const findOptions: any = {
       relations: { yearLevel: true },
       order: { name: "ASC" },
+    };
+    if (filters?.page && filters?.limit) {
+      findOptions.skip = (filters.page - 1) * filters.limit;
+      findOptions.take = filters.limit;
+    }
+    const [subjects, total] = await this.subjects.findAndCount(findOptions);
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentlyAddedCount = await this.subjects.count({
+      where: {
+        createdAt: MoreThanOrEqual(weekAgo),
+      },
     });
-    return subjects.map(toSubjectDto);
+    return {
+      subjects: subjects.map(toSubjectDto),
+      total,
+      recentlyAddedCount,
+    };
   }
 
   async create(nameInput: string, yearLevelIdInput?: string | null) {

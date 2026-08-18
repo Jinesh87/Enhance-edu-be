@@ -9,7 +9,12 @@ import { AppError } from "../../../common/errors/AppError.js";
 export class AdminAttendanceService {
   private readonly repo = new AttendanceRepository();
 
-  async getExceptionsAndAbsences() {
+  async getExceptionsAndAbsences(filters?: {
+    pageExceptions?: number;
+    limitExceptions?: number;
+    pageAbsences?: number;
+    limitAbsences?: number;
+  }) {
     const exceptions = await this.repo.findFlaggedScans();
     const since = new Date();
     since.setHours(0, 0, 0, 0);
@@ -17,29 +22,47 @@ export class AdminAttendanceService {
     const pendingCount = exceptions.length;
     const unresolvedAbsences = await this.repo.findUnresolvedAbsences();
 
+    let mappedExceptions = exceptions.map((e) => ({
+      id: e.id,
+      studentName: e.student.fullName,
+      sessionName: `${e.session.class.code} - ${e.session.class.name}`,
+      scannedAt: e.scannedAt,
+      reasonFlagged: e.reasonFlagged,
+      deviceSignal: e.deviceSignal,
+    }));
+
+    const totalExceptions = mappedExceptions.length;
+    if (filters?.pageExceptions && filters?.limitExceptions) {
+      const start = (filters.pageExceptions - 1) * filters.limitExceptions;
+      mappedExceptions = mappedExceptions.slice(start, start + filters.limitExceptions);
+    }
+
+    let mappedAbsences = unresolvedAbsences.map((ua) => ({
+      id: ua.id,
+      studentName: ua.student.fullName,
+      sessionName: `${ua.session.class.code} - ${ua.session.class.name}`,
+      graceClosed: new Date(
+        ua.session.startAt.getTime() + ua.session.gracePeriodMinutes * 60000,
+      ).toISOString(),
+    }));
+
+    const totalAbsences = mappedAbsences.length;
+    if (filters?.pageAbsences && filters?.limitAbsences) {
+      const start = (filters.pageAbsences - 1) * filters.limitAbsences;
+      mappedAbsences = mappedAbsences.slice(start, start + filters.limitAbsences);
+    }
+
     return {
       stats: {
         scannedToday: totalScans,
-        inGraceWindow: 11, // Mock count matching S7/S8 screen mockup
+        inGraceWindow: 11,
         exceptionsCount: pendingCount,
         unresolvedAbsencesCount: unresolvedAbsences.length,
       },
-      exceptions: exceptions.map((e) => ({
-        id: e.id,
-        studentName: e.student.fullName,
-        sessionName: `${e.session.class.code} - ${e.session.class.name}`,
-        scannedAt: e.scannedAt,
-        reasonFlagged: e.reasonFlagged,
-        deviceSignal: e.deviceSignal,
-      })),
-      unresolvedAbsences: unresolvedAbsences.map((ua) => ({
-        id: ua.id,
-        studentName: ua.student.fullName,
-        sessionName: `${ua.session.class.code} - ${ua.session.class.name}`,
-        graceClosed: new Date(
-          ua.session.startAt.getTime() + ua.session.gracePeriodMinutes * 60000,
-        ),
-      })),
+      exceptions: mappedExceptions,
+      totalExceptions,
+      unresolvedAbsences: mappedAbsences,
+      totalAbsences,
     };
   }
 

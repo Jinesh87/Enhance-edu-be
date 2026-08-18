@@ -9,11 +9,16 @@ import { usersService } from "./users.service.js";
 export class UsersController {
   list = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const people = await usersService.list({
+      const page = req.query.page ? Number(req.query.page) : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+      const { people, total, activeCount, invitedCount } = await usersService.list({
         status: req.query.status as UserStatus | undefined,
         role: req.query.role as UserRole | undefined,
+        page,
+        limit,
       });
-      res.status(200).json({ people });
+      res.status(200).json({ people, total, activeCount, invitedCount });
     } catch (error) {
       next(error);
     }

@@ -85,6 +85,8 @@ export type UpdatePersonInput = {
 export type ListPeopleFilters = {
   status?: UserStatus;
   role?: UserRole;
+  page?: number;
+  limit?: number;
 };
 
 export type InvitePersonResult = {
