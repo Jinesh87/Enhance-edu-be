@@ -30,8 +30,6 @@ export class TeacherAttendanceService {
     return session;
   }
 
-
-
   async generateSessionQrCode(session: Session) {
     const now = Date.now();
 

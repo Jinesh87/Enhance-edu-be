@@ -20,6 +20,7 @@ import {
   TeacherSubject,
   AcademicYear,
   YearLevel,
+  InstitutionSetting,
   AuditChange,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
@@ -72,6 +73,7 @@ export const AppDataSource = new DataSource({
     TeacherSubject,
     AcademicYear,
     YearLevel,
+    InstitutionSetting,
     AuditChange,
   ],
   migrations: [],

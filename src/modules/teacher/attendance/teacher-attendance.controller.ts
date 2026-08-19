@@ -4,8 +4,6 @@ import { sharedAttendanceService } from "../../shared/attendance/shared-attendan
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
 
 class TeacherAttendanceController {
-
-
   async getQrCode(req: Request, res: Response, next: NextFunction) {
     try {
       const sessionId = req.params.id as string;
@@ -14,7 +12,8 @@ class TeacherAttendanceController {
         req.user!.id,
         req.user!.role,
       );
-      const result = await teacherAttendanceService.generateSessionQrCode(session);
+      const result =
+        await teacherAttendanceService.generateSessionQrCode(session);
       res.status(200).json(result);
     } catch (error) {
       next(error);
@@ -54,8 +53,12 @@ class TeacherAttendanceController {
       });
 
       try {
-        const rollData = await sharedAttendanceService.getLiveRollData(sessionId);
-        liveUpdateManager.broadcast(sessionId, { type: "ROLL_UPDATE", ...rollData });
+        const rollData =
+          await sharedAttendanceService.getLiveRollData(sessionId);
+        liveUpdateManager.broadcast(sessionId, {
+          type: "ROLL_UPDATE",
+          ...rollData,
+        });
       } catch (err) {
         console.error("Failed to broadcast manual roll update:", err);
       }

@@ -64,7 +64,9 @@ export class AttendanceRepository {
     });
     const classesWithSessions = new Set(existingSessions.map((s) => s.classId));
 
-    const missingClassIds = classIds.filter((id) => !classesWithSessions.has(id));
+    const missingClassIds = classIds.filter(
+      (id) => !classesWithSessions.has(id),
+    );
     if (missingClassIds.length === 0) return;
 
     const missingClasses = await this.classes.find({
@@ -87,7 +89,11 @@ export class AttendanceRepository {
           }),
         );
       } catch (err) {
-        console.error("Failed to parse dayTime during self-healing:", c.dayTime, err);
+        console.error(
+          "Failed to parse dayTime during self-healing:",
+          c.dayTime,
+          err,
+        );
       }
     }
 

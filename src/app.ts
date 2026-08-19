@@ -8,6 +8,7 @@ import authRouter from "./modules/auth/auth.routes.js";
 import healthRouter from "./modules/health/health.routes.js";
 import usersRouter from "./modules/users/users.routes.js";
 import emailRouter from "./modules/email/email.routes.js";
+import settingsRouter from "./modules/settings/settings.routes.js";
 import studentAttendanceRouter from "./modules/student/attendance/student-attendance.routes.js";
 import teacherAttendanceRouter from "./modules/teacher/attendance/teacher-attendance.routes.js";
 import teacherClassRouter from "./modules/teacher/class/teacher-class.routes.js";
@@ -28,10 +29,6 @@ const app = express();
 app.use(
   cors({
     origin: env.CORS_ORIGIN?.split(",").map((value) => value.trim()) ?? true,
-    // origin: [
-    //   "http://localhost:5173",
-    //   "https://strongman-overdress-reappear.ngrok-free.dev",
-    // ],
     credentials: true,
   }),
 );
@@ -58,6 +55,7 @@ app.use("/api/health", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/email", emailRouter);
+app.use("/api/settings", settingsRouter);
 const attendanceRouter = express.Router();
 attendanceRouter.use(authenticate);
 attendanceRouter.use(studentAttendanceRouter);

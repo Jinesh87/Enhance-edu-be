@@ -8,10 +8,18 @@ import { AppError } from "../../../common/errors/AppError.js";
 class AdminAttendanceController {
   async listExceptions(req: Request, res: Response, next: NextFunction) {
     try {
-      const pageExceptions = req.query.pageExceptions ? Number(req.query.pageExceptions) : undefined;
-      const limitExceptions = req.query.limitExceptions ? Number(req.query.limitExceptions) : undefined;
-      const pageAbsences = req.query.pageAbsences ? Number(req.query.pageAbsences) : undefined;
-      const limitAbsences = req.query.limitAbsences ? Number(req.query.limitAbsences) : undefined;
+      const pageExceptions = req.query.pageExceptions
+        ? Number(req.query.pageExceptions)
+        : undefined;
+      const limitExceptions = req.query.limitExceptions
+        ? Number(req.query.limitExceptions)
+        : undefined;
+      const pageAbsences = req.query.pageAbsences
+        ? Number(req.query.pageAbsences)
+        : undefined;
+      const limitAbsences = req.query.limitAbsences
+        ? Number(req.query.limitAbsences)
+        : undefined;
 
       const data = await adminAttendanceService.getExceptionsAndAbsences({
         pageExceptions,
@@ -32,22 +40,34 @@ class AdminAttendanceController {
       const { decision } = req.body;
 
       if (!Object.values(AdminDecision).includes(decision)) {
-        throw new AppError(400, "Invalid exception decision", "INVALID_DECISION");
+        throw new AppError(
+          400,
+          "Invalid exception decision",
+          "INVALID_DECISION",
+        );
       }
 
       const result = await adminAttendanceService.resolveScanException(
         scanEventId,
         decision as AdminDecision,
-        resolvedByUserId
+        resolvedByUserId,
       );
 
       try {
         if (result.scan && result.scan.sessionId) {
-          const rollData = await sharedAttendanceService.getLiveRollData(result.scan.sessionId);
-          liveUpdateManager.broadcast(result.scan.sessionId, { type: "ROLL_UPDATE", ...rollData });
+          const rollData = await sharedAttendanceService.getLiveRollData(
+            result.scan.sessionId,
+          );
+          liveUpdateManager.broadcast(result.scan.sessionId, {
+            type: "ROLL_UPDATE",
+            ...rollData,
+          });
         }
       } catch (err) {
-        console.error("Failed to broadcast exception resolution roll update:", err);
+        console.error(
+          "Failed to broadcast exception resolution roll update:",
+          err,
+        );
       }
 
       res.status(200).json(result);
