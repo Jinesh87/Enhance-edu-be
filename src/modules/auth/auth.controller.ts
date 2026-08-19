@@ -126,7 +126,13 @@ export class AuthController {
         password: req.body.password,
       });
 
-      if ("requires2fa" in result) {
+      // 2FA is disabled for login for now.
+      // if ("requires2fa" in result) {
+      //   res.status(200).json(result);
+      //   return;
+      // }
+
+      if (!("tokens" in result)) {
         res.status(200).json(result);
         return;
       }
