@@ -16,13 +16,25 @@ export class AdminAttendanceService {
     limitAbsences?: number;
   }) {
     const exceptions = await this.repo.findFlaggedScans();
+
+    // Group and unique by student and session to prevent duplicate exception rows
+    const seen = new Set<string>();
+    const uniqueExceptions = exceptions.filter((e) => {
+      const key = `${e.studentId}|${e.sessionId}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+
     const since = new Date();
     since.setHours(0, 0, 0, 0);
     const totalScans = await this.repo.countTotalScans(since);
-    const pendingCount = exceptions.length;
+    const pendingCount = uniqueExceptions.length;
     const unresolvedAbsences = await this.repo.findUnresolvedAbsences();
 
-    let mappedExceptions = exceptions.map((e) => ({
+    let mappedExceptions = uniqueExceptions.map((e) => ({
       id: e.id,
       studentName: e.student.fullName,
       sessionName: `${e.session.class.code} - ${e.session.class.name}`,
@@ -82,17 +94,27 @@ export class AdminAttendanceService {
       throw new AppError(404, "Scan event not found", "SCAN_EVENT_NOT_FOUND");
     }
 
-    if (decision === AdminDecision.REJECT) {
-      scan.status = ScanStatus.REJECTED;
-    } else if (decision === AdminDecision.IGNORE) {
-      scan.status = ScanStatus.IGNORED;
-    } else {
-      scan.status = ScanStatus.ACCEPTED;
+    // Bulk resolve all duplicate pending scans for the same student and session
+    const allPendingScans = await this.repo.findPendingScansBySessionId(scan.sessionId);
+    const duplicates = allPendingScans.filter(
+      (s) => s.studentId === scan.studentId,
+    );
+
+    const statusMap = {
+      [AdminDecision.REJECT]: ScanStatus.REJECTED,
+      [AdminDecision.IGNORE]: ScanStatus.IGNORED,
+      [AdminDecision.ACCEPT]: ScanStatus.ACCEPTED,
+      [AdminDecision.ACCEPT_AS_LATE]: ScanStatus.ACCEPTED,
+    };
+    const targetStatus = statusMap[decision] || ScanStatus.ACCEPTED;
+
+    for (const dup of duplicates) {
+      dup.status = targetStatus;
+      dup.adminDecision = decision;
+      dup.resolvedAt = new Date();
+      dup.resolvedByUserId = resolvedByUserId;
+      await this.repo.saveScanEvent(dup);
     }
-    scan.adminDecision = decision;
-    scan.resolvedAt = new Date();
-    scan.resolvedByUserId = resolvedByUserId;
-    await this.repo.saveScanEvent(scan);
 
     const record = await this.repo.findAttendanceRecord(
       scan.sessionId,

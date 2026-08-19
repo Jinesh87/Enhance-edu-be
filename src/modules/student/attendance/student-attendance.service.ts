@@ -140,10 +140,6 @@ export class StudentAttendanceService {
       studentId,
     );
 
-    /*
-     * If already successfully checked in,
-     * don't modify the valid attendance record.
-     */
     if (
       existingRecord &&
       (existingRecord.status === AttendanceStatus.PRESENT ||
@@ -168,16 +164,8 @@ export class StudentAttendanceService {
       };
     }
 
-    let reasonFlagged = ScanFlagReason.NONE;
+    let reasonFlagged: ScanFlagReason = ScanFlagReason.NONE;
 
-    /*
-     * Check the session attendance window.
-     *
-     * Example:
-     * session starts at 4:00
-     * gracePeriodMinutes = 25
-     * normal check-in closes at 4:25.
-     */
     const gracePeriodMinutes = session.gracePeriodMinutes ?? 25;
 
     const checkInOpensAt = session.startAt.getTime();
@@ -185,9 +173,14 @@ export class StudentAttendanceService {
     const checkInClosesAt =
       session.startAt.getTime() + gracePeriodMinutes * 60_000;
 
+    const classEndsAt = session.endAt.getTime();
+
     const scanTime = scannedAt.getTime();
 
-    if (scanTime < checkInOpensAt || scanTime > checkInClosesAt) {
+    const isAfterGracePeriod =
+      scanTime > checkInClosesAt && scanTime <= classEndsAt;
+
+    if (scanTime < checkInOpensAt || scanTime > classEndsAt) {
       reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
     }
 
@@ -203,10 +196,6 @@ export class StudentAttendanceService {
       }
     }
 
-    /*
-     * Validate QR only when the session window
-     * itself hasn't already failed.
-     */
     if (reasonFlagged === ScanFlagReason.NONE) {
       const qrResult = validateAttendanceQr(scannedCode, sessionId, scannedAt);
 
@@ -219,16 +208,19 @@ export class StudentAttendanceService {
       }
     }
 
-    /*
-     * Location / network validation.
-     */
     if (reasonFlagged === ScanFlagReason.NONE) {
       if (latitude !== undefined && longitude !== undefined) {
-        const instSetting = await AppDataSource.getRepository(InstitutionSetting).findOneBy({ id: "default" });
+        const instSetting = await AppDataSource.getRepository(
+          InstitutionSetting,
+        ).findOneBy({ id: "default" });
         let targetLat: number | null = null;
         let targetLon: number | null = null;
 
-        if (instSetting && instSetting.latitude !== null && instSetting.longitude !== null) {
+        if (
+          instSetting &&
+          instSetting.latitude !== null &&
+          instSetting.longitude !== null
+        ) {
           targetLat = instSetting.latitude;
           targetLon = instSetting.longitude;
         } else {
@@ -262,42 +254,86 @@ export class StudentAttendanceService {
       }
     }
 
-    const isException = reasonFlagged !== ScanFlagReason.NONE;
+    const currentReason = reasonFlagged as ScanFlagReason;
+    const isHardFailure =
+      currentReason === ScanFlagReason.TOKEN_EXPIRED ||
+      currentReason === ScanFlagReason.WRONG_SESSION_CODE ||
+      currentReason === ScanFlagReason.DUPLICATE_SCAN;
+
+    const isException = reasonFlagged !== ScanFlagReason.NONE && !isHardFailure;
+
+    if (isException) {
+      const existingPendingScans =
+        await this.repo.findPendingScansBySessionId(sessionId);
+      const studentPendingScans = existingPendingScans.filter(
+        (s) => s.studentId === studentId,
+      );
+
+      for (const oldScan of studentPendingScans) {
+        oldScan.status = ScanStatus.IGNORED;
+        await this.repo.saveScanEvent(oldScan);
+      }
+    }
 
     const scanEvent = await this.repo.createScanEvent({
       studentId,
       sessionId,
       scannedAt,
 
-      // This tells us when the backend received it.
       syncedAt: new Date(),
 
       scannedCode,
       deviceSignal,
       isOfflineSync,
 
-      status: isException ? ScanStatus.PENDING : ScanStatus.ACCEPTED,
+      status: isException ? ScanStatus.PENDING : (isHardFailure ? ScanStatus.REJECTED : ScanStatus.ACCEPTED),
 
       reasonFlagged,
     });
 
-    /*
-     * Problematic scan → exception queue.
-     */
+    if (isHardFailure) {
+      return {
+        status: "EXCEPTION",
+        reasonFlagged,
+        scanEventId: scanEvent.id,
+      };
+    }
+
     if (isException) {
-      if (!existingRecord) {
-        await this.repo.createAttendanceRecord({
-          sessionId,
-          studentId,
-          status: AttendanceStatus.EXCEPTION,
-          scannedAt,
-        });
-      } else {
-        existingRecord.status = AttendanceStatus.EXCEPTION;
+      try {
+        if (!existingRecord) {
+          await this.repo.createAttendanceRecord({
+            sessionId,
+            studentId,
+            status: AttendanceStatus.EXCEPTION,
+            scannedAt,
+          });
+        } else {
+          existingRecord.status = AttendanceStatus.EXCEPTION;
 
-        existingRecord.scannedAt = scannedAt;
+          existingRecord.scannedAt = scannedAt;
 
-        await this.repo.saveAttendanceRecord(existingRecord);
+          await this.repo.saveAttendanceRecord(existingRecord);
+        }
+      } catch (err: any) {
+        if (
+          err &&
+          (err.code === "23505" ||
+            err.message?.includes("unique constraint") ||
+            err.message?.includes("UniqueConstraintError"))
+        ) {
+          const concurrentRecord = await this.repo.findAttendanceRecord(
+            sessionId,
+            studentId,
+          );
+          if (concurrentRecord) {
+            concurrentRecord.status = AttendanceStatus.EXCEPTION;
+            concurrentRecord.scannedAt = scannedAt;
+            await this.repo.saveAttendanceRecord(concurrentRecord);
+          }
+        } else {
+          throw err;
+        }
       }
 
       return {
@@ -307,26 +343,44 @@ export class StudentAttendanceService {
       };
     }
 
-    /*
-     * A normal valid scan inside the grace window
-     * is PRESENT.
-     *
-     * LATE is reserved for admin accepting an
-     * exception as "Accept as late".
-     */
-    if (!existingRecord) {
-      await this.repo.createAttendanceRecord({
-        sessionId,
-        studentId,
-        status: AttendanceStatus.PRESENT,
-        scannedAt,
-      });
-    } else {
-      existingRecord.status = AttendanceStatus.PRESENT;
+    const status = isAfterGracePeriod
+      ? AttendanceStatus.ABSENT
+      : AttendanceStatus.PRESENT;
 
-      existingRecord.scannedAt = scannedAt;
+    try {
+      if (!existingRecord) {
+        await this.repo.createAttendanceRecord({
+          sessionId,
+          studentId,
+          status,
+          scannedAt,
+        });
+      } else {
+        existingRecord.status = status;
 
-      await this.repo.saveAttendanceRecord(existingRecord);
+        existingRecord.scannedAt = scannedAt;
+
+        await this.repo.saveAttendanceRecord(existingRecord);
+      }
+    } catch (err: any) {
+      if (
+        err &&
+        (err.code === "23505" ||
+          err.message?.includes("unique constraint") ||
+          err.message?.includes("UniqueConstraintError"))
+      ) {
+        const concurrentRecord = await this.repo.findAttendanceRecord(
+          sessionId,
+          studentId,
+        );
+        if (concurrentRecord) {
+          concurrentRecord.status = status;
+          concurrentRecord.scannedAt = scannedAt;
+          await this.repo.saveAttendanceRecord(concurrentRecord);
+        }
+      } else {
+        throw err;
+      }
     }
 
     return {
@@ -359,8 +413,6 @@ export class StudentAttendanceService {
           sessionId: scan.sessionId,
           scannedCode: scan.scannedCode,
 
-          // Offline scans use the original time
-          // recorded on the student's device.
           scannedAt,
 
           deviceSignal: scan.deviceSignal ?? "offline",

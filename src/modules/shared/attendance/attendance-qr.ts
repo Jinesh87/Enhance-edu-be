@@ -79,10 +79,10 @@ export function validateAttendanceQr(
 
   const currentWindow = Math.floor(scannedAt.getTime() / QR_ROTATION_WINDOW_MS);
 
-  // Allow current QR and immediately previous QR.
-  // This avoids failure exactly when the QR rotates.
+  const tolerance = 10;
   const isRecent =
-    codeWindowIndex === currentWindow || codeWindowIndex === currentWindow - 1;
+    codeWindowIndex >= currentWindow - tolerance &&
+    codeWindowIndex <= currentWindow + tolerance;
 
   if (!isRecent) {
     return {
