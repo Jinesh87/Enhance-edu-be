@@ -26,11 +26,11 @@ const app = express();
 
 app.use(
   cors({
-    origin: env.CORS_ORIGIN?.split(",").map((value) => value.trim()) ?? true,
-    // origin: [
-    //   "http://localhost:5173",
-    //   "https://strongman-overdress-reappear.ngrok-free.dev",
-    // ],
+    // origin: env.CORS_ORIGIN?.split(",").map((value) => value.trim()) ?? true,
+    origin: [
+      "http://localhost:5173",
+      "https://strongman-overdress-reappear.ngrok-free.dev",
+    ],
     credentials: true,
   }),
 );
