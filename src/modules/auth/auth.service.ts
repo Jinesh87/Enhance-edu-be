@@ -812,9 +812,10 @@ export class AuthService {
 
     await clearLoginLockout(lockKey);
 
-    if (user.securitySetupComplete && user.twoFactorMethod) {
-      return this.startLogin2faChallenge(user);
-    }
+    // 2FA is disabled for login for now.
+    // if (user.securitySetupComplete && user.twoFactorMethod) {
+    //   return this.startLogin2faChallenge(user);
+    // }
 
     user.lastSignedInAt = new Date();
     await this.users.save(user);
