@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import { adminClassesService } from "./admin-classes.service.js";
 
 class AdminClassesController {
@@ -37,6 +38,18 @@ class AdminClassesController {
   create = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const classItem = await adminClassesService.create(req.body);
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "CREATED",
+        recordType: "class",
+        recordId: classItem.id,
+        recordLabel: classItem.subject || classItem.name,
+        after: {
+          code: classItem.code,
+          dayTime: classItem.dayTime,
+          room: classItem.room,
+        },
+      });
       res.status(201).json({ class: classItem });
     } catch (error) {
       next(error);
@@ -49,6 +62,18 @@ class AdminClassesController {
         req.params.id as string,
         req.body,
       );
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "EDITED",
+        recordType: "class",
+        recordId: classItem.id,
+        recordLabel: classItem.subject || classItem.name,
+        after: {
+          code: classItem.code,
+          dayTime: classItem.dayTime,
+          room: classItem.room,
+        },
+      });
       res.status(200).json({ class: classItem });
     } catch (error) {
       next(error);
@@ -58,6 +83,13 @@ class AdminClassesController {
   remove = async (req: Request, res: Response, next: NextFunction) => {
     try {
       await adminClassesService.remove(req.params.id as string);
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "DELETED",
+        recordType: "class",
+        recordId: req.params.id as string,
+        recordLabel: req.params.id as string,
+      });
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -71,6 +103,14 @@ class AdminClassesController {
         req.body.classes,
         req.body.gracePeriodMinutes,
       );
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "EDITED",
+        recordType: "class",
+        recordId: req.body.termId,
+        recordLabel: `Timetable · ${classes.length} sessions`,
+        after: { sessionCount: classes.length, termId: req.body.termId },
+      });
       res.status(201).json({ classes });
     } catch (error) {
       next(error);

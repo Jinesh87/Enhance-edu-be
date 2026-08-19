@@ -1,5 +1,6 @@
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
+import { changedFields, writeAuditLog } from "../../../common/utils/audit-log.js";
 import { Subject, YearLevel } from "../../../entities/index.js";
 import { MoreThanOrEqual, ILike } from "typeorm";
 
@@ -16,6 +17,13 @@ function toSubjectDto(subject: Subject) {
       : null,
     createdAt: subject.createdAt,
     updatedAt: subject.updatedAt,
+  };
+}
+
+function subjectSnapshot(subject: Subject) {
+  return {
+    name: subject.name,
+    yearLevel: subject.yearLevel?.name ?? null,
   };
 }
 
@@ -52,7 +60,11 @@ export class AdminSubjectsService {
     };
   }
 
-  async create(nameInput: string, yearLevelIdInput?: string | null) {
+  async create(
+    nameInput: string,
+    yearLevelIdInput?: string | null,
+    actorId?: string,
+  ) {
     const name = nameInput.trim();
     const yearLevelId = yearLevelIdInput?.trim() || null;
     if (!name) {
@@ -69,15 +81,26 @@ export class AdminSubjectsService {
       where: { id: subject.id },
       relations: { yearLevel: true },
     });
-    return toSubjectDto(saved!);
+    const dto = toSubjectDto(saved!);
+    await writeAuditLog({
+      actorUserId: actorId,
+      action: "CREATED",
+      recordType: "subject",
+      recordId: dto.id,
+      recordLabel: dto.name,
+      after: subjectSnapshot(saved!),
+    });
+    return dto;
   }
 
   async update(
     id: string,
     nameInput: string,
     yearLevelIdInput?: string | null,
+    actorId?: string,
   ) {
     const subject = await this.findSubjectOrThrow(id);
+    const before = subjectSnapshot(subject);
     const name = nameInput.trim();
     const yearLevelId = yearLevelIdInput?.trim() || null;
     if (!name) {
@@ -95,12 +118,32 @@ export class AdminSubjectsService {
       where: { id: subject.id },
       relations: { yearLevel: true },
     });
-    return toSubjectDto(saved!);
+    const dto = toSubjectDto(saved!);
+    const diff = changedFields(before, subjectSnapshot(saved!));
+    await writeAuditLog({
+      actorUserId: actorId,
+      action: "EDITED",
+      recordType: "subject",
+      recordId: dto.id,
+      recordLabel: dto.name,
+      before: diff.before ?? before,
+      after: diff.after ?? subjectSnapshot(saved!),
+    });
+    return dto;
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorId?: string) {
     const subject = await this.findSubjectOrThrow(id);
+    const before = subjectSnapshot(subject);
     await this.subjects.remove(subject);
+    await writeAuditLog({
+      actorUserId: actorId,
+      action: "DELETED",
+      recordType: "subject",
+      recordId: id,
+      recordLabel: before.name,
+      before,
+    });
   }
 
   private async resolveYearLevel(yearLevelId: string | null) {
