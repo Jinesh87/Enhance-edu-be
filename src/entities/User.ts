@@ -51,6 +51,9 @@ export class User {
   @Column({ type: "enum", enum: EmploymentType, nullable: true })
   employmentType!: EmploymentType | null;
 
+  @Column({ type: "jsonb", nullable: true })
+  modulePermissions!: string[] | null;
+
   @Column({ type: "boolean", default: false })
   securitySetupComplete!: boolean;
 

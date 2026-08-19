@@ -3,6 +3,7 @@ import { UserRole } from "../../../common/constants/roles.js";
 import {
   authenticate,
   authorize,
+  authorizeAdminModule,
 } from "../../../common/middleware/authenticate.js";
 import { validate } from "../../../common/middleware/validate.js";
 import { adminAuditController } from "./admin-audit.controller.js";
@@ -10,7 +11,11 @@ import { listAuditQuerySchema } from "./admin-audit.validation.js";
 
 const adminAuditRouter = Router();
 
-adminAuditRouter.use(authenticate, authorize(UserRole.SUPER_ADMIN));
+adminAuditRouter.use(
+  authenticate,
+  authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
+  authorizeAdminModule("change-history"),
+);
 
 adminAuditRouter.get(
   "/",

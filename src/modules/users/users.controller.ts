@@ -46,6 +46,7 @@ export class UsersController {
           student: req.body.student,
           enrollment: req.body.enrollment,
           subjectIds: req.body.subjectIds,
+          modulePermissions: req.body.modulePermissions,
         },
         req.user!.id,
       );
@@ -72,6 +73,7 @@ export class UsersController {
         employmentType: req.body.employmentType,
         status: req.body.status,
         subjectIds: req.body.subjectIds,
+        modulePermissions: req.body.modulePermissions,
       }, req.user!.id);
       res.status(200).json({ person });
     } catch (error) {

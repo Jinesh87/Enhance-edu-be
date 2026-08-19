@@ -9,6 +9,7 @@ export type PublicUser = {
   username: string | null;
   mobile: string | null;
   role: UserRole;
+  modulePermissions: string[];
   status: UserStatus;
   securitySetupComplete: boolean;
   lastSignedInAt: Date | null;

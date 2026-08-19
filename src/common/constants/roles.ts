@@ -1,5 +1,6 @@
 export enum UserRole {
   SUPER_ADMIN = "SUPER_ADMIN",
+  OFFICE_STAFF = "OFFICE_STAFF",
   STAFF = "STAFF",
   STUDENT = "STUDENT",
   GUARDIAN = "GUARDIAN",
@@ -10,6 +11,7 @@ export const USER_ROLES = Object.values(UserRole);
 /** Roles a Super Admin can invite directly (students enrol via guardian invite). */
 export const INVITABLE_ROLES = [
   UserRole.SUPER_ADMIN,
+  UserRole.OFFICE_STAFF,
   UserRole.STAFF,
   UserRole.GUARDIAN,
 ] as const;

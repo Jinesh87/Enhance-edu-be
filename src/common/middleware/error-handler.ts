@@ -14,17 +14,20 @@ export function errorHandler(
       logger.error({ err }, err.message);
     }
 
-    if (err.statusCode === 403) {
+    // Only sign-in denials belong in change history as "Sign-in".
+    // Module/role 403s are expected for scoped staff and must not look like failed logins.
+    if (
+      err.statusCode === 403 &&
+      (err.code === "DEACTIVATED" || err.code === "INVITATION_PENDING")
+    ) {
       void writeAuditLog({
         actorUserId: req.user?.id,
         actorName: req.user?.email,
         action: "DENIED",
         recordType: "account",
         recordId: req.user?.id,
-        recordLabel: req.originalUrl,
+        recordLabel: req.user?.email ?? "Unknown",
         after: {
-          path: req.originalUrl,
-          method: req.method,
           reason: err.code,
         },
       });
