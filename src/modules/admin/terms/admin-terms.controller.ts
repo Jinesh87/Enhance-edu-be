@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import { adminTermsService } from "./admin-terms.service.js";
 
 class AdminTermsController {
@@ -25,6 +26,19 @@ class AdminTermsController {
         startDate: req.body.startDate,
         endDate: req.body.endDate,
       });
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "CREATED",
+        recordType: "term",
+        recordId: term.id,
+        recordLabel: term.name,
+        after: {
+          academicYear: term.academicYear?.year,
+          yearLevel: term.yearLevel?.name,
+          startDate: term.startDate,
+          endDate: term.endDate,
+        },
+      });
       res.status(201).json({ term });
     } catch (error) {
       next(error);
@@ -40,6 +54,19 @@ class AdminTermsController {
         startDate: req.body.startDate,
         endDate: req.body.endDate,
       });
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "EDITED",
+        recordType: "term",
+        recordId: term.id,
+        recordLabel: term.name,
+        after: {
+          academicYear: term.academicYear?.year,
+          yearLevel: term.yearLevel?.name,
+          startDate: term.startDate,
+          endDate: term.endDate,
+        },
+      });
       res.status(200).json({ term });
     } catch (error) {
       next(error);
@@ -49,6 +76,13 @@ class AdminTermsController {
   remove = async (req: Request, res: Response, next: NextFunction) => {
     try {
       await adminTermsService.remove(req.params.id as string);
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "DELETED",
+        recordType: "term",
+        recordId: req.params.id as string,
+        recordLabel: req.params.id as string,
+      });
       res.status(204).send();
     } catch (error) {
       next(error);

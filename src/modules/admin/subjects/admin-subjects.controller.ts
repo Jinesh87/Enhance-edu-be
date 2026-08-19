@@ -19,6 +19,7 @@ class AdminSubjectsController {
       const subject = await adminSubjectsService.create(
         req.body.name,
         req.body.yearLevelId,
+        req.user!.id,
       );
       res.status(201).json({ subject });
     } catch (error) {
@@ -32,6 +33,7 @@ class AdminSubjectsController {
         req.params.id as string,
         req.body.name,
         req.body.yearLevelId,
+        req.user!.id,
       );
       res.status(200).json({ subject });
     } catch (error) {
@@ -41,7 +43,7 @@ class AdminSubjectsController {
 
   remove = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      await adminSubjectsService.remove(req.params.id as string);
+      await adminSubjectsService.remove(req.params.id as string, req.user!.id);
       res.status(204).send();
     } catch (error) {
       next(error);
