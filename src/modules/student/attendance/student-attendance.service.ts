@@ -185,9 +185,13 @@ export class StudentAttendanceService {
     const checkInClosesAt =
       session.startAt.getTime() + gracePeriodMinutes * 60_000;
 
+    const classEndsAt = session.endAt.getTime();
+
     const scanTime = scannedAt.getTime();
 
-    if (scanTime < checkInOpensAt || scanTime > checkInClosesAt) {
+    const isAfterGracePeriod = scanTime > checkInClosesAt && scanTime <= classEndsAt;
+
+    if (scanTime < checkInOpensAt || scanTime > classEndsAt) {
       reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
     }
 
@@ -309,20 +313,23 @@ export class StudentAttendanceService {
 
     /*
      * A normal valid scan inside the grace window
-     * is PRESENT.
+     * is PRESENT. If scanned after the grace window but
+     * before class ends, mark as ABSENT.
      *
      * LATE is reserved for admin accepting an
      * exception as "Accept as late".
      */
+    const status = isAfterGracePeriod ? AttendanceStatus.ABSENT : AttendanceStatus.PRESENT;
+
     if (!existingRecord) {
       await this.repo.createAttendanceRecord({
         sessionId,
         studentId,
-        status: AttendanceStatus.PRESENT,
+        status,
         scannedAt,
       });
     } else {
-      existingRecord.status = AttendanceStatus.PRESENT;
+      existingRecord.status = status;
 
       existingRecord.scannedAt = scannedAt;
 
