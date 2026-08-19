@@ -258,8 +258,16 @@ export class AdminClassesService {
     return toClassDto(cls);
   }
 
-  async bulkReplace(termId: string, classesToCreate: ClassInput[]) {
-    const savedEntities = await this.repo.bulkReplace(termId, classesToCreate);
+  async bulkReplace(
+    termId: string,
+    classesToCreate: ClassInput[],
+    gracePeriodMinutes?: number,
+  ) {
+    const savedEntities = await this.repo.bulkReplace(
+      termId,
+      classesToCreate,
+      gracePeriodMinutes,
+    );
     return savedEntities.map(toClassDto);
   }
 
