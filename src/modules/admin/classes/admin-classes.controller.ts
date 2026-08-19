@@ -69,6 +69,7 @@ class AdminClassesController {
       const classes = await adminClassesService.bulkReplace(
         req.body.termId,
         req.body.classes,
+        req.body.gracePeriodMinutes,
       );
       res.status(201).json({ classes });
     } catch (error) {

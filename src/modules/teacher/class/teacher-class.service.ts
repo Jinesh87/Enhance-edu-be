@@ -30,15 +30,10 @@ export class TeacherClassService {
     const tomorrow = new Date(since);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const endOfWeek = new Date();
-    const currentDay = endOfWeek.getDay();
-    const daysToSunday = currentDay === 0 ? 0 : 7 - currentDay;
-    endOfWeek.setDate(endOfWeek.getDate() + daysToSunday);
-    endOfWeek.setHours(23, 59, 59, 999);
-
-    const weekSessions = tomorrow <= endOfWeek
-      ? await this.repo.findSessionsByClassIds(classIds, tomorrow, endOfWeek)
-      : [];
+    const weekSessions = await this.repo.findSessionsByClassIds(
+      classIds,
+      tomorrow,
+    );
 
     return {
       classes: classes.map((classItem) => ({

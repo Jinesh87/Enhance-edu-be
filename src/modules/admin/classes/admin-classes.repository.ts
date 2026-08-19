@@ -1,6 +1,5 @@
 import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
-import { AppError } from "../../../common/errors/AppError.js";
 import {
   Class,
   User,
@@ -91,6 +90,7 @@ export class AdminClassesRepository {
   async bulkReplace(
     termId: string,
     classesToCreate: ClassInput[],
+    gracePeriodMinutes?: number,
   ): Promise<Class[]> {
     return await AppDataSource.transaction(async (transactionManager) => {
       const classRepo = transactionManager.getRepository(Class);
@@ -104,49 +104,76 @@ export class AdminClassesRepository {
 
       const existingClasses = await classRepo.find({
         where: { term: { id: termId } },
+        relations: { teacher: true, term: true },
       });
 
-      if (existingClasses.length > 0) {
-        const classIds = existingClasses.map((c) => c.id);
+      const now = new Date();
+      const getLocalDateString = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+      const todayDateString = getLocalDateString(now);
 
-        const enrollmentCount = await classStudentRepo.count({
-          where: { classId: In(classIds) },
+      const existingClassMap = new Map<string, Class>();
+      existingClasses.forEach((c) => existingClassMap.set(c.code, c));
+
+      // Collect existing sessions and protect locked/past sessions
+      const existingClassIds = existingClasses.map((c) => c.id);
+      let existingSessions: Session[] = [];
+      const lockedSessionIds = new Set<string>();
+
+      if (existingClassIds.length > 0) {
+        existingSessions = await sessionRepo.find({
+          where: { classId: In(existingClassIds) },
         });
-        if (enrollmentCount > 0) {
-          throw new AppError(
-            400,
-            "Cannot modify timetable: students are already enrolled in classes for this term.",
-            "TIMETABLE_LOCKED",
-          );
-        }
 
-        const sessions = await sessionRepo.find({
-          where: { classId: In(classIds) },
-        });
-        if (sessions.length > 0) {
-          const sessionIds = sessions.map((s) => s.id);
-
-          const attendanceCount = await attendanceRepo.count({
+        if (existingSessions.length > 0) {
+          const sessionIds = existingSessions.map((s) => s.id);
+          const attendanceRecords = await attendanceRepo.find({
             where: { sessionId: In(sessionIds) },
+            select: { sessionId: true },
           });
-          const scanCount = await scanRepo.count({
+          const scanEvents = await scanRepo.find({
             where: { sessionId: In(sessionIds) },
+            select: { sessionId: true },
           });
-          const taskCount = await taskRepo.count({
+          const tasks = await taskRepo.find({
             where: { sessionId: In(sessionIds) },
+            select: { sessionId: true },
           });
 
-          if (attendanceCount > 0 || scanCount > 0 || taskCount > 0) {
-            throw new AppError(
-              400,
-              "Cannot modify timetable: class sessions already have attendance or task history recorded.",
-              "TIMETABLE_LOCKED",
-            );
+          attendanceRecords.forEach((r) => lockedSessionIds.add(r.sessionId));
+          scanEvents.forEach((r) => lockedSessionIds.add(r.sessionId));
+          tasks.forEach((r) => lockedSessionIds.add(r.sessionId));
+
+          const sessionsToRemove: Session[] = [];
+          for (const s of existingSessions) {
+            // Keep past days' sessions (before today) or sessions with recorded history
+            const sessionDateStr = getLocalDateString(s.startAt);
+            if (
+              sessionDateStr < todayDateString ||
+              lockedSessionIds.has(s.id)
+            ) {
+              continue;
+            }
+            sessionsToRemove.push(s);
           }
-          await sessionRepo.remove(sessions);
-        }
 
-        await classRepo.remove(existingClasses);
+          if (sessionsToRemove.length > 0) {
+            await sessionRepo.remove(sessionsToRemove);
+          }
+
+          if (typeof gracePeriodMinutes === "number") {
+            await sessionRepo
+              .createQueryBuilder()
+              .update(Session)
+              .set({ gracePeriodMinutes })
+              .where("classId IN (:...existingClassIds)", { existingClassIds })
+              .execute();
+          }
+        }
       }
 
       const teacherIds = Array.from(
@@ -165,28 +192,134 @@ export class AdminClassesRepository {
         where: { id: termId },
       });
 
-      const entities = classesToCreate.map((input) => {
+      const savedClasses: Class[] = [];
+
+      const getBaseCode = (cCode: string) => {
+        const parts = cCode.trim().split("-");
+        return parts.length > 1 ? parts.slice(0, -1).join("-") : cCode;
+      };
+
+      const getDatePart = (dt: string | null | undefined) => {
+        return dt ? dt.split("T")[0] : null;
+      };
+
+      for (const input of classesToCreate) {
         const teacher = input.teacherId
           ? teacherMap.get(input.teacherId) || null
           : null;
-        return classRepo.create({
-          name: input.name?.trim() || `${input.subject ?? "Subject"} Class`,
-          code: input.code.trim(),
-          room: input.room.trim(),
-          subject: input.subject?.trim() || null,
-          lesson: input.lesson?.trim() || null,
-          dayTime: input.dayTime?.trim() || null,
-          capacity: input.capacity ?? 20,
-          contentGroup: input.contentGroup?.trim() || null,
-          termName: input.term?.trim() || "Term 3 2026",
-          term: termObj,
-          teacher,
-        });
-      });
+        const code = input.code.trim();
+        const baseCode = getBaseCode(code);
 
-      const savedClasses = await classRepo.save(entities);
+        let existingClass = existingClassMap.get(code);
+        if (!existingClass) {
+          existingClass = existingClasses.find(
+            (c) => getBaseCode(c.code) === baseCode,
+          );
+        }
+        if (!existingClass) {
+          const inputDate = getDatePart(input.dayTime);
+          existingClass = existingClasses.find(
+            (c) =>
+              c.subject?.trim() === input.subject?.trim() &&
+              getDatePart(c.dayTime) === inputDate,
+          );
+        }
 
+        if (existingClass) {
+          existingClass.name =
+            input.name?.trim() || `${input.subject ?? "Subject"} Class`;
+          existingClass.room = input.room.trim();
+          existingClass.subject = input.subject?.trim() || null;
+          existingClass.lesson = input.lesson?.trim() || null;
+          existingClass.dayTime = input.dayTime?.trim() || null;
+          existingClass.capacity = input.capacity ?? 20;
+          existingClass.contentGroup = input.contentGroup?.trim() || null;
+          existingClass.termName = input.term?.trim() || "Term 3 2026";
+          if (termObj) existingClass.term = termObj;
+          existingClass.teacher = teacher;
+
+          const saved = await classRepo.save(existingClass);
+          savedClasses.push(saved);
+        } else {
+          const newEntity = classRepo.create({
+            name: input.name?.trim() || `${input.subject ?? "Subject"} Class`,
+            code: input.code.trim(),
+            room: input.room.trim(),
+            subject: input.subject?.trim() || null,
+            lesson: input.lesson?.trim() || null,
+            dayTime: input.dayTime?.trim() || null,
+            capacity: input.capacity ?? 20,
+            contentGroup: input.contentGroup?.trim() || null,
+            termName: input.term?.trim() || "Term 3 2026",
+            term: termObj,
+            teacher,
+          });
+          const saved = await classRepo.save(newEntity);
+          savedClasses.push(saved);
+        }
+      }
+
+      // Reassign/clean up student enrollments for unused existing classes to allow deletion
+      for (const oldClass of existingClasses) {
+        if (!savedClasses.some((c) => c.id === oldClass.id)) {
+          // Check if this class has any historical/locked sessions we must preserve
+          const remainingSessionCount = await sessionRepo.count({
+            where: { classId: oldClass.id },
+          });
+
+          if (remainingSessionCount > 0) {
+            // Keep the class to preserve history
+            continue;
+          }
+
+          // Find if there is a new class of the same subject on the same date
+          const oldDate = getDatePart(oldClass.dayTime);
+          const newClass = savedClasses.find(
+            (c) =>
+              c.subject?.trim() === oldClass.subject?.trim() &&
+              getDatePart(c.dayTime) === oldDate,
+          );
+
+          const enrollments = await classStudentRepo.find({
+            where: { classId: oldClass.id },
+          });
+
+          if (newClass) {
+            // Reassign students to the new class
+            for (const enroll of enrollments) {
+              const alreadyEnrolled = await classStudentRepo.findOne({
+                where: { classId: newClass.id, studentId: enroll.studentId },
+              });
+              if (alreadyEnrolled) {
+                await classStudentRepo.remove(enroll);
+              } else {
+                enroll.classId = newClass.id;
+                enroll.class = newClass;
+                await classStudentRepo.save(enroll);
+              }
+            }
+          } else {
+            // No matching class in the new schedule, delete the enrollments for this class
+            if (enrollments.length > 0) {
+              await classStudentRepo.remove(enrollments);
+            }
+          }
+
+          // Now that enrollments are cleared and no history exists, we can delete the old class cleanly
+          await classRepo.remove(oldClass);
+        }
+      }
+
+      // Generate future sessions for saved classes
       const sessionsToCreate: Session[] = [];
+      const remainingSessionKeys = new Set<string>();
+      for (const s of existingSessions) {
+        const sessionDateStr = getLocalDateString(s.startAt);
+        if (sessionDateStr < todayDateString || lockedSessionIds.has(s.id)) {
+          remainingSessionKeys.add(`${s.classId}|${s.startAt.getTime()}`);
+        }
+      }
+
       for (const c of savedClasses) {
         if (!c.dayTime) continue;
         try {
@@ -201,19 +334,35 @@ export class AdminClassesRepository {
           } else {
             endAt.setHours(startAt.getHours() + 1);
           }
-          if (!isNaN(startAt.getTime()) && !isNaN(endAt.getTime())) {
+
+          const sessionKey = `${c.id}|${startAt.getTime()}`;
+
+          const sessionDateStr = getLocalDateString(startAt);
+
+          if (
+            !isNaN(startAt.getTime()) &&
+            !isNaN(endAt.getTime()) &&
+            sessionDateStr >= todayDateString &&
+            !remainingSessionKeys.has(sessionKey)
+          ) {
+            const termGrace =
+              typeof gracePeriodMinutes === "number" ? gracePeriodMinutes : 25;
             sessionsToCreate.push(
               sessionRepo.create({
                 classId: c.id,
                 startAt,
                 endAt,
                 room: c.room || null,
-                gracePeriodMinutes: 25,
-              })
+                gracePeriodMinutes: termGrace,
+              }),
             );
           }
         } catch (err) {
-          console.error("Failed to parse dayTime for class session:", c.dayTime, err);
+          console.error(
+            "Failed to parse dayTime for class session:",
+            c.dayTime,
+            err,
+          );
         }
       }
 

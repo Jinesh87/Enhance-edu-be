@@ -12,6 +12,7 @@ export const createClassSchema = Joi.object({
   term: Joi.string().trim().max(120).allow(null, ""),
   termId: Joi.string().uuid().allow(null, ""),
   teacherId: Joi.string().uuid().allow(null, ""),
+  gracePeriodMinutes: Joi.number().integer().min(0).max(480).default(25),
 });
 
 export const updateClassSchema = Joi.object({
@@ -26,6 +27,7 @@ export const updateClassSchema = Joi.object({
   term: Joi.string().trim().max(120).allow(null, ""),
   termId: Joi.string().uuid().allow(null, ""),
   teacherId: Joi.string().uuid().allow(null, ""),
+  gracePeriodMinutes: Joi.number().integer().min(0).max(480),
 });
 
 export const classIdParamsSchema = Joi.object({
@@ -34,6 +36,7 @@ export const classIdParamsSchema = Joi.object({
 
 export const bulkReplaceClassSchema = Joi.object({
   termId: Joi.string().uuid().required(),
+  gracePeriodMinutes: Joi.number().integer().min(0).max(480).default(25),
   classes: Joi.array()
     .items(createClassSchema)
     .min(1)
