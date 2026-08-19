@@ -1,6 +1,13 @@
+import { In } from "typeorm";
 import { AttendanceRepository } from "./attendance.repository.js";
-import { AttendanceStatus } from "../../../entities/index.js";
+import {
+  AttendanceStatus,
+  Enrollment,
+  ClassStudent,
+} from "../../../entities/index.js";
 import { AppError } from "../../../common/errors/AppError.js";
+import { AppDataSource } from "../../../config/data-source.js";
+import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 
 export class SharedAttendanceService {
   private readonly repo = new AttendanceRepository();
@@ -9,6 +16,52 @@ export class SharedAttendanceService {
     const session = await this.repo.findSessionWithClassById(sessionId);
     if (!session) {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
+    }
+
+    if (session.class?.term?.id && session.class.subject) {
+      const classId = session.classId;
+      const termId = session.class.term.id;
+      const subjectName = session.class.subject.trim().toLowerCase();
+
+      const enrollments = await AppDataSource.getRepository(Enrollment).find({
+        where: {
+          termId,
+          status: In([EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING]),
+        },
+        relations: {
+          student: true,
+          subjects: { subject: true },
+        },
+      });
+
+      const matchingEnrollments = enrollments.filter((enrolment) => {
+        return (enrolment.subjects ?? []).some(
+          (s) => s.subject?.name?.trim().toLowerCase() === subjectName,
+        );
+      });
+
+      const classStudentRepo = AppDataSource.getRepository(ClassStudent);
+
+      for (const enrolment of matchingEnrollments) {
+        const studentUserId = enrolment.student?.userId;
+        if (studentUserId) {
+          const existing = await classStudentRepo.findOne({
+            where: {
+              classId,
+              studentId: studentUserId,
+            },
+          });
+
+          if (!existing) {
+            await classStudentRepo.save(
+              classStudentRepo.create({
+                classId,
+                studentId: studentUserId,
+              }),
+            );
+          }
+        }
+      }
     }
 
     const enrols = await this.repo.findEnrolmentsByClassId(session.classId);
