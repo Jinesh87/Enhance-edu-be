@@ -1,5 +1,5 @@
 import { AppDataSource } from "../../../config/data-source.js";
-import { In, MoreThanOrEqual, LessThanOrEqual } from "typeorm";
+import { In, MoreThanOrEqual, LessThanOrEqual, Not, IsNull } from "typeorm";
 import { parseDayTime } from "../../../common/utils/timezone.js";
 import {
   Session,
@@ -36,6 +36,7 @@ export class AttendanceRepository {
       relations: {
         class: {
           teacher: true,
+          term: true,
         },
       },
     });
@@ -229,6 +230,7 @@ export class AttendanceRepository {
     return this.attendance.find({
       where: {
         status: AttendanceStatus.ABSENT,
+        scannedAt: Not(IsNull()),
       },
 
       relations: {
@@ -239,8 +241,6 @@ export class AttendanceRepository {
       },
     });
   }
-
-  // Scan events
 
   async findPendingScansBySessionId(sessionId: string): Promise<ScanEvent[]> {
     return this.scans.find({

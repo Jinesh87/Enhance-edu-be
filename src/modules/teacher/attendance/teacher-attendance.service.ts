@@ -37,7 +37,8 @@ export class TeacherAttendanceService {
 
     const opensAt = session.startAt.getTime();
 
-    const closesAt = session.startAt.getTime() + gracePeriodMinutes * 60_000;
+    const graceClosesAt = session.startAt.getTime() + gracePeriodMinutes * 60_000;
+    const classEndsAt = session.endAt.getTime();
 
     if (now < opensAt) {
       throw new AppError(
@@ -47,7 +48,7 @@ export class TeacherAttendanceService {
       );
     }
 
-    if (now > closesAt) {
+    if (now > classEndsAt) {
       throw new AppError(
         400,
         "Attendance grace window has closed",
@@ -59,7 +60,7 @@ export class TeacherAttendanceService {
 
     return {
       ...qr,
-      graceClosesAt: new Date(closesAt),
+      graceClosesAt: new Date(graceClosesAt),
       gracePeriodMinutes,
     };
   }
