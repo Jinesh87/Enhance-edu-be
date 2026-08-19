@@ -18,10 +18,14 @@ const adminSubjectsRouter = Router();
 adminSubjectsRouter.use(
   authenticate,
   authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
-  authorizeAdminModule("subjects"),
 );
 
-adminSubjectsRouter.get("/", adminSubjectsController.list);
+adminSubjectsRouter.get(
+  "/",
+  authorizeAdminModule("subjects", "classes", "enrolments", "people"),
+  adminSubjectsController.list,
+);
+adminSubjectsRouter.use(authorizeAdminModule("subjects"));
 adminSubjectsRouter.post("/", validate(createSubjectSchema), adminSubjectsController.create);
 adminSubjectsRouter.patch(
   "/:id",

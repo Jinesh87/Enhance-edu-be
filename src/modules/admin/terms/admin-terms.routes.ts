@@ -18,10 +18,14 @@ const adminTermsRouter = Router();
 adminTermsRouter.use(
   authenticate,
   authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
-  authorizeAdminModule("terms"),
 );
 
-adminTermsRouter.get("/", adminTermsController.list);
+adminTermsRouter.get(
+  "/",
+  authorizeAdminModule("terms", "classes", "enrolments", "people"),
+  adminTermsController.list,
+);
+adminTermsRouter.use(authorizeAdminModule("terms"));
 adminTermsRouter.post("/", validate(createTermSchema), adminTermsController.create);
 adminTermsRouter.patch(
   "/:id",
