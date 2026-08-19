@@ -66,6 +66,7 @@ export class SharedAttendanceService {
         room: session.room ?? session.class.room,
         startAt: session.startAt,
         endAt: session.endAt,
+        timeZone: session.class.timeZone,
       },
       roll,
     };

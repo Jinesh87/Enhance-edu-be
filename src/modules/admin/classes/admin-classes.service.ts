@@ -1,14 +1,13 @@
 import { AppError } from "../../../common/errors/AppError.js";
+import { parseDayTime, resolveIanaTimeZone } from "../../../common/utils/timezone.js";
 import { Class } from "../../../entities/index.js";
 import {
   adminClassesRepository,
   type ClassInput,
 } from "./admin-classes.repository.js";
 
-function parseDayTimeStart(dayTime: string | null): Date | null {
-  if (!dayTime) return null;
-  const start = new Date(dayTime.split(" ")[0]);
-  return Number.isNaN(start.getTime()) ? null : start;
+function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Date | null {
+  return parseDayTime(dayTime, timeZone)?.startAt ?? null;
 }
 
 function toClassDto(cls: Class) {
@@ -20,6 +19,7 @@ function toClassDto(cls: Class) {
     subject: cls.subject,
     lesson: cls.lesson,
     dayTime: cls.dayTime,
+    timeZone: resolveIanaTimeZone(cls.timeZone),
     capacity: cls.capacity,
     contentGroup: cls.contentGroup,
     term: cls.term
@@ -112,7 +112,7 @@ export class AdminClassesService {
         }
       }
 
-      const sessionDate = parseDayTimeStart(c.dayTime);
+      const sessionDate = parseDayTimeStart(c.dayTime, c.timeZone);
 
       if (!groupedMap.has(key)) {
         groupedMap.set(key, {
@@ -200,6 +200,7 @@ export class AdminClassesService {
       subject: input.subject?.trim() || null,
       lesson: input.lesson?.trim() || null,
       dayTime: input.dayTime?.trim() || null,
+      timeZone: resolveIanaTimeZone(input.timeZone),
       capacity: input.capacity ?? 20,
       contentGroup: input.contentGroup?.trim() || null,
       termName: input.term?.trim() || "Term 3 2026",
@@ -250,6 +251,8 @@ export class AdminClassesService {
     if (input.lesson !== undefined) cls.lesson = input.lesson?.trim() || null;
     if (input.dayTime !== undefined)
       cls.dayTime = input.dayTime?.trim() || null;
+    if (input.timeZone !== undefined)
+      cls.timeZone = resolveIanaTimeZone(input.timeZone);
     if (input.capacity !== undefined) cls.capacity = input.capacity;
     if (input.contentGroup !== undefined)
       cls.contentGroup = input.contentGroup?.trim() || null;

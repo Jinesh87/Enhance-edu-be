@@ -34,6 +34,9 @@ export class Class {
   @Column({ type: "varchar", length: 100, nullable: true })
   dayTime!: string | null;
 
+  @Column({ type: "varchar", length: 80, nullable: true })
+  timeZone!: string | null;
+
   @Column({ type: "integer", default: 20 })
   capacity!: number;
 

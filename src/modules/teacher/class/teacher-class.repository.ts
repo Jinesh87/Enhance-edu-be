@@ -1,5 +1,6 @@
 import { AppDataSource } from "../../../config/data-source.js";
 import { In, MoreThanOrEqual, LessThanOrEqual } from "typeorm";
+import { parseDayTime } from "../../../common/utils/timezone.js";
 import { Class, Session } from "../../../entities/index.js";
 
 export class TeacherClassRepository {
@@ -32,28 +33,17 @@ export class TeacherClassRepository {
     for (const c of missingClasses) {
       if (!c.dayTime) continue;
       try {
-        const parts = c.dayTime.split(" ");
-        const startStr = parts[0];
-        const endStr = parts[1];
-        const startAt = new Date(startStr);
-        const endAt = new Date(startStr);
-        if (endStr) {
-          const [eh, em] = endStr.split(":").map(Number);
-          endAt.setHours(eh, em, 0, 0);
-        } else {
-          endAt.setHours(startAt.getHours() + 1);
-        }
-        if (!isNaN(startAt.getTime()) && !isNaN(endAt.getTime())) {
-          sessionsToCreate.push(
-            this.sessions.create({
-              classId: c.id,
-              startAt,
-              endAt,
-              room: c.room || null,
-              gracePeriodMinutes: 25,
-            })
-          );
-        }
+        const times = parseDayTime(c.dayTime, c.timeZone);
+        if (!times) continue;
+        sessionsToCreate.push(
+          this.sessions.create({
+            classId: c.id,
+            startAt: times.startAt,
+            endAt: times.endAt,
+            room: c.room || null,
+            gracePeriodMinutes: 25,
+          }),
+        );
       } catch (err) {
         console.error("Failed to parse dayTime during self-healing in repository:", c.dayTime, err);
       }
