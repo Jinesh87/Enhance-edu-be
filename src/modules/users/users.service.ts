@@ -13,6 +13,7 @@ import { In } from "typeorm";
 import { User, TeacherSubject } from "../../entities/index.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
+import { writeAuditLog, changedFields } from "../../common/utils/audit-log.js";
 import type {
   InvitePersonInput,
   InvitePersonResult,
@@ -156,6 +157,20 @@ export class UsersService {
       "User created with INVITED status",
     );
 
+    await writeAuditLog({
+      actorUserId: actorId,
+      action: "CREATED",
+      recordType: "person",
+      recordId: user.id,
+      recordLabel: user.fullName,
+      after: {
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+      },
+    });
+
     const dto = toPersonDto(user);
 
     if (input.role === UserRole.STAFF && input.subjectIds && input.subjectIds.length > 0) {
@@ -231,8 +246,21 @@ export class UsersService {
     return result;
   }
 
-  async update(id: string, input: UpdatePersonInput): Promise<PersonDto> {
+  async update(
+    id: string,
+    input: UpdatePersonInput,
+    actorId?: string,
+  ): Promise<PersonDto> {
     const user = await this.findUserOrThrow(id);
+    const before = {
+      fullName: user.fullName,
+      preferredName: user.preferredName,
+      email: user.email,
+      mobile: user.mobile,
+      role: user.role,
+      employmentType: user.employmentType,
+      status: user.status,
+    };
 
     if (input.email && input.email.toLowerCase() !== user.email) {
       if (user.status !== UserStatus.INVITED) {
@@ -321,6 +349,29 @@ export class UsersService {
       });
       dto.subjectIds = tsRecords.map((ts) => ts.subjectId);
     }
+
+    const after = {
+      fullName: user.fullName,
+      preferredName: user.preferredName,
+      email: user.email,
+      mobile: user.mobile,
+      role: user.role,
+      employmentType: user.employmentType,
+      status: user.status,
+    };
+    const diff = changedFields(before, after);
+    if (diff.before || diff.after) {
+      await writeAuditLog({
+        actorUserId: actorId,
+        action: "EDITED",
+        recordType: "person",
+        recordId: user.id,
+        recordLabel: user.fullName,
+        before: diff.before,
+        after: diff.after,
+      });
+    }
+
     return this.withRelatedPeople(dto);
   }
 
@@ -394,6 +445,15 @@ export class UsersService {
     await this.assertNotLastOwner(user);
     user.status = UserStatus.DEACTIVATED;
     await this.users.save(user);
+    await writeAuditLog({
+      actorUserId: actorId,
+      action: "EDITED",
+      recordType: "person",
+      recordId: user.id,
+      recordLabel: user.fullName,
+      before: { status: "ACTIVE" },
+      after: { status: UserStatus.DEACTIVATED },
+    });
     return this.withRelatedPeople(toPersonDto(user));
   }
 
@@ -412,6 +472,20 @@ export class UsersService {
     await deleteUserInvitationTokens(user.id);
     await deleteUserPasswordResetTokens(user.id);
     await this.users.remove(user);
+
+    await writeAuditLog({
+      actorUserId: actorId,
+      action: "DELETED",
+      recordType: "person",
+      recordId: id,
+      recordLabel: user.fullName,
+      before: {
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+      },
+    });
 
     logger.info({ userId: id, email: user.email }, "User deleted");
   }

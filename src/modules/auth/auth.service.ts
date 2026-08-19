@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../../config/data-source.js";
 import { TwoFactorMethod, UserRole, UserStatus } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
+import { writeAuditLog } from "../../common/utils/audit-log.js";
 import { env } from "../../config/env.js";
 import {
   deleteUserPasswordResetTokens,
@@ -770,6 +771,13 @@ export class AuthService {
 
     if (!user || !user.passwordHash) {
       await recordFailedLoginAttempt(lockKey);
+      await writeAuditLog({
+        actorName: identifier,
+        action: "DENIED",
+        recordType: "account",
+        recordLabel: identifier,
+        after: { reason: "INVALID_CREDENTIALS" },
+      });
       throw new AppError(
         401,
         "Invalid username or password",
@@ -793,6 +801,16 @@ export class AuthService {
 
     if (!valid) {
       const afterFail = await recordFailedLoginAttempt(lockKey);
+
+      await writeAuditLog({
+        actorUserId: user.id,
+        actorName: user.fullName,
+        action: "DENIED",
+        recordType: "account",
+        recordId: user.id,
+        recordLabel: user.email ?? identifier,
+        after: { reason: "INVALID_CREDENTIALS" },
+      });
 
       if (afterFail.locked) {
         throw new AppError(

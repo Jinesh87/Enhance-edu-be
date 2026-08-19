@@ -72,7 +72,7 @@ export class UsersController {
         employmentType: req.body.employmentType,
         status: req.body.status,
         subjectIds: req.body.subjectIds,
-      });
+      }, req.user!.id);
       res.status(200).json({ person });
     } catch (error) {
       next(error);

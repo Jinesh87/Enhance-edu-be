@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import { adminEnrollmentsService } from "./admin-enrollments.service.js";
 
 class AdminEnrollmentsController {
@@ -31,6 +32,17 @@ class AdminEnrollmentsController {
         },
         req.user!.id,
       );
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "CREATED",
+        recordType: "enrolment",
+        recordId: result.enrollment?.id ?? null,
+        recordLabel: result.student?.fullName ?? "Enrolment",
+        after: {
+          guardian: result.guardian?.fullName ?? null,
+          awaitingGuardianAcceptance: result.awaitingGuardianAcceptance,
+        },
+      });
       res.status(201).json(result);
     } catch (error) {
       next(error);
@@ -58,6 +70,13 @@ class AdminEnrollmentsController {
         },
         req.user!.id,
       );
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "EDITED",
+        recordType: "enrolment",
+        recordId: req.params.id as string,
+        recordLabel: req.body.student?.fullName ?? "Enrolment",
+      });
       res.status(200).json(result);
     } catch (error) {
       next(error);
