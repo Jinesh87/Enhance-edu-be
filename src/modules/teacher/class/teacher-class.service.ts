@@ -52,6 +52,7 @@ export class TeacherClassService {
         startAt: session.startAt,
         endAt: session.endAt,
         gracePeriodMinutes: session.gracePeriodMinutes,
+        timeZone: session.class.timeZone,
       })),
 
       weekSessions: weekSessions.map((session) => ({
@@ -63,6 +64,7 @@ export class TeacherClassService {
         startAt: session.startAt,
         endAt: session.endAt,
         gracePeriodMinutes: session.gracePeriodMinutes,
+        timeZone: session.class.timeZone,
       })),
     };
   }

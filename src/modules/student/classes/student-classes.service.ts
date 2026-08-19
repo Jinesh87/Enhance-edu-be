@@ -2,6 +2,7 @@ import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
+import { parseDayTime, resolveIanaTimeZone } from "../../../common/utils/timezone.js";
 import {
   AttendanceRecord,
   AttendanceStatus,
@@ -43,6 +44,7 @@ export type StudentLessonDto = {
   checkedInAt: string | null;
   isOnline: boolean;
   canCheckIn: boolean;
+  timeZone: string;
   resources: {
     id: string;
     title: string;
@@ -52,25 +54,14 @@ export type StudentLessonDto = {
   }[];
 };
 
-function parseClassTimes(dayTime: string | null): {
+function parseClassTimes(
+  dayTime: string | null,
+  timeZone?: string | null,
+): {
   startAt: Date;
   endAt: Date;
 } | null {
-  if (!dayTime) return null;
-  const [startRaw, endRaw] = dayTime.split(" ");
-  const startAt = new Date(startRaw);
-  if (Number.isNaN(startAt.getTime())) return null;
-
-  let endAt = new Date(startAt.getTime() + 90 * 60_000);
-  if (endRaw && /^\d{1,2}:\d{2}/.test(endRaw)) {
-    const [hours, minutes] = endRaw.split(":").map(Number);
-    endAt = new Date(startAt);
-    endAt.setHours(hours, minutes, 0, 0);
-    if (endAt.getTime() <= startAt.getTime()) {
-      endAt = new Date(startAt.getTime() + 90 * 60_000);
-    }
-  }
-  return { startAt, endAt };
+  return parseDayTime(dayTime, timeZone, 90);
 }
 
 function isOnlineRoom(room: string | null | undefined) {
@@ -275,7 +266,7 @@ export class StudentClassesService {
     const now = new Date();
     const timed = classes
       .map((cls) => {
-        const times = parseClassTimes(cls.dayTime);
+        const times = parseClassTimes(cls.dayTime, cls.timeZone);
         return times ? { cls, ...times } : null;
       })
       .filter((row): row is { cls: Class; startAt: Date; endAt: Date } => Boolean(row));
@@ -375,6 +366,7 @@ export class StudentClassesService {
           : null,
         isOnline: online,
         canCheckIn,
+        timeZone: resolveIanaTimeZone(row.cls.timeZone),
         resources: buildResources(
           row.cls.subject || row.cls.name,
           row.startAt,
