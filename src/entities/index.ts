@@ -17,4 +17,4 @@ export * from "./PendingEnrollmentSubject.js";
 export * from "./TeacherSubject.js";
 export * from "./AcademicYear.js";
 export * from "./YearLevel.js";
-
+export * from "./InstitutionSetting.js";

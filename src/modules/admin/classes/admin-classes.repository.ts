@@ -1,6 +1,11 @@
 import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
+  calendarDateInTimeZone,
+  parseDayTime,
+  resolveIanaTimeZone,
+} from "../../../common/utils/timezone.js";
+import {
   Class,
   User,
   Term,
@@ -18,6 +23,7 @@ export type ClassInput = {
   subject?: string | null;
   lesson?: string | null;
   dayTime?: string | null;
+  timeZone?: string | null;
   capacity?: number;
   contentGroup?: string | null;
   term?: string | null;
@@ -108,13 +114,12 @@ export class AdminClassesRepository {
       });
 
       const now = new Date();
-      const getLocalDateString = (d: Date) => {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        return `${y}-${m}-${day}`;
-      };
-      const todayDateString = getLocalDateString(now);
+      const classTzById = new Map(
+        existingClasses.map((c) => [
+          c.id,
+          resolveIanaTimeZone(c.timeZone),
+        ]),
+      );
 
       const existingClassMap = new Map<string, Class>();
       existingClasses.forEach((c) => existingClassMap.set(c.code, c));
@@ -150,8 +155,9 @@ export class AdminClassesRepository {
 
           const sessionsToRemove: Session[] = [];
           for (const s of existingSessions) {
-            // Keep past days' sessions (before today) or sessions with recorded history
-            const sessionDateStr = getLocalDateString(s.startAt);
+            const tz = classTzById.get(s.classId);
+            const sessionDateStr = calendarDateInTimeZone(s.startAt, tz);
+            const todayDateString = calendarDateInTimeZone(now, tz);
             if (
               sessionDateStr < todayDateString ||
               lockedSessionIds.has(s.id)
@@ -232,6 +238,7 @@ export class AdminClassesRepository {
           existingClass.subject = input.subject?.trim() || null;
           existingClass.lesson = input.lesson?.trim() || null;
           existingClass.dayTime = input.dayTime?.trim() || null;
+          existingClass.timeZone = resolveIanaTimeZone(input.timeZone);
           existingClass.capacity = input.capacity ?? 20;
           existingClass.contentGroup = input.contentGroup?.trim() || null;
           existingClass.termName = input.term?.trim() || "Term 3 2026";
@@ -248,6 +255,7 @@ export class AdminClassesRepository {
             subject: input.subject?.trim() || null,
             lesson: input.lesson?.trim() || null,
             dayTime: input.dayTime?.trim() || null,
+            timeZone: resolveIanaTimeZone(input.timeZone),
             capacity: input.capacity ?? 20,
             contentGroup: input.contentGroup?.trim() || null,
             termName: input.term?.trim() || "Term 3 2026",
@@ -312,9 +320,15 @@ export class AdminClassesRepository {
 
       // Generate future sessions for saved classes
       const sessionsToCreate: Session[] = [];
+      for (const c of savedClasses) {
+        classTzById.set(c.id, resolveIanaTimeZone(c.timeZone));
+      }
+
       const remainingSessionKeys = new Set<string>();
       for (const s of existingSessions) {
-        const sessionDateStr = getLocalDateString(s.startAt);
+        const tz = classTzById.get(s.classId);
+        const sessionDateStr = calendarDateInTimeZone(s.startAt, tz);
+        const todayDateString = calendarDateInTimeZone(now, tz);
         if (sessionDateStr < todayDateString || lockedSessionIds.has(s.id)) {
           remainingSessionKeys.add(`${s.classId}|${s.startAt.getTime()}`);
         }
@@ -323,25 +337,16 @@ export class AdminClassesRepository {
       for (const c of savedClasses) {
         if (!c.dayTime) continue;
         try {
-          const parts = c.dayTime.split(" ");
-          const startStr = parts[0];
-          const endStr = parts[1];
-          const startAt = new Date(startStr);
-          const endAt = new Date(startStr);
-          if (endStr) {
-            const [eh, em] = endStr.split(":").map(Number);
-            endAt.setHours(eh, em, 0, 0);
-          } else {
-            endAt.setHours(startAt.getHours() + 1);
-          }
+          const times = parseDayTime(c.dayTime, c.timeZone);
+          if (!times) continue;
+          const { startAt, endAt } = times;
 
           const sessionKey = `${c.id}|${startAt.getTime()}`;
-
-          const sessionDateStr = getLocalDateString(startAt);
+          const tz = resolveIanaTimeZone(c.timeZone);
+          const sessionDateStr = calendarDateInTimeZone(startAt, tz);
+          const todayDateString = calendarDateInTimeZone(now, tz);
 
           if (
-            !isNaN(startAt.getTime()) &&
-            !isNaN(endAt.getTime()) &&
             sessionDateStr >= todayDateString &&
             !remainingSessionKeys.has(sessionKey)
           ) {

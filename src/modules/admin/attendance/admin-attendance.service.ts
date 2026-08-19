@@ -34,7 +34,10 @@ export class AdminAttendanceService {
     const totalExceptions = mappedExceptions.length;
     if (filters?.pageExceptions && filters?.limitExceptions) {
       const start = (filters.pageExceptions - 1) * filters.limitExceptions;
-      mappedExceptions = mappedExceptions.slice(start, start + filters.limitExceptions);
+      mappedExceptions = mappedExceptions.slice(
+        start,
+        start + filters.limitExceptions,
+      );
     }
 
     let mappedAbsences = unresolvedAbsences.map((ua) => ({
@@ -49,7 +52,10 @@ export class AdminAttendanceService {
     const totalAbsences = mappedAbsences.length;
     if (filters?.pageAbsences && filters?.limitAbsences) {
       const start = (filters.pageAbsences - 1) * filters.limitAbsences;
-      mappedAbsences = mappedAbsences.slice(start, start + filters.limitAbsences);
+      mappedAbsences = mappedAbsences.slice(
+        start,
+        start + filters.limitAbsences,
+      );
     }
 
     return {

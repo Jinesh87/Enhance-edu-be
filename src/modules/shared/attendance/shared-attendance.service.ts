@@ -11,20 +11,19 @@ export class SharedAttendanceService {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
 
-    // Get all enrolled students
     const enrols = await this.repo.findEnrolmentsByClassId(session.classId);
 
-    // Get resolved attendance records
-    const attendanceRecords = await this.repo.findAttendanceRecordsBySessionId(sessionId);
+    const attendanceRecords =
+      await this.repo.findAttendanceRecordsBySessionId(sessionId);
 
-    // Get pending/syncing scans
     const pendingScans = await this.repo.findPendingScansBySessionId(sessionId);
 
     const roll = enrols.map((enrol) => {
       const student = enrol.student;
       const record = attendanceRecords.find((r) => r.studentId === student.id);
       const isSyncing = pendingScans.some(
-        (s) => s.studentId === student.id && s.deviceSignal === "queued on device"
+        (s) =>
+          s.studentId === student.id && s.deviceSignal === "queued on device",
       );
 
       let status = "Not scanned";
@@ -67,6 +66,7 @@ export class SharedAttendanceService {
         startAt: session.startAt,
         endAt: session.endAt,
         gracePeriodMinutes: session.gracePeriodMinutes,
+        timeZone: session.class.timeZone,
       },
       roll,
     };

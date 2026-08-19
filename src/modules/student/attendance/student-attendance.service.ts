@@ -3,7 +3,9 @@ import {
   AttendanceStatus,
   ScanStatus,
   ScanFlagReason,
+  InstitutionSetting,
 } from "../../../entities/index.js";
+import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
   haversineDistance,
@@ -222,17 +224,29 @@ export class StudentAttendanceService {
      */
     if (reasonFlagged === ScanFlagReason.NONE) {
       if (latitude !== undefined && longitude !== undefined) {
-        const roomName = session.room ?? session.class.room ?? "Default";
+        const instSetting = await AppDataSource.getRepository(InstitutionSetting).findOneBy({ id: "default" });
+        let targetLat: number | null = null;
+        let targetLon: number | null = null;
 
-        const roomCoordinates =
-          ROOM_COORDINATES[roomName] ?? ROOM_COORDINATES["Default"];
+        if (instSetting && instSetting.latitude !== null && instSetting.longitude !== null) {
+          targetLat = instSetting.latitude;
+          targetLon = instSetting.longitude;
+        } else {
+          const roomName = session.room ?? session.class.room ?? "Default";
+          const roomCoordinates =
+            ROOM_COORDINATES[roomName] ?? ROOM_COORDINATES["Default"];
+          if (roomCoordinates) {
+            targetLat = roomCoordinates.latitude;
+            targetLon = roomCoordinates.longitude;
+          }
+        }
 
-        if (roomCoordinates) {
+        if (targetLat !== null && targetLon !== null) {
           const distance = haversineDistance(
             latitude,
             longitude,
-            roomCoordinates.latitude,
-            roomCoordinates.longitude,
+            targetLat,
+            targetLon,
           );
 
           if (distance > 100) {
