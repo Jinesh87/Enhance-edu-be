@@ -86,6 +86,7 @@ function toPublicUser(user: User): PublicUser {
     username: user.username,
     mobile: user.mobile,
     role: user.role,
+    modulePermissions: user.modulePermissions ?? [],
     status: user.status,
     securitySetupComplete: user.securitySetupComplete,
     lastSignedInAt: user.lastSignedInAt,

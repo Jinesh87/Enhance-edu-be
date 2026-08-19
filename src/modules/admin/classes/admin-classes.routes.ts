@@ -3,6 +3,7 @@ import { UserRole } from "../../../common/constants/roles.js";
 import {
   authenticate,
   authorize,
+  authorizeAdminModule,
 } from "../../../common/middleware/authenticate.js";
 import { validate } from "../../../common/middleware/validate.js";
 import { adminClassesController } from "./admin-classes.controller.js";
@@ -15,7 +16,11 @@ import {
 
 const adminClassesRouter = Router();
 
-adminClassesRouter.use(authenticate, authorize(UserRole.SUPER_ADMIN));
+adminClassesRouter.use(
+  authenticate,
+  authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
+  authorizeAdminModule("classes"),
+);
 
 adminClassesRouter.get("/", adminClassesController.list);
 adminClassesRouter.post(

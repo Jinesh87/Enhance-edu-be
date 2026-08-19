@@ -3,6 +3,7 @@ import { UserRole } from "../../../common/constants/roles.js";
 import {
   authenticate,
   authorize,
+  authorizeAdminModule,
 } from "../../../common/middleware/authenticate.js";
 import { validate } from "../../../common/middleware/validate.js";
 import { adminTermsController } from "./admin-terms.controller.js";
@@ -14,7 +15,11 @@ import {
 
 const adminTermsRouter = Router();
 
-adminTermsRouter.use(authenticate, authorize(UserRole.SUPER_ADMIN));
+adminTermsRouter.use(
+  authenticate,
+  authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
+  authorizeAdminModule("terms"),
+);
 
 adminTermsRouter.get("/", adminTermsController.list);
 adminTermsRouter.post("/", validate(createTermSchema), adminTermsController.create);

@@ -45,6 +45,14 @@ export async function ensureAuditSchema() {
   });
   await bootstrap.initialize();
   await bootstrap.query("CREATE SCHEMA IF NOT EXISTS audit");
+  await bootstrap.query(`
+    DO $$ BEGIN
+      ALTER TYPE users_role_enum ADD VALUE IF NOT EXISTS 'OFFICE_STAFF';
+    EXCEPTION
+      WHEN undefined_object THEN NULL;
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
   await bootstrap.destroy();
 }
 
