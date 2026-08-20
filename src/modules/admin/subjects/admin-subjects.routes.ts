@@ -22,7 +22,7 @@ adminSubjectsRouter.use(
 
 adminSubjectsRouter.get(
   "/",
-  authorizeAdminModule("subjects", "classes", "enrolments", "people"),
+  authorizeAdminModule("subjects", "classes", "enrolments", "people", "enquiries"),
   adminSubjectsController.list,
 );
 adminSubjectsRouter.use(authorizeAdminModule("subjects"));

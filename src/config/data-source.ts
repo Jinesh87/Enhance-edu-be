@@ -21,7 +21,15 @@ import {
   AcademicYear,
   YearLevel,
   InstitutionSetting,
+  Holiday,
   AuditChange,
+  Enquiry,
+  EnquiryCompetitor,
+  EnquiryEvent,
+  EnquiryLossReason,
+  EnquirySource,
+  EnquiryStage,
+  EnquiryStageHistory,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -56,6 +64,31 @@ export async function ensureAuditSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureEnquiryConstraints() {
+  if (!AppDataSource.isInitialized) return;
+  await AppDataSource.query(`
+    CREATE OR REPLACE FUNCTION prevent_enquiry_first_source_update()
+    RETURNS trigger AS $$
+    BEGIN
+      IF NEW.first_source_id IS DISTINCT FROM OLD.first_source_id THEN
+        RAISE EXCEPTION 'first_source_id is immutable'
+          USING ERRCODE = 'restrict_violation';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await AppDataSource.query(`
+    DROP TRIGGER IF EXISTS enquiry_first_source_immutable ON enquiries;
+  `);
+  await AppDataSource.query(`
+    CREATE TRIGGER enquiry_first_source_immutable
+    BEFORE UPDATE ON enquiries
+    FOR EACH ROW
+    EXECUTE PROCEDURE prevent_enquiry_first_source_update();
+  `);
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -82,7 +115,15 @@ export const AppDataSource = new DataSource({
     AcademicYear,
     YearLevel,
     InstitutionSetting,
+    Holiday,
     AuditChange,
+    EnquiryStage,
+    EnquirySource,
+    EnquiryLossReason,
+    EnquiryCompetitor,
+    Enquiry,
+    EnquiryStageHistory,
+    EnquiryEvent,
   ],
   migrations: [],
   subscribers: [],

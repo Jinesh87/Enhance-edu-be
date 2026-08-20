@@ -1,6 +1,10 @@
 import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
+  calendarDateFromDayTime,
+  isHolidayForTerm,
+} from "../../../common/utils/holidays.js";
+import {
   calendarDateInTimeZone,
   parseDayTime,
   resolveIanaTimeZone,
@@ -15,6 +19,7 @@ import {
   AttendanceStatus,
   ScanEvent,
   Task,
+  Holiday,
 } from "../../../entities/index.js";
 
 export type ClassInput = {
@@ -199,6 +204,11 @@ export class AdminClassesRepository {
         where: { id: termId },
       });
 
+      const holidayRepo = transactionManager.getRepository(Holiday);
+      const holidays = await holidayRepo.find({
+        where: [{ kind: "PUBLIC" }, { kind: "TERM", termId }],
+      });
+
       const savedClasses: Class[] = [];
 
       const getBaseCode = (cCode: string) => {
@@ -211,6 +221,14 @@ export class AdminClassesRepository {
       };
 
       for (const input of classesToCreate) {
+        const inputDate = calendarDateFromDayTime(input.dayTime);
+        if (
+          inputDate &&
+          isHolidayForTerm(inputDate, termId, holidays)
+        ) {
+          continue;
+        }
+
         const teacher = input.teacherId
           ? teacherMap.get(input.teacherId) || null
           : null;
@@ -224,11 +242,11 @@ export class AdminClassesRepository {
           );
         }
         if (!existingClass) {
-          const inputDate = getDatePart(input.dayTime);
+          const matchDate = getDatePart(input.dayTime);
           existingClass = existingClasses.find(
             (c) =>
               c.subject?.trim() === input.subject?.trim() &&
-              getDatePart(c.dayTime) === inputDate,
+              getDatePart(c.dayTime) === matchDate,
           );
         }
 
