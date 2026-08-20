@@ -13,6 +13,7 @@ import { In } from "typeorm";
 import { User, TeacherSubject } from "../../entities/index.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
+import { sanitizeModulePermissions } from "../../common/constants/modules.js";
 import { writeAuditLog, changedFields } from "../../common/utils/audit-log.js";
 import type {
   InvitePersonInput,
@@ -21,6 +22,32 @@ import type {
   PersonDto,
   UpdatePersonInput,
 } from "./types/users.types.js";
+
+function assertActorCanManagePerson(
+  actor: User,
+  targetRole: UserRole,
+  modulePermissions?: string[] | null,
+) {
+  if (actor.role === UserRole.SUPER_ADMIN) return;
+  if (targetRole === UserRole.SUPER_ADMIN) {
+    throw new AppError(
+      403,
+      "Only an application owner can manage owner accounts",
+      "FORBIDDEN",
+    );
+  }
+  if (targetRole === UserRole.OFFICE_STAFF && Array.isArray(modulePermissions)) {
+    const granted = sanitizeModulePermissions(modulePermissions);
+    const mine = actor.modulePermissions ?? [];
+    if (granted.some((id) => !mine.includes(id))) {
+      throw new AppError(
+        403,
+        "You can only assign modules you have access to",
+        "MODULE_FORBIDDEN",
+      );
+    }
+  }
+}
 
 function toPersonDto(user: User): PersonDto {
   return {
@@ -31,6 +58,7 @@ function toPersonDto(user: User): PersonDto {
     mobile: user.mobile,
     role: user.role,
     employmentType: user.employmentType,
+    modulePermissions: user.modulePermissions ?? [],
     securitySetupComplete: user.securitySetupComplete,
     status: user.status,
     lastSignedInAt: user.lastSignedInAt,
@@ -117,6 +145,12 @@ export class UsersService {
       );
     }
 
+    const actor = await this.users.findOne({ where: { id: actorId } });
+    if (!actor) {
+      throw new AppError(401, "Authentication required", "UNAUTHORIZED");
+    }
+    assertActorCanManagePerson(actor, input.role, input.modulePermissions);
+
     const email = input.email.toLowerCase();
     const existing = await this.users.findOne({ where: { email } });
 
@@ -145,6 +179,10 @@ export class UsersService {
       role: input.role,
       status: UserStatus.INVITED,
       employmentType: input.employmentType ?? null,
+      modulePermissions:
+        input.role === UserRole.OFFICE_STAFF
+          ? sanitizeModulePermissions(input.modulePermissions)
+          : null,
       securitySetupComplete: false,
       invitationTokenHash: null, // Not used anymore, using Redis
       invitationExpiresAt: null,  // Not used anymore, using Redis
@@ -168,6 +206,7 @@ export class UsersService {
         email: user.email,
         role: user.role,
         status: user.status,
+        modulePermissions: user.modulePermissions,
       },
     });
 
@@ -252,6 +291,27 @@ export class UsersService {
     actorId?: string,
   ): Promise<PersonDto> {
     const user = await this.findUserOrThrow(id);
+    const actor = actorId
+      ? await this.users.findOne({ where: { id: actorId } })
+      : null;
+    if (actorId && !actor) {
+      throw new AppError(401, "Authentication required", "UNAUTHORIZED");
+    }
+    if (actor) {
+      if (user.role === UserRole.SUPER_ADMIN && actor.role !== UserRole.SUPER_ADMIN) {
+        throw new AppError(
+          403,
+          "Only an application owner can manage owner accounts",
+          "FORBIDDEN",
+        );
+      }
+      assertActorCanManagePerson(
+        actor,
+        input.role ?? user.role,
+        input.modulePermissions,
+      );
+    }
+
     const before = {
       fullName: user.fullName,
       preferredName: user.preferredName,
@@ -260,6 +320,7 @@ export class UsersService {
       role: user.role,
       employmentType: user.employmentType,
       status: user.status,
+      modulePermissions: user.modulePermissions,
     };
 
     if (input.email && input.email.toLowerCase() !== user.email) {
@@ -323,6 +384,30 @@ export class UsersService {
       }
       user.status = input.status;
     }
+    if (user.role === UserRole.OFFICE_STAFF) {
+      if (input.modulePermissions !== undefined) {
+        const permissions = sanitizeModulePermissions(input.modulePermissions);
+        if (permissions.length === 0) {
+          throw new AppError(
+            400,
+            "Assign at least one module to this staff account",
+            "MODULES_REQUIRED",
+          );
+        }
+        user.modulePermissions = permissions;
+      } else if (
+        input.role === UserRole.OFFICE_STAFF &&
+        !sanitizeModulePermissions(user.modulePermissions).length
+      ) {
+        throw new AppError(
+          400,
+          "Assign at least one module to this staff account",
+          "MODULES_REQUIRED",
+        );
+      }
+    } else if (input.role !== undefined) {
+      user.modulePermissions = null;
+    }
 
     await this.users.save(user);
 
@@ -358,6 +443,7 @@ export class UsersService {
       role: user.role,
       employmentType: user.employmentType,
       status: user.status,
+      modulePermissions: user.modulePermissions,
     };
     const diff = changedFields(before, after);
     if (diff.before || diff.after) {

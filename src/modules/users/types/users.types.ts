@@ -35,6 +35,7 @@ export type PersonDto = {
   createdAt: Date;
   updatedAt: Date;
   subjectIds?: string[];
+  modulePermissions?: string[];
   students?: GuardianConnectedStudentDto[];
   guardians?: {
     id: string;
@@ -69,6 +70,7 @@ export type InvitePersonInput = {
   student?: EnrollmentStudentInput;
   enrollment?: EnrollmentDetailsInput;
   subjectIds?: string[];
+  modulePermissions?: string[];
 };
 
 export type UpdatePersonInput = {
@@ -80,6 +82,7 @@ export type UpdatePersonInput = {
   employmentType?: EmploymentType | null;
   status?: UserStatus.ACTIVE | UserStatus.DEACTIVATED;
   subjectIds?: string[];
+  modulePermissions?: string[];
 };
 
 export type ListPeopleFilters = {

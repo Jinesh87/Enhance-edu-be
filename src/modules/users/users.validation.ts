@@ -5,6 +5,7 @@ import {
   UserRole,
   UserStatus,
 } from "../../common/constants/roles.js";
+import { ADMIN_MODULE_IDS } from "../../common/constants/modules.js";
 
 const enrollmentStudentSchema = Joi.object({
   fullName: Joi.string().trim().min(2).max(120).required(),
@@ -37,7 +38,7 @@ export const createUserSchema = Joi.object({
     .valid(...EMPLOYMENT_TYPES)
     .allow(null)
     .when("role", {
-      is: Joi.valid(UserRole.STAFF, UserRole.SUPER_ADMIN),
+      is: Joi.valid(UserRole.STAFF, UserRole.OFFICE_STAFF, UserRole.SUPER_ADMIN),
       then: Joi.required(),
       otherwise: Joi.optional(),
     }),
@@ -56,6 +57,13 @@ export const createUserSchema = Joi.object({
     then: Joi.optional(),
     otherwise: Joi.forbidden(),
   }),
+  modulePermissions: Joi.array()
+    .items(Joi.string().valid(...ADMIN_MODULE_IDS))
+    .when("role", {
+      is: UserRole.OFFICE_STAFF,
+      then: Joi.array().min(1).required(),
+      otherwise: Joi.forbidden(),
+    }),
 });
 
 export const updateUserSchema = Joi.object({
@@ -69,6 +77,9 @@ export const updateUserSchema = Joi.object({
     .allow(null),
   status: Joi.string().valid(UserStatus.ACTIVE, UserStatus.DEACTIVATED),
   subjectIds: Joi.array().items(Joi.string().uuid()).optional(),
+  modulePermissions: Joi.array()
+    .items(Joi.string().valid(...ADMIN_MODULE_IDS))
+    .optional(),
 })
   .min(1)
   .messages({

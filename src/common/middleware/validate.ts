@@ -13,12 +13,15 @@ export function validate(schema: ObjectSchema, part: RequestPart = "body") {
 
     if (error) {
       next(
-        new AppError(400, "Validation failed", "VALIDATION_ERROR", {
-          details: error.details.map((detail) => ({
+        new AppError(
+          400,
+          "Validation failed",
+          "VALIDATION_ERROR",
+          error.details.map((detail) => ({
             message: detail.message,
             path: detail.path,
           })),
-        }),
+        ),
       );
       return;
     }

@@ -4,9 +4,12 @@ import { authorize } from "../../../common/middleware/authenticate.js";
 import { UserRole } from "../../../common/constants/roles.js";
 
 const router = Router();
+const staffOnly = authorize(UserRole.SUPER_ADMIN, UserRole.STAFF);
 
-router.use(authorize(UserRole.SUPER_ADMIN, UserRole.STAFF));
-
-router.get("/tutor/dashboard", teacherClassController.getTeacherDashboard);
+router.get(
+  "/tutor/dashboard",
+  staffOnly,
+  teacherClassController.getTeacherDashboard,
+);
 
 export default router;
