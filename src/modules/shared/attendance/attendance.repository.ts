@@ -56,6 +56,21 @@ export class AttendanceRepository {
     });
   }
 
+  async findActiveOrFutureSessions(): Promise<Session[]> {
+    const now = new Date();
+    return this.sessions.find({
+      where: {
+        endAt: MoreThanOrEqual(now),
+      },
+      relations: {
+        class: true,
+      },
+      order: {
+        startAt: "ASC",
+      },
+    });
+  }
+
   async ensureSessionsExistForClassIds(classIds: string[]): Promise<void> {
     if (classIds.length === 0) return;
 
@@ -99,7 +114,21 @@ export class AttendanceRepository {
     }
 
     if (sessionsToCreate.length > 0) {
-      await this.sessions.save(sessionsToCreate);
+      const savedSessions = await this.sessions.save(sessionsToCreate);
+      for (const s of savedSessions) {
+        const enrolments = await this.findEnrolmentsByClassId(s.classId);
+        for (const enrol of enrolments) {
+          const existing = await this.findAttendanceRecord(s.id, enrol.studentId);
+          if (!existing) {
+            await this.createAttendanceRecord({
+              sessionId: s.id,
+              studentId: enrol.studentId,
+              status: AttendanceStatus.PENDING,
+              scannedAt: null,
+            });
+          }
+        }
+      }
     }
   }
 

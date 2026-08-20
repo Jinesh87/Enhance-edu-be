@@ -18,6 +18,7 @@ export enum AttendanceStatus {
   ABSENT = "ABSENT",
   EXCUSED = "EXCUSED",
   EXCEPTION = "EXCEPTION",
+  PENDING = "PENDING",
 }
 
 @Entity("attendance_records")
@@ -41,9 +42,9 @@ export class AttendanceRecord {
   student!: Relation<User>;
 
   @Column({
-    type: "enum",
-    enum: AttendanceStatus,
-    default: AttendanceStatus.ABSENT,
+    type: "varchar",
+    length: 50,
+    default: "PENDING",
   })
   @Index()
   status!: AttendanceStatus;
