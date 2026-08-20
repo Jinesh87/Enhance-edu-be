@@ -37,7 +37,7 @@ class AdminAttendanceController {
     try {
       const scanEventId = req.params.id as string;
       const resolvedByUserId = req.user!.id;
-      const { decision } = req.body;
+      const { decision, reassignedSessionId } = req.body;
 
       if (!Object.values(AdminDecision).includes(decision)) {
         throw new AppError(
@@ -51,6 +51,7 @@ class AdminAttendanceController {
         scanEventId,
         decision as AdminDecision,
         resolvedByUserId,
+        reassignedSessionId,
       );
 
       try {
@@ -71,6 +72,16 @@ class AdminAttendanceController {
       }
 
       res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getEligibleSessions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const scanEventId = req.params.id as string;
+      const data = await adminAttendanceService.getEligibleSessionsForException(scanEventId);
+      res.status(200).json(data);
     } catch (error) {
       next(error);
     }

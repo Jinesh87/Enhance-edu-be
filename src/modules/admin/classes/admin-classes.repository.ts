@@ -16,6 +16,7 @@ import {
   ClassStudent,
   Session,
   AttendanceRecord,
+  AttendanceStatus,
   ScanEvent,
   Task,
   Holiday,
@@ -390,7 +391,27 @@ export class AdminClassesRepository {
       }
 
       if (sessionsToCreate.length > 0) {
-        await sessionRepo.save(sessionsToCreate);
+        const savedSessions = await sessionRepo.save(sessionsToCreate);
+        for (const s of savedSessions) {
+          const enrolments = await classStudentRepo.find({
+            where: { classId: s.classId },
+          });
+          for (const enrol of enrolments) {
+            const existing = await attendanceRepo.findOne({
+              where: { sessionId: s.id, studentId: enrol.studentId },
+            });
+            if (!existing) {
+              await attendanceRepo.save(
+                attendanceRepo.create({
+                  sessionId: s.id,
+                  studentId: enrol.studentId,
+                  status: AttendanceStatus.PENDING,
+                  scannedAt: null,
+                })
+              );
+            }
+          }
+        }
       }
 
       return savedClasses;

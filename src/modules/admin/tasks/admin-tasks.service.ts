@@ -124,7 +124,33 @@ export class AdminTasksService {
     return toTaskDto(task);
   }
 
+  async syncFuturePendingRecords(): Promise<void> {
+    const sessions = await this.attendance.findActiveOrFutureSessions();
+    for (const session of sessions) {
+      const enrolments = await this.attendance.findEnrolmentsByClassId(
+        session.classId,
+      );
+      const records = await this.attendance.findAttendanceRecordsBySessionId(
+        session.id,
+      );
+      const recordByStudent = new Set(records.map((r) => r.studentId));
+
+      for (const enrolment of enrolments) {
+        if (!recordByStudent.has(enrolment.studentId)) {
+          await this.attendance.createAttendanceRecord({
+            sessionId: session.id,
+            studentId: enrolment.studentId,
+            status: AttendanceStatus.PENDING,
+            scannedAt: null,
+          });
+        }
+      }
+    }
+  }
+
   async syncAbsenceChaseTasks(): Promise<number> {
+    await this.syncFuturePendingRecords();
+
     const since = new Date();
     since.setDate(since.getDate() - 14);
 
@@ -153,13 +179,17 @@ export class AdminTasksService {
         const record = recordByStudent.get(enrolment.studentId);
         if (
           record &&
+          record.status !== AttendanceStatus.PENDING &&
           record.status !== AttendanceStatus.ABSENT
         ) {
           continue;
         }
 
         let attendanceRecord = record;
-        if (!attendanceRecord) {
+        if (record && record.status === AttendanceStatus.PENDING) {
+          record.status = AttendanceStatus.ABSENT;
+          attendanceRecord = await this.attendance.saveAttendanceRecord(record);
+        } else if (!record) {
           attendanceRecord = await this.attendance.createAttendanceRecord({
             sessionId: session.id,
             studentId: enrolment.studentId,
@@ -188,7 +218,7 @@ export class AdminTasksService {
           title: `Chase absence — ${studentName} · ${classLabel}`,
           studentId: enrolment.studentId,
           sessionId: session.id,
-          attendanceRecordId: attendanceRecord.id,
+          attendanceRecordId: attendanceRecord!.id,
           dueAt: session.endAt,
         });
 
@@ -197,7 +227,11 @@ export class AdminTasksService {
           created += 1;
         } catch (error) {
           logger.warn(
-            { err: error, sessionId: session.id, studentId: enrolment.studentId },
+            {
+              err: error,
+              sessionId: session.id,
+              studentId: enrolment.studentId,
+            },
             "Skipped duplicate absence chase task",
           );
         }
@@ -213,9 +247,7 @@ export class AdminTasksService {
         count: created,
         openCount,
         title:
-          created === 1
-            ? "New absence chase"
-            : `${created} new absence chases`,
+          created === 1 ? "New absence chase" : `${created} new absence chases`,
         body: "Open Tasks to follow up.",
       });
     }

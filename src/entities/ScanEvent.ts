@@ -23,6 +23,7 @@ export enum AdminDecision {
   ACCEPT_AS_LATE = "Accept as late",
   REJECT = "Reject",
   IGNORE = "Ignore",
+  REASSIGN = "Reassign session",
 }
 
 export enum ScanFlagReason {
@@ -98,6 +99,12 @@ export class ScanEvent {
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
   resolvedByUser!: Relation<User> | null;
+
+  @Column({ type: "uuid", nullable: true })
+  reassignedSessionId!: string | null;
+
+  @ManyToOne(() => Session, { onDelete: "SET NULL", nullable: true })
+  reassignedSession!: Relation<Session> | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

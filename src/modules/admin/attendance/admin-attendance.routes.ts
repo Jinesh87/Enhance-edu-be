@@ -14,6 +14,10 @@ router.use(
 );
 
 router.get("/exceptions", adminAttendanceController.listExceptions);
+router.get(
+  "/exceptions/:id/eligible-sessions",
+  adminAttendanceController.getEligibleSessions,
+);
 router.post(
   "/exceptions/:id/action",
   adminAttendanceController.resolveException,

@@ -450,6 +450,24 @@ export class StudentClassesService {
     await this.classStudents.save(
       this.classStudents.create({ classId, studentId }),
     );
+
+    // Create PENDING attendance records for existing sessions of this class
+    const sessions = await this.sessions.find({ where: { classId } });
+    for (const session of sessions) {
+      const existingRecord = await this.attendance.findOne({
+        where: { sessionId: session.id, studentId },
+      });
+      if (!existingRecord) {
+        await this.attendance.save(
+          this.attendance.create({
+            sessionId: session.id,
+            studentId,
+            status: AttendanceStatus.PENDING,
+            scannedAt: null,
+          }),
+        );
+      }
+    }
   }
 }
 

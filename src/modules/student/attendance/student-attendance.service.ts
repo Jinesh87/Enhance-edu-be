@@ -116,7 +116,10 @@ export class StudentAttendanceService {
       throw new AppError(400, "Invalid scan time", "INVALID_SCAN_TIME");
     }
 
-    const session = await this.repo.findSessionWithClassById(sessionId);
+    const targetSessionId = sessionId;
+    console.log(`[CHECK-IN DEBUG] scannedCode: "${scannedCode}", targetSessionId: "${targetSessionId}"`);
+
+    const session = await this.repo.findSessionWithClassById(targetSessionId);
 
     if (!session) {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
@@ -135,19 +138,29 @@ export class StudentAttendanceService {
       );
     }
 
+    const qrResult = validateAttendanceQr(scannedCode, targetSessionId, scannedAt);
+
+    let reasonFlagged: ScanFlagReason = ScanFlagReason.NONE;
+    if (!qrResult.valid) {
+      reasonFlagged = qrResult.reason === "WRONG_SESSION_CODE"
+        ? ScanFlagReason.WRONG_SESSION_CODE
+        : ScanFlagReason.TOKEN_EXPIRED;
+    }
+
     const existingRecord = await this.repo.findAttendanceRecord(
-      sessionId,
+      targetSessionId,
       studentId,
     );
 
     if (
+      reasonFlagged === ScanFlagReason.NONE &&
       existingRecord &&
       (existingRecord.status === AttendanceStatus.PRESENT ||
         existingRecord.status === AttendanceStatus.LATE)
     ) {
       const duplicateScan = await this.repo.createScanEvent({
         studentId,
-        sessionId,
+        sessionId: targetSessionId,
         scannedAt,
         syncedAt: new Date(),
         scannedCode,
@@ -163,8 +176,6 @@ export class StudentAttendanceService {
         scanEventId: duplicateScan.id,
       };
     }
-
-    let reasonFlagged: ScanFlagReason = ScanFlagReason.NONE;
 
     const gracePeriodMinutes = session.gracePeriodMinutes ?? 25;
 
@@ -193,18 +204,6 @@ export class StudentAttendanceService {
 
       if (isFuture || isTooOld || isSuspiciousDelay) {
         reasonFlagged = ScanFlagReason.SUSPICIOUS_OFFLINE_TIMESTAMP;
-      }
-    }
-
-    if (reasonFlagged === ScanFlagReason.NONE) {
-      const qrResult = validateAttendanceQr(scannedCode, sessionId, scannedAt);
-
-      if (!qrResult.valid) {
-        if (qrResult.reason === "WRONG_SESSION_CODE") {
-          reasonFlagged = ScanFlagReason.WRONG_SESSION_CODE;
-        } else {
-          reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
-        }
       }
     }
 
@@ -256,15 +255,13 @@ export class StudentAttendanceService {
 
     const currentReason = reasonFlagged as ScanFlagReason;
     const isHardFailure =
-      currentReason === ScanFlagReason.TOKEN_EXPIRED ||
-      currentReason === ScanFlagReason.WRONG_SESSION_CODE ||
       currentReason === ScanFlagReason.DUPLICATE_SCAN;
 
     const isException = reasonFlagged !== ScanFlagReason.NONE && !isHardFailure;
 
     if (isException) {
       const existingPendingScans =
-        await this.repo.findPendingScansBySessionId(sessionId);
+        await this.repo.findPendingScansBySessionId(targetSessionId);
       const studentPendingScans = existingPendingScans.filter(
         (s) => s.studentId === studentId,
       );
@@ -277,7 +274,7 @@ export class StudentAttendanceService {
 
     const scanEvent = await this.repo.createScanEvent({
       studentId,
-      sessionId,
+      sessionId: targetSessionId,
       scannedAt,
 
       syncedAt: new Date(),
@@ -303,7 +300,7 @@ export class StudentAttendanceService {
       try {
         if (!existingRecord) {
           await this.repo.createAttendanceRecord({
-            sessionId,
+            sessionId: targetSessionId,
             studentId,
             status: AttendanceStatus.EXCEPTION,
             scannedAt,
@@ -323,7 +320,7 @@ export class StudentAttendanceService {
             err.message?.includes("UniqueConstraintError"))
         ) {
           const concurrentRecord = await this.repo.findAttendanceRecord(
-            sessionId,
+            targetSessionId,
             studentId,
           );
           if (concurrentRecord) {
@@ -350,7 +347,7 @@ export class StudentAttendanceService {
     try {
       if (!existingRecord) {
         await this.repo.createAttendanceRecord({
-          sessionId,
+          sessionId: targetSessionId,
           studentId,
           status,
           scannedAt,
