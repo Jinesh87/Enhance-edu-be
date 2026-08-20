@@ -27,8 +27,10 @@ const RECORD_PATHS: Record<string, (id: string) => string> = {
   class: () => `/admin/classes`,
   subject: () => `/admin/subjects`,
   term: () => `/admin/terms`,
+  holiday: () => `/admin/holidays-settings`,
   account: () => "/admin/people",
   change_history: () => "/admin/change-history",
+  enquiry: (id) => `/admin/enquiries/${id}`,
 };
 
 export function recordPathFor(

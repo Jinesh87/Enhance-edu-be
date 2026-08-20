@@ -22,7 +22,7 @@ adminTermsRouter.use(
 
 adminTermsRouter.get(
   "/",
-  authorizeAdminModule("terms", "classes", "enrolments", "people"),
+  authorizeAdminModule("terms", "classes", "enrolments", "people", "enquiries", "settings"),
   adminTermsController.list,
 );
 adminTermsRouter.use(authorizeAdminModule("terms"));
