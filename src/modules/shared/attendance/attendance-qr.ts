@@ -79,7 +79,7 @@ export function validateAttendanceQr(
 
   const currentWindow = Math.floor(scannedAt.getTime() / QR_ROTATION_WINDOW_MS);
 
-  const tolerance = 10;
+  const tolerance = 1;
   const isRecent =
     codeWindowIndex >= currentWindow - tolerance &&
     codeWindowIndex <= currentWindow + tolerance;

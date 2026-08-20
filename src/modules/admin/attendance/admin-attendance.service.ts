@@ -204,12 +204,13 @@ export class AdminAttendanceService {
           await attendanceRepo.save(newRecord);
         }
 
-        // Set original session attendance to ABSENT
+        // Set original session attendance to ABSENT and clear scannedAt
         const originalRecord = await attendanceRepo.findOne({
           where: { sessionId: scan.sessionId, studentId: scan.studentId },
         });
         if (originalRecord) {
           originalRecord.status = AttendanceStatus.ABSENT;
+          originalRecord.scannedAt = null; // Clear scannedAt so it doesn't show in Unresolved Absences
           await attendanceRepo.save(originalRecord);
         }
       } else {
@@ -218,7 +219,7 @@ export class AdminAttendanceService {
           where: { sessionId: scan.sessionId, studentId: scan.studentId },
         });
 
-        if (record && decision !== AdminDecision.IGNORE) {
+        if (record) {
           if (decision === AdminDecision.ACCEPT_AS_LATE) {
             record.status = AttendanceStatus.LATE;
             record.scannedAt = scan.scannedAt;
@@ -227,6 +228,13 @@ export class AdminAttendanceService {
             record.scannedAt = scan.scannedAt;
           } else if (decision === AdminDecision.REJECT) {
             record.status = AttendanceStatus.ABSENT;
+            record.scannedAt = null; // Clear scannedAt so it doesn't show in Unresolved Absences
+          } else if (decision === AdminDecision.IGNORE) {
+            const gracePeriodMinutes = scan.session.gracePeriodMinutes ?? 25;
+            const graceClosesAt = scan.session.startAt.getTime() + gracePeriodMinutes * 60_000;
+            const isGraceClosed = Date.now() > graceClosesAt;
+            record.status = isGraceClosed ? AttendanceStatus.ABSENT : AttendanceStatus.PENDING;
+            record.scannedAt = null; // Clear scannedAt so it doesn't show in Unresolved Absences
           }
           await attendanceRepo.save(record);
         }

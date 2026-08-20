@@ -140,29 +140,12 @@ export class StudentAttendanceService {
 
     const qrResult = validateAttendanceQr(scannedCode, targetSessionId, scannedAt);
 
-    if (!qrResult.valid && qrResult.reason !== "WRONG_SESSION_CODE") {
-      const scanEvent = await this.repo.createScanEvent({
-        studentId,
-        sessionId: targetSessionId,
-        scannedAt,
-        syncedAt: new Date(),
-        scannedCode,
-        deviceSignal,
-        isOfflineSync,
-        status: ScanStatus.REJECTED,
-        reasonFlagged: ScanFlagReason.TOKEN_EXPIRED,
-      });
-
-      return {
-        status: "EXCEPTION",
-        reasonFlagged: ScanFlagReason.TOKEN_EXPIRED,
-        scanEventId: scanEvent.id,
-      };
+    let reasonFlagged: ScanFlagReason = ScanFlagReason.NONE;
+    if (!qrResult.valid) {
+      reasonFlagged = qrResult.reason === "WRONG_SESSION_CODE"
+        ? ScanFlagReason.WRONG_SESSION_CODE
+        : ScanFlagReason.TOKEN_EXPIRED;
     }
-
-    let reasonFlagged: ScanFlagReason = !qrResult.valid && qrResult.reason === "WRONG_SESSION_CODE"
-      ? ScanFlagReason.WRONG_SESSION_CODE
-      : ScanFlagReason.NONE;
 
     const existingRecord = await this.repo.findAttendanceRecord(
       targetSessionId,
@@ -272,7 +255,6 @@ export class StudentAttendanceService {
 
     const currentReason = reasonFlagged as ScanFlagReason;
     const isHardFailure =
-      currentReason === ScanFlagReason.TOKEN_EXPIRED ||
       currentReason === ScanFlagReason.DUPLICATE_SCAN;
 
     const isException = reasonFlagged !== ScanFlagReason.NONE && !isHardFailure;
