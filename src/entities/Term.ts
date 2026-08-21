@@ -30,6 +30,9 @@ export class Term {
   @Column({ type: "date" })
   endDate!: string;
 
+  @Column({ type: "boolean", default: false })
+  isTrial!: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 

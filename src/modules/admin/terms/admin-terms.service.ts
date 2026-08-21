@@ -8,6 +8,7 @@ type TermInput = {
   yearLevel: string;
   startDate: string;
   endDate: string;
+  isTrial?: boolean;
 };
 
 function toTermDto(term: Term) {
@@ -30,6 +31,7 @@ function toTermDto(term: Term) {
       : undefined,
     startDate: term.startDate,
     endDate: term.endDate,
+    isTrial: Boolean(term.isTrial),
     createdAt: term.createdAt,
     updatedAt: term.updatedAt,
   };
@@ -98,6 +100,7 @@ export class AdminTermsService {
       name: payload.name,
       startDate: payload.startDate,
       endDate: payload.endDate,
+      isTrial: payload.isTrial,
       academicYear,
       yearLevel,
     });
@@ -137,6 +140,7 @@ export class AdminTermsService {
     term.name = payload.name;
     term.startDate = payload.startDate;
     term.endDate = payload.endDate;
+    term.isTrial = payload.isTrial;
     term.academicYear = academicYear;
     term.yearLevel = yearLevel;
     await this.terms.save(term);
@@ -154,6 +158,7 @@ export class AdminTermsService {
     const endDate = input.endDate.trim();
     const academicYear = input.academicYear;
     const yearLevel = input.yearLevel.trim();
+    const isTrial = Boolean(input.isTrial);
 
     if (!name) {
       throw new AppError(400, "Term name is required", "VALIDATION_ERROR");
@@ -175,7 +180,7 @@ export class AdminTermsService {
       );
     }
 
-    return { name, academicYear, yearLevel, startDate, endDate };
+    return { name, academicYear, yearLevel, startDate, endDate, isTrial };
   }
 
   private async findTermOrThrow(id: string) {
