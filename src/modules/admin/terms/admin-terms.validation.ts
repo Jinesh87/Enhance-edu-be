@@ -12,6 +12,7 @@ export const createTermSchema = Joi.object({
   name: Joi.string().trim().min(1).max(120).required(),
   academicYear: Joi.number().integer().min(1900).max(2100).required(),
   yearLevel: Joi.string().trim().min(1).max(40).required(),
+  classroomId: Joi.string().uuid().allow(null, "").optional(),
   startDate: dateField,
   endDate: dateField,
 });
@@ -20,6 +21,7 @@ export const updateTermSchema = Joi.object({
   name: Joi.string().trim().min(1).max(120).required(),
   academicYear: Joi.number().integer().min(1900).max(2100).required(),
   yearLevel: Joi.string().trim().min(1).max(40).required(),
+  classroomId: Joi.string().uuid().allow(null, "").optional(),
   startDate: dateField,
   endDate: dateField,
 });

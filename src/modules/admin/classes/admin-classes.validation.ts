@@ -3,7 +3,8 @@ import Joi from "joi";
 export const createClassSchema = Joi.object({
   name: Joi.string().trim().max(120).allow(null, ""),
   code: Joi.string().trim().min(2).max(60).required(),
-  room: Joi.string().trim().max(80).required(),
+  classroomId: Joi.string().uuid().allow(null, ""),
+  room: Joi.string().trim().max(80).allow("", null),
   subject: Joi.string().trim().max(120).allow(null, ""),
   lesson: Joi.string().trim().max(60).allow(null, ""),
   dayTime: Joi.string().trim().max(100).allow(null, ""),
@@ -19,6 +20,7 @@ export const createClassSchema = Joi.object({
 export const updateClassSchema = Joi.object({
   name: Joi.string().trim().max(120).allow(null, ""),
   code: Joi.string().trim().min(2).max(60),
+  classroomId: Joi.string().uuid().allow(null),
   room: Joi.string().trim().max(80),
   subject: Joi.string().trim().max(120).allow(null, ""),
   lesson: Joi.string().trim().max(60).allow(null, ""),

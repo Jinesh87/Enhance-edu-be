@@ -23,6 +23,7 @@ class AdminTermsController {
         name: req.body.name,
         academicYear: req.body.academicYear,
         yearLevel: req.body.yearLevel,
+        classroomId: req.body.classroomId,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
       });
@@ -35,6 +36,7 @@ class AdminTermsController {
         after: {
           academicYear: term.academicYear?.year,
           yearLevel: term.yearLevel?.name,
+          classroomId: term.classroomId,
           startDate: term.startDate,
           endDate: term.endDate,
         },
@@ -51,6 +53,7 @@ class AdminTermsController {
         name: req.body.name,
         academicYear: req.body.academicYear,
         yearLevel: req.body.yearLevel,
+        classroomId: req.body.classroomId,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
       });
@@ -63,6 +66,7 @@ class AdminTermsController {
         after: {
           academicYear: term.academicYear?.year,
           yearLevel: term.yearLevel?.name,
+          classroomId: term.classroomId,
           startDate: term.startDate,
           endDate: term.endDate,
         },

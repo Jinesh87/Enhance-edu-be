@@ -37,6 +37,7 @@ export * from "./AcademicYear.js";
 export * from "./YearLevel.js";
 export * from "./InstitutionSetting.js";
 export * from "./Holiday.js";
+export * from "./Classroom.js";
 export * from "./AuditChange.js";
 export * from "./EnquiryStage.js";
 export * from "./EnquirySource.js";

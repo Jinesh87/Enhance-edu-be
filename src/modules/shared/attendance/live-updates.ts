@@ -37,7 +37,16 @@ class LiveUpdateManager {
     }
     this.clients.get(sessionId)!.add(res);
 
+    const ping = setInterval(() => {
+      try {
+        res.write(": ping\n\n");
+      } catch {
+        clearInterval(ping);
+      }
+    }, 25_000);
+
     res.on("close", () => {
+      clearInterval(ping);
       const sessionClients = this.clients.get(sessionId);
       if (sessionClients) {
         sessionClients.delete(res);
