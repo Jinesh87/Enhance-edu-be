@@ -43,6 +43,8 @@ export interface SendEnrollmentChangeEmailParams {
   reviewLink: string;
 }
 
+export type SendNewEnrollmentEmailParams = SendEnrollmentChangeEmailParams;
+
 export interface SendPasswordResetEmailParams {
   to: string;
   fullName: string;
@@ -403,6 +405,47 @@ export class EmailService {
 
     if (error) {
       logger.warn({ error, to: params.to }, "Failed to send enrolment change email");
+    }
+  }
+
+  async sendNewEnrollmentEmail(
+    params: SendNewEnrollmentEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config || !config.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email sending is disabled, skipping new enrolment email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    const { error } = await resend.emails.send({
+      from: `${config.fromName} <${config.fromEmail}>`,
+      to: params.to,
+      subject: `New enrolment for ${params.studentFullName}`,
+      html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #2c3e50;">New enrolment to accept</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p>The school has enrolled <strong>${escapeHtml(params.studentFullName)}</strong>. Please sign in to review the details, set their student login, and accept the enrolment.</p>
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="${params.reviewLink}"
+         style="background-color: #e18f33; color: #002117; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: 700;">
+        Review enrolment
+      </a>
+    </div>
+  </div>
+</body>
+</html>`.trim(),
+    });
+
+    if (error) {
+      logger.warn({ error, to: params.to }, "Failed to send new enrolment email");
     }
   }
 
