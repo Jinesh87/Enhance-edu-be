@@ -451,7 +451,11 @@ export class AdminEnrollmentsService {
     };
   }
 
-  async acceptPendingEnrollment(pendingId: string, guardianId: string) {
+  async acceptPendingEnrollment(
+    pendingId: string,
+    guardianId: string,
+    studentLogin?: { username: string; password: string },
+  ) {
     const pending = await this.pendingEnrollments.findOne({
       where: {
         id: pendingId,
@@ -467,7 +471,7 @@ export class AdminEnrollmentsService {
     if (!pending) {
       throw new AppError(
         404,
-        "Pending enrolment change not found",
+        "Pending enrolment not found",
         "PENDING_ENROLLMENT_NOT_FOUND",
       );
     }
@@ -476,11 +480,55 @@ export class AdminEnrollmentsService {
       return this.applyModification(pending);
     }
 
-    throw new AppError(
-      400,
-      "This enrolment still needs student login setup during invitation acceptance",
-      "STUDENT_LOGIN_REQUIRED",
+    if (!studentLogin?.username?.trim() || !studentLogin?.password) {
+      throw new AppError(
+        400,
+        "Set a username and password for this student to accept the enrolment",
+        "STUDENT_LOGIN_REQUIRED",
+      );
+    }
+
+    const guardian =
+      pending.guardian ??
+      (await this.users.findOne({ where: { id: guardianId } }));
+    if (!guardian) {
+      throw new AppError(404, "Guardian not found", "GUARDIAN_NOT_FOUND");
+    }
+
+    const subjectRows =
+      pending.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
+    if (!pending.term) {
+      throw new AppError(404, "Term not found", "TERM_NOT_FOUND");
+    }
+
+    const result = await this.materializeEnrollment(
+      guardian,
+      {
+        fullName: pending.studentFullName,
+        preferredName: pending.studentPreferredName,
+        dateOfBirth: pending.studentDateOfBirth,
+        yearLevel: pending.studentYearLevel,
+      },
+      {
+        termId: pending.termId,
+        subjectIds: subjectRows.map((subject) => subject.id),
+        fee: Number(pending.fee),
+      },
+      pending.term,
+      subjectRows,
+      pending.createdByUserId ?? guardianId,
+      {
+        username: studentLogin.username.trim().toLowerCase(),
+        password: studentLogin.password,
+      },
     );
+
+    pending.status = PendingEnrollmentStatus.FULFILLED;
+    pending.fulfilledStudentId = result.student.id;
+    pending.fulfilledEnrollmentId = result.enrollment.id;
+    await this.pendingEnrollments.save(pending);
+
+    return result;
   }
 
   async listPendingStudentsForGuardian(guardianId: string) {
@@ -542,13 +590,17 @@ export class AdminEnrollmentsService {
 
     const linked = links.map((link) => {
       const enrollments = enrollmentsByStudent.get(link.studentId) ?? [];
+      const hasLogin = Boolean(link.student.userId);
       return {
         id: link.student.id,
         fullName: link.student.fullName,
         preferredName: link.student.preferredName,
         dateOfBirth: link.student.dateOfBirth,
         yearLevel: link.student.yearLevel,
-        status: "LINKED" as const,
+        status: (hasLogin ? "LINKED" : "PENDING_LOGIN") as
+          | "LINKED"
+          | "PENDING_LOGIN",
+        hasLogin,
         enrollments: enrollments.map((enrollment) => ({
           id: enrollment.id,
           status: enrollment.status,
@@ -578,6 +630,7 @@ export class AdminEnrollmentsService {
       dateOfBirth: row.studentDateOfBirth,
       yearLevel: row.studentYearLevel,
       status: "AWAITING_GUARDIAN" as const,
+      hasLogin: false,
       enrollments: [
         {
           id: row.id,
@@ -678,25 +731,12 @@ export class AdminEnrollmentsService {
       ? await this.loadExistingGuardian(input.guardianId)
       : await this.resolveGuardian(input.guardian!);
 
-    if (guardian.status === UserStatus.ACTIVE) {
-      const result = await this.materializeEnrollment(
-        guardian,
-        input.student,
-        input.enrollment,
-        term,
-        subjectRows,
-        actorId,
-        input.studentLogin,
+    if (guardian.status === UserStatus.DEACTIVATED) {
+      throw new AppError(
+        400,
+        "This guardian account is deactivated",
+        "GUARDIAN_DEACTIVATED",
       );
-
-      return {
-        guardian: toGuardianDto(guardian),
-        student: result.student,
-        enrollment: result.enrollment,
-        invitationSent: false,
-        invitationToken: undefined,
-        awaitingGuardianAcceptance: false,
-      };
     }
 
     const pending = await this.queuePendingEnrollment(
@@ -715,8 +755,10 @@ export class AdminEnrollmentsService {
     let invitationToken: string | undefined;
     if (guardian.status === UserStatus.INVITED) {
       const invite = await this.sendGuardianInvitation(guardian);
-      invitationSent = true;
+      invitationSent = invite.emailSent;
       invitationToken = invite.invitationToken;
+    } else if (guardian.status === UserStatus.ACTIVE) {
+      await this.notifyGuardianOfNewEnrollment(guardian, pending);
     }
 
     return {
@@ -741,7 +783,7 @@ export class AdminEnrollmentsService {
     student: StudentInput,
     enrollment: EnrollmentInput,
     actorId: string,
-    studentLogin?: StudentLoginInput,
+    _studentLogin?: StudentLoginInput,
   ) {
     const guardian = await this.users.findOne({ where: { id: guardianId } });
     if (!guardian || guardian.role !== UserRole.GUARDIAN) {
@@ -757,18 +799,6 @@ export class AdminEnrollmentsService {
 
     const { term, subjectRows } = await this.validateEnrollmentCatalogue(enrollment);
 
-    if (guardian.status === UserStatus.ACTIVE) {
-      return this.materializeEnrollment(
-        guardian,
-        student,
-        enrollment,
-        term,
-        subjectRows,
-        actorId,
-        studentLogin,
-      );
-    }
-
     const pending = await this.queuePendingEnrollment(
       guardian.id,
       student,
@@ -779,6 +809,11 @@ export class AdminEnrollmentsService {
     );
     pending.guardian = guardian;
     pending.term = term;
+
+    if (guardian.status === UserStatus.ACTIVE) {
+      await this.notifyGuardianOfNewEnrollment(guardian, pending);
+    }
+
     return {
       pending,
       subjects: subjectRows,
@@ -1162,6 +1197,29 @@ export class AdminEnrollmentsService {
     }
   }
 
+  private async notifyGuardianOfNewEnrollment(
+    guardian: User,
+    pending: PendingEnrollment,
+  ) {
+    if (!guardian.email || guardian.status !== UserStatus.ACTIVE) {
+      return;
+    }
+
+    try {
+      await emailService.sendNewEnrollmentEmail({
+        to: guardian.email,
+        fullName: guardian.fullName,
+        studentFullName: pending.studentFullName,
+        reviewLink: `${env.FRONTEND_URL}/guardian/students`,
+      });
+    } catch (error) {
+      logger.warn(
+        { guardianId: guardian.id, err: error },
+        "Failed to send new enrolment email",
+      );
+    }
+  }
+
   private async loadExistingGuardian(guardianId: string) {
     const guardian = await this.users.findOne({ where: { id: guardianId } });
 
@@ -1262,26 +1320,19 @@ export class AdminEnrollmentsService {
     const enrollments =
       await this.listPendingEnrollmentEmailDetails(guardian.id);
 
-    try {
-      await emailService.sendInvitationEmail({
-        to: guardian.email,
-        fullName: guardian.fullName,
-        invitationLink,
-        roleLabel: "Guardian",
-        enrollments,
-      });
-      logger.info(
-        { userId: guardian.id, email: guardian.email },
-        "Guardian invitation email sent",
-      );
-    } catch (error) {
-      logger.warn(
-        { userId: guardian.id, err: error },
-        "Failed to send guardian invitation email",
-      );
-    }
+    await emailService.sendInvitationEmail({
+      to: guardian.email,
+      fullName: guardian.fullName,
+      invitationLink,
+      roleLabel: "Guardian",
+      enrollments,
+    });
+    logger.info(
+      { userId: guardian.id, email: guardian.email },
+      "Guardian invitation email sent",
+    );
 
-    return { invitationToken };
+    return { invitationToken, emailSent: true as const };
   }
 }
 
