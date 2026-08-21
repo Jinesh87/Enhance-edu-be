@@ -26,6 +26,7 @@ class AdminTermsController {
         classroomId: req.body.classroomId,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
+        isTrial: req.body.isTrial,
       });
       await writeAuditLog({
         actorUserId: req.user!.id,
@@ -39,6 +40,7 @@ class AdminTermsController {
           classroomId: term.classroomId,
           startDate: term.startDate,
           endDate: term.endDate,
+          isTrial: term.isTrial,
         },
       });
       res.status(201).json({ term });
@@ -56,6 +58,7 @@ class AdminTermsController {
         classroomId: req.body.classroomId,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
+        isTrial: req.body.isTrial,
       });
       await writeAuditLog({
         actorUserId: req.user!.id,
@@ -69,6 +72,7 @@ class AdminTermsController {
           classroomId: term.classroomId,
           startDate: term.startDate,
           endDate: term.endDate,
+          isTrial: term.isTrial,
         },
       });
       res.status(200).json({ term });

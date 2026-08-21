@@ -37,6 +37,7 @@ export type PersonDto = {
   updatedAt: Date;
   subjectIds?: string[];
   modulePermissions?: string[];
+  isTrialAccount?: boolean;
   students?: GuardianConnectedStudentDto[];
   guardians?: {
     id: string;

@@ -15,6 +15,7 @@ export const createTermSchema = Joi.object({
   classroomId: Joi.string().uuid().allow(null, "").optional(),
   startDate: dateField,
   endDate: dateField,
+  isTrial: Joi.boolean().default(false),
 });
 
 export const updateTermSchema = Joi.object({
@@ -24,6 +25,7 @@ export const updateTermSchema = Joi.object({
   classroomId: Joi.string().uuid().allow(null, "").optional(),
   startDate: dateField,
   endDate: dateField,
+  isTrial: Joi.boolean().default(false),
 });
 
 export const termIdParamsSchema = Joi.object({

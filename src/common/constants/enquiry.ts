@@ -26,24 +26,30 @@ export const DEFAULT_ENQUIRY_STAGES = [
     kind: EnquiryStageKind.OPEN,
   },
   {
+    code: "trial_invitation_sent",
+    name: "Trial invitation sent",
+    sortOrder: 3,
+    kind: EnquiryStageKind.OPEN,
+  },
+  {
     code: "trial_booked",
     name: "Trial booked",
-    sortOrder: 3,
+    sortOrder: 4,
     kind: EnquiryStageKind.OPEN,
   },
   {
     code: "trial_attended",
     name: "Trial attended",
-    sortOrder: 4,
+    sortOrder: 5,
     kind: EnquiryStageKind.OPEN,
   },
   {
     code: "entrance_exam",
     name: "Entrance exam",
-    sortOrder: 5,
+    sortOrder: 6,
     kind: EnquiryStageKind.OPEN,
   },
-  { code: "offer", name: "Offer", sortOrder: 6, kind: EnquiryStageKind.OPEN },
+  { code: "offer", name: "Offer", sortOrder: 7, kind: EnquiryStageKind.OPEN },
   { code: "lost", name: "Lost", sortOrder: 90, kind: EnquiryStageKind.LOST },
   {
     code: "converted",
@@ -85,6 +91,16 @@ export const DEFAULT_LOSS_REASONS: {
   },
   {
     stageCode: "waiting_list",
+    name: "Found a different tutoring centre",
+    requiresCompetitor: true,
+  },
+  {
+    stageCode: "trial_invitation_sent",
+    name: "Never accepted the trial invitation",
+    requiresCompetitor: false,
+  },
+  {
+    stageCode: "trial_invitation_sent",
     name: "Found a different tutoring centre",
     requiresCompetitor: true,
   },

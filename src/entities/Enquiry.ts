@@ -20,6 +20,7 @@ import { EnquiryLossReason } from "./EnquiryLossReason.js";
 import { EnquirySource } from "./EnquirySource.js";
 import { EnquiryStage } from "./EnquiryStage.js";
 import { EnquiryStageHistory } from "./EnquiryStageHistory.js";
+import { Term } from "./Term.js";
 import { User } from "./User.js";
 
 @Entity("enquiries")
@@ -96,6 +97,14 @@ export class Enquiry {
 
   @Column({ type: "varchar", length: 160, nullable: true })
   trialClassName!: string | null;
+
+  @Column({ name: "trial_term_id", type: "uuid", nullable: true })
+  @Index()
+  trialTermId!: string | null;
+
+  @ManyToOne(() => Term, { onDelete: "SET NULL", nullable: true })
+  @JoinColumn({ name: "trial_term_id" })
+  trialTerm!: Relation<Term> | null;
 
   @Column({ type: "date", nullable: true })
   trialEndDate!: string | null;

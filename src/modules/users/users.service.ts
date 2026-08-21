@@ -10,7 +10,8 @@ import {
 } from "../../common/utils/invitation-redis.js";
 import { deleteUserPasswordResetTokens } from "../../common/utils/password-reset-redis.js";
 import { In } from "typeorm";
-import { User, TeacherSubject } from "../../entities/index.js";
+import { User, TeacherSubject, Enrollment, PendingEnrollment, Student } from "../../entities/index.js";
+import { PendingEnrollmentStatus } from "../../common/constants/enrollment.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
 import { sanitizeModulePermissions } from "../../common/constants/modules.js";
@@ -71,6 +72,9 @@ function toPersonDto(user: User): PersonDto {
 export class UsersService {
   private readonly users = AppDataSource.getRepository(User);
   private readonly teacherSubjects = AppDataSource.getRepository(TeacherSubject);
+  private readonly enrollments = AppDataSource.getRepository(Enrollment);
+  private readonly pendingEnrollments = AppDataSource.getRepository(PendingEnrollment);
+  private readonly students = AppDataSource.getRepository(Student);
 
   async list(
     filters: ListPeopleFilters,
@@ -110,15 +114,64 @@ export class UsersService {
       }
     }
 
+    const trialAccountIds = await this.findTrialAccountUserIds(
+      users.map((user) => user.id),
+    );
+
     const people = users.map((user) => {
       const dto = toPersonDto(user);
       if (user.role === UserRole.STAFF) {
         dto.subjectIds = subjectsMap[user.id] || [];
       }
+      dto.isTrialAccount = trialAccountIds.has(user.id);
       return dto;
     });
 
     return { people, total, activeCount, invitedCount };
+  }
+
+  private async findTrialAccountUserIds(userIds: string[]): Promise<Set<string>> {
+    const trialIds = new Set<string>();
+    if (userIds.length === 0) return trialIds;
+
+    const [studentRows, guardianEnrollmentRows, guardianPendingRows] =
+      await Promise.all([
+        this.enrollments
+          .createQueryBuilder("enrollment")
+          .innerJoin("enrollment.term", "term")
+          .innerJoin(Student, "student", "student.id = enrollment.studentId")
+          .where("term.isTrial = true")
+          .andWhere("student.userId IN (:...userIds)", { userIds })
+          .select("student.userId", "userId")
+          .getRawMany<{ userId: string }>(),
+        this.enrollments
+          .createQueryBuilder("enrollment")
+          .innerJoin("enrollment.term", "term")
+          .where("term.isTrial = true")
+          .andWhere("enrollment.guardianId IN (:...userIds)", { userIds })
+          .select("enrollment.guardianId", "userId")
+          .getRawMany<{ userId: string }>(),
+        this.pendingEnrollments
+          .createQueryBuilder("pending")
+          .innerJoin("pending.term", "term")
+          .where("term.isTrial = true")
+          .andWhere("pending.status = :status", {
+            status: PendingEnrollmentStatus.PENDING,
+          })
+          .andWhere("pending.guardianId IN (:...userIds)", { userIds })
+          .select("pending.guardianId", "userId")
+          .getRawMany<{ userId: string }>(),
+      ]);
+
+    for (const row of [
+      ...studentRows,
+      ...guardianEnrollmentRows,
+      ...guardianPendingRows,
+    ]) {
+      if (row.userId) trialIds.add(row.userId);
+    }
+
+    return trialIds;
   }
 
   async getById(id: string): Promise<PersonDto> {
@@ -130,6 +183,8 @@ export class UsersService {
       });
       dto.subjectIds = tsRecords.map((ts) => ts.subjectId);
     }
+    const trialIds = await this.findTrialAccountUserIds([user.id]);
+    dto.isTrialAccount = trialIds.has(user.id);
     return this.withRelatedPeople(dto);
   }
 

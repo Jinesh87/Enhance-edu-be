@@ -17,6 +17,7 @@ type TermInput = {
   classroomId?: string | null;
   startDate: string;
   endDate: string;
+  isTrial?: boolean;
 };
 
 function datesOverlap(
@@ -56,6 +57,7 @@ function toTermDto(term: Term) {
       : null,
     startDate: term.startDate,
     endDate: term.endDate,
+    isTrial: Boolean(term.isTrial),
     createdAt: term.createdAt,
     updatedAt: term.updatedAt,
   };
@@ -120,6 +122,7 @@ export class AdminTermsService {
       name: payload.name,
       startDate: payload.startDate,
       endDate: payload.endDate,
+      isTrial: payload.isTrial,
       academicYear: payload.academicYear,
       yearLevel: payload.yearLevel,
       classroomId: payload.classroom?.id ?? null,
@@ -143,6 +146,7 @@ export class AdminTermsService {
     term.name = payload.name;
     term.startDate = payload.startDate;
     term.endDate = payload.endDate;
+    term.isTrial = payload.isTrial;
     term.academicYear = payload.academicYear;
     term.yearLevel = payload.yearLevel;
     term.classroomId = payload.classroom?.id ?? null;
@@ -163,6 +167,7 @@ export class AdminTermsService {
     const endDate = input.endDate.trim();
     const academicYearValue = input.academicYear;
     const yearLevelName = input.yearLevel.trim();
+    const isTrial = Boolean(input.isTrial);
 
     if (!name) {
       throw new AppError(400, "Term name is required", "VALIDATION_ERROR");
@@ -212,22 +217,18 @@ export class AdminTermsService {
 
     const classroom = await this.resolveClassroom(input.classroomId);
     if (classroom) {
-      await this.assertClassroomFree(
-        classroom.id,
-        startDate,
-        endDate,
-        {
-          excludeIds: excludeTermId ? [excludeTermId] : [],
-          academicYearId: academicYear.id,
-          yearLevelId: yearLevel.id,
-        },
-      );
+      await this.assertClassroomFree(classroom.id, startDate, endDate, {
+        excludeIds: excludeTermId ? [excludeTermId] : [],
+        academicYearId: academicYear.id,
+        yearLevelId: yearLevel.id,
+      });
     }
 
     return {
       name,
       startDate,
       endDate,
+      isTrial,
       academicYear,
       yearLevel,
       classroom,
@@ -281,9 +282,7 @@ export class AdminTermsService {
     const year = conflict.academicYear?.year;
     const level = conflict.yearLevel?.name;
     const label =
-      year && level
-        ? `${conflict.name} (${year} · ${level})`
-        : conflict.name;
+      year && level ? `${conflict.name} (${year} · ${level})` : conflict.name;
 
     throw new AppError(
       409,
