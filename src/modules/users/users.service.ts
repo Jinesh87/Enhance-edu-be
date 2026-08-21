@@ -275,11 +275,17 @@ export class UsersService {
         "Invitation email sent successfully",
       );
     } catch (error) {
-      // Log but don't fail - the invitation is still created
-      logger.warn(
+      logger.error(
         { userId: user.id, error },
-        "Failed to send invitation email, but invitation was created",
+        "Failed to send invitation email",
       );
+      throw error instanceof AppError
+        ? error
+        : new AppError(
+            500,
+            "Failed to send invitation email",
+            "EMAIL_SEND_FAILED",
+          );
     }
 
     return result;
@@ -505,11 +511,17 @@ export class UsersService {
         "Invitation email resent successfully",
       );
     } catch (error) {
-      // Log but don't fail - the invitation token is still refreshed
-      logger.warn(
+      logger.error(
         { userId: user.id, error },
-        "Failed to resend invitation email, but invitation token was refreshed",
+        "Failed to resend invitation email",
       );
+      throw error instanceof AppError
+        ? error
+        : new AppError(
+            500,
+            "Failed to resend invitation email",
+            "EMAIL_SEND_FAILED",
+          );
     }
 
     return {

@@ -10,7 +10,8 @@ export type GuardianConnectedStudentDto = {
   preferredName: string | null;
   dateOfBirth: string | null;
   yearLevel: number | null;
-  status: "LINKED" | "AWAITING_GUARDIAN";
+  status: "LINKED" | "AWAITING_GUARDIAN" | "PENDING_LOGIN";
+  hasLogin: boolean;
   enrollments: {
     id: string;
     status: string;

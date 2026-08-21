@@ -24,6 +24,19 @@ class GuardianStudentsController {
       next(error);
     }
   };
+
+  updatePassword = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await guardianStudentsService.updateStudentPassword(
+        req.user!.id,
+        req.params.studentId as string,
+        req.body.password,
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const guardianStudentsController = new GuardianStudentsController();

@@ -542,13 +542,17 @@ export class AdminEnrollmentsService {
 
     const linked = links.map((link) => {
       const enrollments = enrollmentsByStudent.get(link.studentId) ?? [];
+      const hasLogin = Boolean(link.student.userId);
       return {
         id: link.student.id,
         fullName: link.student.fullName,
         preferredName: link.student.preferredName,
         dateOfBirth: link.student.dateOfBirth,
         yearLevel: link.student.yearLevel,
-        status: "LINKED" as const,
+        status: (hasLogin ? "LINKED" : "PENDING_LOGIN") as
+          | "LINKED"
+          | "PENDING_LOGIN",
+        hasLogin,
         enrollments: enrollments.map((enrollment) => ({
           id: enrollment.id,
           status: enrollment.status,
@@ -578,6 +582,7 @@ export class AdminEnrollmentsService {
       dateOfBirth: row.studentDateOfBirth,
       yearLevel: row.studentYearLevel,
       status: "AWAITING_GUARDIAN" as const,
+      hasLogin: false,
       enrollments: [
         {
           id: row.id,
@@ -679,6 +684,14 @@ export class AdminEnrollmentsService {
       : await this.resolveGuardian(input.guardian!);
 
     if (guardian.status === UserStatus.ACTIVE) {
+      if (!input.studentLogin?.username || !input.studentLogin?.password) {
+        throw new AppError(
+          400,
+          "Set a student username and password so they can sign in",
+          "STUDENT_LOGIN_REQUIRED",
+        );
+      }
+
       const result = await this.materializeEnrollment(
         guardian,
         input.student,
@@ -715,7 +728,7 @@ export class AdminEnrollmentsService {
     let invitationToken: string | undefined;
     if (guardian.status === UserStatus.INVITED) {
       const invite = await this.sendGuardianInvitation(guardian);
-      invitationSent = true;
+      invitationSent = invite.emailSent;
       invitationToken = invite.invitationToken;
     }
 
@@ -1262,26 +1275,19 @@ export class AdminEnrollmentsService {
     const enrollments =
       await this.listPendingEnrollmentEmailDetails(guardian.id);
 
-    try {
-      await emailService.sendInvitationEmail({
-        to: guardian.email,
-        fullName: guardian.fullName,
-        invitationLink,
-        roleLabel: "Guardian",
-        enrollments,
-      });
-      logger.info(
-        { userId: guardian.id, email: guardian.email },
-        "Guardian invitation email sent",
-      );
-    } catch (error) {
-      logger.warn(
-        { userId: guardian.id, err: error },
-        "Failed to send guardian invitation email",
-      );
-    }
+    await emailService.sendInvitationEmail({
+      to: guardian.email,
+      fullName: guardian.fullName,
+      invitationLink,
+      roleLabel: "Guardian",
+      enrollments,
+    });
+    logger.info(
+      { userId: guardian.id, email: guardian.email },
+      "Guardian invitation email sent",
+    );
 
-    return { invitationToken };
+    return { invitationToken, emailSent: true as const };
   }
 }
 
