@@ -14,6 +14,7 @@ export const createTermSchema = Joi.object({
   yearLevel: Joi.string().trim().min(1).max(40).required(),
   startDate: dateField,
   endDate: dateField,
+  isTrial: Joi.boolean().default(false),
 });
 
 export const updateTermSchema = Joi.object({
@@ -22,6 +23,7 @@ export const updateTermSchema = Joi.object({
   yearLevel: Joi.string().trim().min(1).max(40).required(),
   startDate: dateField,
   endDate: dateField,
+  isTrial: Joi.boolean().default(false),
 });
 
 export const termIdParamsSchema = Joi.object({
