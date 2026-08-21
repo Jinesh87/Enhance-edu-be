@@ -528,6 +528,15 @@ export class AdminEnrollmentsService {
     pending.fulfilledEnrollmentId = result.enrollment.id;
     await this.pendingEnrollments.save(pending);
 
+    if (pending.term?.isTrial && guardian.email) {
+      const { adminEnquiriesService } = await import(
+        "../enquiries/admin-enquiries.service.js"
+      );
+      await adminEnquiriesService.markTrialBookedForGuardian(guardian.email, [
+        pending.termId,
+      ]);
+    }
+
     return result;
   }
 
@@ -538,6 +547,7 @@ export class AdminEnrollmentsService {
         status: PendingEnrollmentStatus.PENDING,
         replacesEnrollmentId: IsNull(),
       },
+      relations: { term: true },
       order: { createdAt: "ASC" },
     });
 
@@ -546,6 +556,7 @@ export class AdminEnrollmentsService {
       fullName: row.studentFullName,
       preferredName: row.studentPreferredName,
       yearLevel: row.studentYearLevel,
+      isTrial: Boolean(row.term?.isTrial),
     }));
   }
 
@@ -710,6 +721,7 @@ export class AdminEnrollmentsService {
       subjects:
         row.subjects?.map((link) => link.subject?.name).filter(Boolean) ?? [],
       fee: Number(row.fee),
+      isTrial: Boolean(row.term?.isTrial),
     }));
   }
 
@@ -722,6 +734,7 @@ export class AdminEnrollmentsService {
       studentLogin?: StudentLoginInput;
     },
     actorId: string,
+    options?: { purpose?: "enrollment" | "trial" },
   ) {
     const { term, subjectRows } = await this.validateEnrollmentCatalogue(
       input.enrollment,
@@ -754,11 +767,17 @@ export class AdminEnrollmentsService {
     let invitationSent = false;
     let invitationToken: string | undefined;
     if (guardian.status === UserStatus.INVITED) {
-      const invite = await this.sendGuardianInvitation(guardian);
+      const invite = await this.sendGuardianInvitation(guardian, {
+        trial: options?.purpose === "trial" || Boolean(term.isTrial),
+      });
       invitationSent = invite.emailSent;
       invitationToken = invite.invitationToken;
     } else if (guardian.status === UserStatus.ACTIVE) {
-      await this.notifyGuardianOfNewEnrollment(guardian, pending);
+      if (options?.purpose === "trial" || term.isTrial) {
+        await this.notifyGuardianOfTrialBooking(guardian);
+      } else {
+        await this.notifyGuardianOfNewEnrollment(guardian, pending);
+      }
     }
 
     return {
@@ -776,6 +795,22 @@ export class AdminEnrollmentsService {
       invitationToken,
       awaitingGuardianAcceptance: true,
     };
+  }
+
+  async resendTrialBookingEmail(email: string) {
+    const guardian = await this.users.findOne({
+      where: { email: email.trim().toLowerCase() },
+    });
+    if (!guardian || guardian.role !== UserRole.GUARDIAN) {
+      throw new AppError(404, "Guardian not found", "GUARDIAN_NOT_FOUND");
+    }
+    if (guardian.status === UserStatus.INVITED) {
+      await this.sendGuardianInvitation(guardian, { trial: true });
+      return;
+    }
+    if (guardian.status === UserStatus.ACTIVE) {
+      await this.notifyGuardianOfTrialBooking(guardian);
+    }
   }
 
   async queuePendingEnrollmentForGuardian(
@@ -859,6 +894,8 @@ export class AdminEnrollmentsService {
     const guardian = await this.users.findOne({ where: { id: guardianId } });
     if (!guardian) return;
 
+    const trialTermIds: string[] = [];
+
     for (const pending of freshRows) {
       const account = studentAccounts.find(
         (row) => row.pendingEnrollmentId === pending.id,
@@ -900,6 +937,20 @@ export class AdminEnrollmentsService {
       pending.fulfilledStudentId = result.student.id;
       pending.fulfilledEnrollmentId = result.enrollment.id;
       await this.pendingEnrollments.save(pending);
+
+      if (pending.term?.isTrial) {
+        trialTermIds.push(pending.termId);
+      }
+    }
+
+    if (trialTermIds.length > 0 && guardian.email) {
+      const { adminEnquiriesService } = await import(
+        "../enquiries/admin-enquiries.service.js"
+      );
+      await adminEnquiriesService.markTrialBookedForGuardian(
+        guardian.email,
+        trialTermIds,
+      );
     }
 
     logger.info(
@@ -1220,6 +1271,19 @@ export class AdminEnrollmentsService {
     }
   }
 
+  private async notifyGuardianOfTrialBooking(guardian: User) {
+    if (!guardian.email) return;
+    const enrollments = await this.listPendingEnrollmentEmailDetails(guardian.id);
+    await emailService.sendTrialBookingEmail({
+      to: guardian.email,
+      fullName: guardian.fullName,
+      actionLink: `${env.FRONTEND_URL}/guardian/students`,
+      actionLabel: "Accept trial & set student login",
+      isNewAccount: false,
+      enrollments,
+    });
+  }
+
   private async loadExistingGuardian(guardianId: string) {
     const guardian = await this.users.findOne({ where: { id: guardianId } });
 
@@ -1299,7 +1363,10 @@ export class AdminEnrollmentsService {
     return { guardian };
   }
 
-  private async sendGuardianInvitation(guardian: User) {
+  private async sendGuardianInvitation(
+    guardian: User,
+    options?: { trial?: boolean },
+  ) {
     if (!guardian.email) {
       throw new AppError(
         400,
@@ -1319,16 +1386,29 @@ export class AdminEnrollmentsService {
     const invitationLink = `${env.FRONTEND_URL}/accept-invitation?token=${invitationToken}`;
     const enrollments =
       await this.listPendingEnrollmentEmailDetails(guardian.id);
+    const trial =
+      Boolean(options?.trial) || enrollments.some((row) => row.isTrial);
 
-    await emailService.sendInvitationEmail({
-      to: guardian.email,
-      fullName: guardian.fullName,
-      invitationLink,
-      roleLabel: "Guardian",
-      enrollments,
-    });
+    if (trial) {
+      await emailService.sendTrialBookingEmail({
+        to: guardian.email,
+        fullName: guardian.fullName,
+        actionLink: invitationLink,
+        actionLabel: "Create trial accounts",
+        isNewAccount: true,
+        enrollments,
+      });
+    } else {
+      await emailService.sendInvitationEmail({
+        to: guardian.email,
+        fullName: guardian.fullName,
+        invitationLink,
+        roleLabel: "Guardian",
+        enrollments,
+      });
+    }
     logger.info(
-      { userId: guardian.id, email: guardian.email },
+      { userId: guardian.id, email: guardian.email, trial },
       "Guardian invitation email sent",
     );
 

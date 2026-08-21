@@ -14,6 +14,7 @@ export interface InvitationEnrollmentDetails {
   termEndDate: string;
   subjects: string[];
   fee: number;
+  isTrial?: boolean;
 }
 
 export interface SendInvitationEmailParams {
@@ -22,6 +23,15 @@ export interface SendInvitationEmailParams {
   invitationLink: string;
   roleLabel?: string;
   enrollments?: InvitationEnrollmentDetails[];
+}
+
+export interface SendTrialBookingEmailParams {
+  to: string;
+  fullName: string;
+  actionLink: string;
+  actionLabel: string;
+  isNewAccount: boolean;
+  enrollments: InvitationEnrollmentDetails[];
 }
 
 export interface SendSecurityCodeEmailParams {
@@ -141,7 +151,9 @@ export class EmailService {
         from: `${config.fromName} <${config.fromEmail}>`,
         to: params.to,
         subject: params.enrollments?.length
-          ? `Enrolment invitation for ${params.enrollments[0].studentFullName}`
+          ? params.enrollments.some((row) => row.isTrial)
+            ? `Trial booking for ${params.enrollments[0].studentFullName}`
+            : `Enrolment invitation for ${params.enrollments[0].studentFullName}`
           : "You've been invited to join",
         html: this.buildInvitationEmailHtml(params),
       });
@@ -162,6 +174,61 @@ export class EmailService {
       throw new AppError(
         500,
         "Error sending invitation email",
+        "EMAIL_SEND_ERROR",
+        { error: err },
+      );
+    }
+  }
+
+  async sendTrialBookingEmail(
+    params: SendTrialBookingEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+
+    if (!config) {
+      throw new AppError(
+        500,
+        "Email configuration not found. Please configure email settings first.",
+        "EMAIL_NOT_CONFIGURED",
+      );
+    }
+
+    if (!config.enabled) {
+      throw new AppError(
+        500,
+        "Email sending is disabled. Enable it in System Settings → Message history, then try again.",
+        "EMAIL_DISABLED",
+      );
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    const student = params.enrollments[0]?.studentFullName ?? "your student";
+
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `Trial place confirmed for ${student}`,
+        html: this.buildTrialBookingEmailHtml(params),
+      });
+
+      if (error) {
+        logger.error({ error, to: params.to }, "Failed to send trial booking email");
+        throw new AppError(
+          500,
+          "Failed to send trial booking email",
+          "EMAIL_SEND_FAILED",
+          { error },
+        );
+      }
+
+      logger.info({ to: params.to, emailId: data?.id }, "Trial booking email sent");
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      logger.error({ err, to: params.to }, "Error sending trial booking email");
+      throw new AppError(
+        500,
+        "Error sending trial booking email",
         "EMAIL_SEND_ERROR",
         { error: err },
       );
@@ -532,8 +599,11 @@ export class EmailService {
   private buildInvitationEmailHtml(params: SendInvitationEmailParams): string {
     const enrollmentsHtml = this.buildEnrollmentDetailsHtml(params.enrollments);
     const greetingName = escapeHtml(params.fullName);
+    const trial = Boolean(params.enrollments?.some((row) => row.isTrial));
     const intro = params.enrollments?.length
-      ? "You've been invited as a guardian. Please review the enrolment details below, then accept the invitation to set up your account and your student's login."
+      ? trial
+        ? "A trial place has been booked. Review the details below, then create your guardian account and a trial login for your student."
+        : "You've been invited as a guardian. Please review the enrolment details below, then accept the invitation to set up your account and your student's login."
       : "You've been invited to join Enhance Education. Click the button below to accept your invitation and set up your account.";
 
     return `
@@ -542,11 +612,11 @@ export class EmailService {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>You've been invited</title>
+  <title>${trial ? "Trial place confirmed" : "You've been invited"}</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
   <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
-    <h1 style="color: #002117; margin-bottom: 20px;">You've been invited</h1>
+    <h1 style="color: #002117; margin-bottom: 20px;">${trial ? "Your trial place is booked" : "You've been invited"}</h1>
     
     <p>Hi ${greetingName},</p>
     
@@ -555,7 +625,7 @@ export class EmailService {
     <div style="text-align: center; margin: 30px 0;">
       <a href="${params.invitationLink}" 
          style="background-color: #e18f33; color: #002117; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: 700;">
-        Accept invitation
+        ${trial ? "Create trial accounts" : "Accept invitation"}
       </a>
     </div>
     
@@ -594,7 +664,7 @@ export class EmailService {
 
         return `
         <div style="background: #ffffff; border: 1px solid #e6e0d8; border-radius: 8px; padding: 16px 18px; margin: 16px 0;">
-          <p style="margin: 0 0 10px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #e18f33; font-weight: 700;">Enrolment</p>
+          <p style="margin: 0 0 10px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #e18f33; font-weight: 700;">${enrollment.isTrial ? "Trial booking" : "Enrolment"}</p>
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <tr>
               <td style="padding: 6px 0; color: #5c6b66; width: 38%;">Student</td>
@@ -613,20 +683,61 @@ export class EmailService {
               <td style="padding: 6px 0; color: #5c6b66;">Subjects</td>
               <td style="padding: 6px 0;">${subjects}</td>
             </tr>
-            <tr>
+            ${
+              enrollment.isTrial
+                ? ""
+                : `<tr>
               <td style="padding: 6px 0; color: #5c6b66;">Fee</td>
               <td style="padding: 6px 0; font-weight: 700;">${fee}</td>
-            </tr>
+            </tr>`
+            }
           </table>
         </div>`;
       })
       .join("");
 
     return `
-      <p style="margin: 20px 0 8px; font-weight: 700;">Enrolment details</p>
+      <p style="margin: 20px 0 8px; font-weight: 700;">${enrollments.some((row) => row.isTrial) ? "Trial details" : "Enrolment details"}</p>
       ${cards}
       <p style="font-size: 14px; color: #5c6b66;">When you accept, you will set a unique username and password for each student.</p>
     `;
+  }
+
+  private buildTrialBookingEmailHtml(params: SendTrialBookingEmailParams): string {
+    const enrollmentsHtml = this.buildEnrollmentDetailsHtml(
+      params.enrollments.map((row) => ({ ...row, isTrial: true })),
+    );
+    const intro = params.isNewAccount
+      ? "We've reserved a trial place. Create your guardian account and a trial login for your student using the button below."
+      : "We've reserved a trial place. Sign in to accept it and set your student's trial login.";
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trial place confirmed</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002117; margin-bottom: 20px;">Your trial place is booked</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p>${intro}</p>
+    ${enrollmentsHtml}
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="${params.actionLink}"
+         style="background-color: #e18f33; color: #002117; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: 700;">
+        ${escapeHtml(params.actionLabel)}
+      </a>
+    </div>
+    <p style="color: #7f8c8d; font-size: 14px;">
+      If the button doesn't work, copy and paste this link into your browser:<br>
+      <a href="${params.actionLink}" style="color: #e18f33; word-break: break-all;">${params.actionLink}</a>
+    </p>
+  </div>
+</body>
+</html>`.trim();
   }
 }
 
