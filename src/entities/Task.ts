@@ -62,6 +62,14 @@ export class Task {
   session!: Relation<Session>;
 
   @Column({ type: "uuid", nullable: true })
+  @Index()
+  assignedUserId!: string | null;
+
+  @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
+  @JoinColumn({ name: "assignedUserId" })
+  assignedUser!: Relation<User> | null;
+
+  @Column({ type: "uuid", nullable: true })
   attendanceRecordId!: string | null;
 
   @ManyToOne(() => AttendanceRecord, { onDelete: "SET NULL", nullable: true })

@@ -207,7 +207,6 @@ export class AttendanceRepository {
     return Boolean(enrolment);
   }
 
-  // Attendance records
 
   async findAttendanceRecordsBySessionId(
     sessionId: string,
@@ -264,6 +263,7 @@ export class AttendanceRepository {
 
       relations: {
         student: true,
+        followUpStaff: true,
         session: {
           class: true,
         },
@@ -334,5 +334,135 @@ export class AttendanceRepository {
       where.scannedAt = MoreThanOrEqual(since);
     }
     return this.scans.count({ where });
+  }
+
+  async countStudentsInGraceWindow(now = new Date()): Promise<number> {
+    const result = await this.enrolments
+      .createQueryBuilder("enrolment")
+      .innerJoin(Session, "session", "session.classId = enrolment.classId")
+      .where("session.startAt <= :now", { now })
+      .andWhere(
+        "session.startAt + (session.gracePeriodMinutes * INTERVAL '1 minute') >= :now",
+        { now },
+      )
+      .select("COUNT(DISTINCT enrolment.studentId)", "count")
+      .getRawOne<{ count: string }>();
+
+    return Number(result?.count ?? 0);
+  }
+
+  async findCorrectionRecords(filters: {
+    year?: number;
+    yearLevel?: string;
+    term?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{ rows: AttendanceRecord[]; total: number }> {
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const limit =
+      filters.limit && filters.limit > 0 ? Math.min(filters.limit, 50) : 10;
+
+    const qb = this.attendance
+      .createQueryBuilder("record")
+      .innerJoinAndSelect("record.student", "student")
+      .innerJoinAndSelect("record.session", "session")
+      .innerJoinAndSelect("session.class", "class")
+      .leftJoinAndSelect("class.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("record.markedByUser", "markedByUser")
+      .where("record.status != :pending", {
+        pending: AttendanceStatus.PENDING,
+      });
+
+    if (filters.year) {
+      qb.andWhere("academicYear.year = :year", { year: filters.year });
+    }
+
+    if (filters.yearLevel) {
+      qb.andWhere("LOWER(yearLevel.name) = LOWER(:yearLevel)", {
+        yearLevel: filters.yearLevel,
+      });
+    }
+
+    if (filters.term) {
+      qb.andWhere("LOWER(term.name) = LOWER(:term)", {
+        term: filters.term,
+      });
+    }
+
+    const search = filters.search?.trim();
+    if (search) {
+      qb.andWhere(
+        `(
+          student.fullName ILIKE :search
+          OR student.preferredName ILIKE :search
+          OR class.name ILIKE :search
+          OR class.code ILIKE :search
+        )`,
+        { search: `%${search}%` },
+      );
+    }
+
+    qb.orderBy("session.startAt", "DESC").addOrderBy("student.fullName", "ASC");
+
+    const [rows, total] = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return { rows, total };
+  }
+
+  async findAttendanceRecordById(id: string): Promise<AttendanceRecord | null> {
+    return this.attendance.findOne({
+      where: { id },
+      relations: {
+        student: true,
+        markedByUser: true,
+        session: {
+          class: {
+            term: {
+              academicYear: true,
+              yearLevel: true,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async findLatestDeviceSignals(
+    pairs: { sessionId: string; studentId: string }[],
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    if (pairs.length === 0) return result;
+
+    const sessionIds = [...new Set(pairs.map((pair) => pair.sessionId))];
+    const studentIds = [...new Set(pairs.map((pair) => pair.studentId))];
+
+    const scans = await this.scans.find({
+      where: {
+        sessionId: In(sessionIds),
+        studentId: In(studentIds),
+      },
+      order: { scannedAt: "DESC" },
+      select: {
+        id: true,
+        sessionId: true,
+        studentId: true,
+        deviceSignal: true,
+      },
+    });
+
+    for (const scan of scans) {
+      const key = `${scan.sessionId}|${scan.studentId}`;
+      if (!result.has(key)) {
+        result.set(key, scan.deviceSignal);
+      }
+    }
+
+    return result;
   }
 }

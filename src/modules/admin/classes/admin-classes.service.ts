@@ -10,7 +10,7 @@ function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Da
   return parseDayTime(dayTime, timeZone)?.startAt ?? null;
 }
 
-function toClassDto(cls: Class) {
+function toClassDto(cls: Class, gracePeriodMinutes?: number | null) {
   return {
     id: cls.id,
     name: cls.name,
@@ -34,6 +34,7 @@ function toClassDto(cls: Class) {
           fullName: cls.teacher.fullName,
         }
       : null,
+    gracePeriodMinutes: gracePeriodMinutes ?? null,
     createdAt: cls.createdAt,
     updatedAt: cls.updatedAt,
   };
@@ -165,8 +166,14 @@ export class AdminClassesService {
       paginated = summaries.slice(start, start + filters.limit);
     }
 
+    const graceByClassId = await this.repo.findGraceMinutesByClassIds(
+      classes.map((item) => item.id),
+    );
+
     return {
-      classes: classes.map(toClassDto),
+      classes: classes.map((item) =>
+        toClassDto(item, graceByClassId.get(item.id) ?? null),
+      ),
       summaries: paginated,
       total,
     };

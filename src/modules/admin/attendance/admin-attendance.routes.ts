@@ -14,13 +14,27 @@ router.use(
 );
 
 router.get("/exceptions", adminAttendanceController.listExceptions);
-router.get(
-  "/exceptions/:id/eligible-sessions",
-  adminAttendanceController.getEligibleSessions,
-);
 router.post(
   "/exceptions/:id/action",
   adminAttendanceController.resolveException,
+);
+router.patch(
+  "/absences/:id",
+  adminAttendanceController.updateAbsenceFollowUp,
+);
+router.get(
+  "/absences/:id/review",
+  adminAttendanceController.getAbsenceReviewDraft,
+);
+router.post(
+  "/absences/:id/review-and-send",
+  adminAttendanceController.reviewAndSendAbsence,
+);
+router.get("/records", adminAttendanceController.listRecords);
+router.post("/records/:id/correct", adminAttendanceController.correctRecord);
+router.get(
+  "/records/:id/history",
+  adminAttendanceController.getCorrectionHistory,
 );
 
 export default router;

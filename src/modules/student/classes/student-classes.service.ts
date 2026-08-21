@@ -19,7 +19,9 @@ export type StudentLessonStatus =
   | "SOON"
   | "UPCOMING"
   | "ONLINE"
-  | "MISSED";
+  | "MISSED"
+  | "PENDING_REVIEW"
+  | "AWAITING_ADMIN";
 
 export type StudentLessonDto = {
   sessionId: string;
@@ -72,7 +74,8 @@ function isOnlineRoom(room: string | null | undefined) {
 function lessonStatus(input: {
   startAt: Date;
   endAt: Date;
-  attended: boolean;
+  attendanceStatus: AttendanceStatus | null;
+  scannedAt: Date | null;
   online: boolean;
   now: Date;
 }): { status: StudentLessonStatus; minutesUntilStart: number | null; canCheckIn: boolean } {
@@ -83,8 +86,18 @@ function lessonStatus(input: {
     input.now.getTime() >= input.startAt.getTime() - 15 * 60_000 &&
     input.now.getTime() <= input.endAt.getTime();
 
-  if (input.attended) {
+  if (
+    input.attendanceStatus === AttendanceStatus.PRESENT ||
+    input.attendanceStatus === AttendanceStatus.LATE ||
+    input.attendanceStatus === AttendanceStatus.EXCUSED
+  ) {
     return { status: "ATTENDED", minutesUntilStart, canCheckIn: false };
+  }
+  if (input.attendanceStatus === AttendanceStatus.EXCEPTION) {
+    return { status: "PENDING_REVIEW", minutesUntilStart, canCheckIn: false };
+  }
+  if (input.attendanceStatus === AttendanceStatus.ABSENT && input.scannedAt) {
+    return { status: "AWAITING_ADMIN", minutesUntilStart, canCheckIn: false };
   }
   if (input.now.getTime() > input.endAt.getTime()) {
     return { status: "MISSED", minutesUntilStart: null, canCheckIn: false };
@@ -323,14 +336,12 @@ export class StudentClassesService {
       );
       if (!session) continue;
       const attendance = attendanceBySession.get(session.id);
-      const attended =
-        attendance?.status === AttendanceStatus.PRESENT ||
-        attendance?.status === AttendanceStatus.LATE;
       const online = isOnlineRoom(row.cls.room);
       const { status, minutesUntilStart, canCheckIn } = lessonStatus({
         startAt: row.startAt,
         endAt: row.endAt,
-        attended: Boolean(attended),
+        attendanceStatus: attendance?.status ?? null,
+        scannedAt: attendance?.scannedAt ?? null,
         online,
         now,
       });

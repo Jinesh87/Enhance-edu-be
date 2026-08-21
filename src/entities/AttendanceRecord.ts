@@ -3,6 +3,7 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
   Unique,
@@ -63,6 +64,23 @@ export class AttendanceRecord {
 
   @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
   markedByUser!: Relation<User> | null;
+
+  @Column({ type: "varchar", length: 32, nullable: true })
+  absencePolicy!: string | null;
+
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  followUpStaffId!: string | null;
+
+  @ManyToOne(() => User, { onDelete: "SET NULL", nullable: true })
+  @JoinColumn({ name: "followUpStaffId" })
+  followUpStaff!: Relation<User> | null;
+
+  @Column({ type: "varchar", length: 32, nullable: true })
+  parentAlertStatus!: string | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  parentAlertSentAt!: Date | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
