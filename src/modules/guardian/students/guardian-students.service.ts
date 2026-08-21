@@ -1,13 +1,19 @@
 import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
+import { AppError } from "../../../common/errors/AppError.js";
+import { UserRole } from "../../../common/constants/roles.js";
 import {
   Enrollment,
   GuardianStudent,
   PendingEnrollment,
+  Student,
   User,
 } from "../../../entities/index.js";
 import { PendingEnrollmentStatus } from "../../../common/constants/enrollment.js";
+import { hashPassword } from "../../../common/utils/password.js";
+import { deleteUserPasswordResetTokens } from "../../../common/utils/password-reset-redis.js";
 import { adminEnrollmentsService } from "../../admin/enrollments/admin-enrollments.service.js";
+import { logger } from "../../../config/logger.js";
 
 function toStudentDto(
   link: GuardianStudent,
@@ -153,6 +159,52 @@ export class GuardianStudentsService {
 
   async acceptPendingEnrollment(guardianId: string, pendingId: string) {
     return adminEnrollmentsService.acceptPendingEnrollment(pendingId, guardianId);
+  }
+
+  async updateStudentPassword(
+    guardianId: string,
+    studentId: string,
+    password: string,
+  ) {
+    const link = await this.links.findOne({
+      where: { guardianId, studentId },
+      relations: { student: true },
+    });
+    if (!link) {
+      throw new AppError(404, "Student not found", "STUDENT_NOT_FOUND");
+    }
+
+    const student = link.student as Student;
+    if (!student.userId) {
+      throw new AppError(
+        400,
+        "This student does not have a login account yet",
+        "STUDENT_LOGIN_MISSING",
+      );
+    }
+
+    const account = await this.users.findOne({ where: { id: student.userId } });
+    if (!account || account.role !== UserRole.STUDENT) {
+      throw new AppError(
+        404,
+        "Student login account not found",
+        "STUDENT_ACCOUNT_NOT_FOUND",
+      );
+    }
+
+    account.passwordHash = await hashPassword(password);
+    await this.users.save(account);
+    await deleteUserPasswordResetTokens(account.id);
+
+    logger.info(
+      { guardianId, studentId, userId: account.id },
+      "Guardian updated student password",
+    );
+
+    return {
+      studentId: student.id,
+      username: account.username,
+    };
   }
 }
 

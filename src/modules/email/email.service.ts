@@ -117,11 +117,11 @@ export class EmailService {
     }
 
     if (!config.enabled) {
-      logger.warn(
-        { to: params.to },
-        "Email sending is disabled, skipping invitation email",
+      throw new AppError(
+        500,
+        "Email sending is disabled. Enable it in System Settings → Message history, then try again.",
+        "EMAIL_DISABLED",
       );
-      return;
     }
 
     const resend = new Resend(config.resendApiKey);
