@@ -1,6 +1,7 @@
 import { AppError } from "../../../common/errors/AppError.js";
 import { parseDayTime, resolveIanaTimeZone } from "../../../common/utils/timezone.js";
-import { Class } from "../../../entities/index.js";
+import { Class, Classroom } from "../../../entities/index.js";
+import { AppDataSource } from "../../../config/data-source.js";
 import {
   adminClassesRepository,
   type ClassInput,
@@ -16,6 +17,7 @@ function toClassDto(cls: Class, gracePeriodMinutes?: number | null) {
     name: cls.name,
     code: cls.code,
     room: cls.room,
+    classroomId: cls.classroomId ?? cls.classroom?.id ?? null,
     subject: cls.subject,
     lesson: cls.lesson,
     dayTime: cls.dayTime,
@@ -42,6 +44,135 @@ function toClassDto(cls: Class, gracePeriodMinutes?: number | null) {
 
 export class AdminClassesService {
   private readonly repo = adminClassesRepository;
+  private readonly classrooms = AppDataSource.getRepository(Classroom);
+
+  private async resolveClassroom(
+    classroomId: string | null | undefined,
+    options: { required: boolean; requireActive: boolean },
+  ): Promise<Classroom | null> {
+    if (!classroomId) {
+      if (options.required) {
+        throw new AppError(
+          400,
+          "Classroom is required",
+          "CLASSROOM_REQUIRED",
+        );
+      }
+      return null;
+    }
+
+    const classroom = await this.classrooms.findOne({
+      where: { id: classroomId },
+    });
+    if (!classroom) {
+      throw new AppError(404, "Classroom not found", "CLASSROOM_NOT_FOUND");
+    }
+    if (options.requireActive && !classroom.isActive) {
+      throw new AppError(
+        400,
+        "This classroom is inactive and cannot be assigned",
+        "CLASSROOM_INACTIVE",
+      );
+    }
+    return classroom;
+  }
+
+  private async applyClassroomToInput(
+    input: ClassInput,
+    options: { required: boolean; requireActive: boolean },
+  ): Promise<ClassInput> {
+    const classroom = await this.resolveClassroom(input.classroomId, options);
+    if (!classroom) {
+      return {
+        ...input,
+        classroomId: null,
+        room: "",
+      };
+    }
+    return {
+      ...input,
+      classroomId: classroom.id,
+      room: classroom.name,
+    };
+  }
+
+  private classTermLabel(cls: Class): string | null {
+    if (cls.term?.academicYear && cls.term.yearLevel) {
+      return `${cls.term.name} · ${cls.term.academicYear.year} · ${cls.term.yearLevel.name}`;
+    }
+    return cls.term?.name ?? cls.termName ?? null;
+  }
+
+  private occupancyTimes(dayTime?: string | null, timeZone?: string | null) {
+    return parseDayTime(dayTime ?? null, timeZone);
+  }
+
+  private async assertClassroomAvailable(
+    classroomId: string,
+    dayTime: string | null | undefined,
+    timeZone: string | null | undefined,
+    excludeClassIds: string[] = [],
+  ) {
+    const proposed = this.occupancyTimes(dayTime, timeZone);
+    if (!proposed) return;
+
+    const occupied = await this.repo.findByClassroomId(classroomId);
+    const exclude = new Set(excludeClassIds);
+    const conflict = occupied.find((cls) => {
+      if (exclude.has(cls.id)) return false;
+      const existing = this.occupancyTimes(cls.dayTime, cls.timeZone);
+      if (!existing) return false;
+      return (
+        proposed.startAt.getTime() < existing.endAt.getTime() &&
+        existing.startAt.getTime() < proposed.endAt.getTime()
+      );
+    });
+
+    if (!conflict) return;
+
+    const subject = conflict.subject?.trim() || "another class";
+    const termLabel = this.classTermLabel(conflict);
+    throw new AppError(
+      409,
+      termLabel
+        ? `Classroom is already assigned to ${subject} (${termLabel}) at this time`
+        : `Classroom is already assigned to ${subject} at this time`,
+      "CLASSROOM_OCCUPIED",
+    );
+  }
+
+  private assertNoInternalClassroomOverlap(inputs: ClassInput[]) {
+    const slots = inputs
+      .map((input, index) => {
+        if (!input.classroomId) return null;
+        const times = this.occupancyTimes(input.dayTime, input.timeZone);
+        if (!times) return null;
+        return {
+          index,
+          classroomId: input.classroomId,
+          subject: input.subject?.trim() || "another class",
+          startMs: times.startAt.getTime(),
+          endMs: times.endAt.getTime(),
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+
+    for (let i = 0; i < slots.length; i++) {
+      for (let j = i + 1; j < slots.length; j++) {
+        const left = slots[i];
+        const right = slots[j];
+        if (left.classroomId !== right.classroomId) continue;
+        if (left.startMs >= right.endMs || right.startMs >= left.endMs) {
+          continue;
+        }
+        throw new AppError(
+          409,
+          `Classroom is already assigned to ${right.subject} at this time`,
+          "CLASSROOM_OCCUPIED",
+        );
+      }
+    }
+  }
 
   async list(filters?: {
     page?: number;
@@ -84,7 +215,25 @@ export class AdminClassesService {
       });
     }
 
-    const groupedMap = new Map<string, any>();
+    const studentsByClassId = await this.repo.findStudentIdsByClassIds(
+      filteredClasses.map((item) => item.id),
+    );
+
+    const groupedMap = new Map<
+      string,
+      {
+        subject: string;
+        term: string;
+        sessionCount: number;
+        totalDurationMinutes: number;
+        teachers: Set<string>;
+        studentIds: Set<string>;
+        needAttention: number;
+        dayTime: string;
+        startDate: Date | null;
+        endDate: Date | null;
+      }
+    >();
     for (const c of filteredClasses) {
       const subjectName = c.subject || "General";
       const termName = c.term
@@ -122,7 +271,7 @@ export class AdminClassesService {
           sessionCount: 0,
           totalDurationMinutes: 0,
           teachers: new Set<string>(),
-          enrolled: 0,
+          studentIds: new Set<string>(),
           needAttention: 0,
           dayTime: c.dayTime || "",
           startDate: sessionDate,
@@ -131,10 +280,17 @@ export class AdminClassesService {
       }
 
       const group = groupedMap.get(key);
+      if (!group) {
+        continue;
+      }
       group.sessionCount += 1;
       group.totalDurationMinutes += durationMins;
       if (c.teacher?.fullName) {
         group.teachers.add(c.teacher.fullName);
+      }
+      const enrolledStudentIds = studentsByClassId.get(c.id) ?? [];
+      for (const studentId of enrolledStudentIds) {
+        group.studentIds.add(studentId);
       }
       if (sessionDate) {
         if (!group.startDate || sessionDate < group.startDate) {
@@ -152,7 +308,7 @@ export class AdminClassesService {
       sessionCount: g.sessionCount,
       totalDurationMinutes: g.totalDurationMinutes,
       teachers: Array.from(g.teachers),
-      enrolled: g.enrolled,
+      enrolled: g.studentIds.size,
       needAttention: g.needAttention,
       dayTime: g.dayTime,
       startDate: g.startDate,
@@ -188,11 +344,6 @@ export class AdminClassesService {
   }
 
   async create(input: ClassInput) {
-    let teacher = null;
-    if (input.teacherId) {
-      teacher = await this.repo.findTeacherById(input.teacherId);
-    }
-
     let termObj = null;
     if (input.termId) {
       termObj = await this.repo.findTermById(input.termId);
@@ -200,20 +351,45 @@ export class AdminClassesService {
       termObj = await this.repo.findTermByName(input.term);
     }
 
+    const resolved = await this.applyClassroomToInput(
+      {
+        ...input,
+        classroomId: termObj?.classroomId ?? null,
+      },
+      {
+        required: false,
+        requireActive: Boolean(termObj?.classroomId),
+      },
+    );
+
+    let teacher = null;
+    if (resolved.teacherId) {
+      teacher = await this.repo.findTeacherById(resolved.teacherId);
+    }
+
     const cls = await this.repo.create({
-      name: input.name?.trim() || `${input.subject ?? "Subject"} Class`,
-      code: input.code.trim(),
-      room: input.room.trim(),
-      subject: input.subject?.trim() || null,
-      lesson: input.lesson?.trim() || null,
-      dayTime: input.dayTime?.trim() || null,
-      timeZone: resolveIanaTimeZone(input.timeZone),
-      capacity: input.capacity ?? 20,
-      contentGroup: input.contentGroup?.trim() || null,
-      termName: input.term?.trim() || "Term 3 2026",
+      name: resolved.name?.trim() || `${resolved.subject ?? "Subject"} Class`,
+      code: resolved.code.trim(),
+      room: (resolved.room ?? "").trim(),
+      classroomId: resolved.classroomId ?? null,
+      subject: resolved.subject?.trim() || null,
+      lesson: resolved.lesson?.trim() || null,
+      dayTime: resolved.dayTime?.trim() || null,
+      timeZone: resolveIanaTimeZone(resolved.timeZone),
+      capacity: resolved.capacity ?? 20,
+      contentGroup: resolved.contentGroup?.trim() || null,
+      termName: resolved.term?.trim() || "Term 3 2026",
       term: termObj,
       teacher,
     });
+
+    if (resolved.classroomId) {
+      await this.assertClassroomAvailable(
+        resolved.classroomId,
+        cls.dayTime,
+        cls.timeZone,
+      );
+    }
 
     await this.repo.save(cls);
     return toClassDto(cls);
@@ -252,7 +428,16 @@ export class AdminClassesService {
 
     if (input.name !== undefined && input.name) cls.name = input.name.trim();
     if (input.code !== undefined) cls.code = input.code.trim();
-    if (input.room !== undefined) cls.room = input.room.trim();
+    if (input.classroomId !== undefined) {
+      const classroom = await this.resolveClassroom(input.classroomId, {
+        required: false,
+        requireActive: Boolean(input.classroomId),
+      });
+      cls.classroomId = classroom?.id ?? null;
+      cls.room = classroom?.name ?? "";
+    } else if (input.room !== undefined && input.room !== null) {
+      cls.room = input.room.trim();
+    }
     if (input.subject !== undefined)
       cls.subject = input.subject?.trim() || null;
     if (input.lesson !== undefined) cls.lesson = input.lesson?.trim() || null;
@@ -264,7 +449,28 @@ export class AdminClassesService {
     if (input.contentGroup !== undefined)
       cls.contentGroup = input.contentGroup?.trim() || null;
 
+    if (
+      cls.classroomId &&
+      (input.classroomId !== undefined ||
+        input.dayTime !== undefined ||
+        input.timeZone !== undefined)
+    ) {
+      await this.assertClassroomAvailable(
+        cls.classroomId,
+        cls.dayTime,
+        cls.timeZone,
+        [cls.id],
+      );
+    }
+
     await this.repo.save(cls);
+    if (input.classroomId !== undefined) {
+      await this.repo.updateSessionClassroom(
+        cls.id,
+        cls.classroomId,
+        cls.room || null,
+      );
+    }
     return toClassDto(cls);
   }
 
@@ -273,9 +479,36 @@ export class AdminClassesService {
     classesToCreate: ClassInput[],
     gracePeriodMinutes?: number,
   ) {
+    const termObj = await this.repo.findTermById(termId);
+    const termClassroomId = termObj?.classroomId ?? null;
+    const resolved = await Promise.all(
+      classesToCreate.map((item) =>
+        this.applyClassroomToInput(
+          { ...item, classroomId: termClassroomId },
+          {
+            required: false,
+            requireActive: Boolean(termClassroomId),
+          },
+        ),
+      ),
+    );
+    this.assertNoInternalClassroomOverlap(resolved);
+    const existingInTerm = (await this.repo.findAll()).classes.filter(
+      (item) => item.term?.id === termId,
+    );
+    const excludeIds = existingInTerm.map((item) => item.id);
+    for (const item of resolved) {
+      if (!item.classroomId) continue;
+      await this.assertClassroomAvailable(
+        item.classroomId,
+        item.dayTime,
+        item.timeZone,
+        excludeIds,
+      );
+    }
     const savedEntities = await this.repo.bulkReplace(
       termId,
-      classesToCreate,
+      resolved,
       gracePeriodMinutes,
     );
     return savedEntities.map(toClassDto);

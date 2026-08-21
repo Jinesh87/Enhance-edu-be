@@ -10,6 +10,7 @@ import {
 } from "typeorm";
 import { User } from "./User.js";
 import { Term } from "./Term.js";
+import { Classroom } from "./Classroom.js";
 
 @Entity("classes")
 export class Class {
@@ -24,6 +25,13 @@ export class Class {
 
   @Column({ type: "varchar", length: 80, default: "Room 4" })
   room!: string;
+
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  classroomId!: string | null;
+
+  @ManyToOne(() => Classroom, { nullable: true, onDelete: "SET NULL" })
+  classroom!: Relation<Classroom> | null;
 
   @Column({ type: "varchar", length: 120, nullable: true })
   subject!: string | null;

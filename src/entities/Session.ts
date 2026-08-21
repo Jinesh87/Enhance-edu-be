@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from "typeorm";
 import { Class } from "./Class.js";
+import { Classroom } from "./Classroom.js";
 
 @Entity("sessions")
 export class Session {
@@ -31,6 +32,13 @@ export class Session {
 
   @Column({ type: "varchar", length: 80, nullable: true })
   room!: string | null;
+
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  classroomId!: string | null;
+
+  @ManyToOne(() => Classroom, { nullable: true, onDelete: "SET NULL" })
+  classroom!: Relation<Classroom> | null;
 
   @Column({ type: "int", default: 25 })
   gracePeriodMinutes!: number;

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { settingsController } from "./settings.controller.js";
 import { holidaysController } from "./holidays.controller.js";
+import { classroomsController } from "./classrooms.controller.js";
 import {
   authenticate,
   authorize,
@@ -14,6 +15,12 @@ import {
   listHolidaysQuerySchema,
   updateHolidaySchema,
 } from "./holidays.validation.js";
+import {
+  classroomIdParamsSchema,
+  createClassroomSchema,
+  listClassroomsQuerySchema,
+  updateClassroomSchema,
+} from "./classrooms.validation.js";
 import { UserRole } from "../../common/constants/roles.js";
 
 const router = Router();
@@ -29,6 +36,13 @@ router.get(
   authorizeAdminModule("settings", "classes"),
   validate(listHolidaysQuerySchema, "query"),
   holidaysController.list,
+);
+
+router.get(
+  "/classrooms",
+  authorizeAdminModule("settings", "classes", "terms"),
+  validate(listClassroomsQuerySchema, "query"),
+  classroomsController.list,
 );
 
 router.use(authorizeAdminModule("settings"));
@@ -56,6 +70,18 @@ router.delete(
   "/holidays/:id",
   validate(holidayIdParamsSchema, "params"),
   holidaysController.remove,
+);
+
+router.post(
+  "/classrooms",
+  validate(createClassroomSchema),
+  classroomsController.create,
+);
+router.patch(
+  "/classrooms/:id",
+  validate(classroomIdParamsSchema, "params"),
+  validate(updateClassroomSchema),
+  classroomsController.update,
 );
 
 export default router;

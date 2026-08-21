@@ -120,6 +120,7 @@ export class SharedAttendanceService {
         endAt: session.endAt,
         gracePeriodMinutes: session.gracePeriodMinutes,
         timeZone: session.class.timeZone,
+        contentGroup: session.class.contentGroup,
       },
       roll,
     };
