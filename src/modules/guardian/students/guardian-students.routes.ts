@@ -18,11 +18,26 @@ const updateStudentPasswordSchema = Joi.object({
   password: Joi.string().min(8).max(128).required(),
 });
 
+const acceptPendingParamsSchema = Joi.object({
+  id: Joi.string().uuid().required(),
+});
+
+const acceptPendingBodySchema = Joi.object({
+  username: Joi.string()
+    .trim()
+    .min(3)
+    .max(50)
+    .pattern(/^[a-zA-Z0-9._-]+$/)
+    .optional(),
+  password: Joi.string().min(8).max(128).optional(),
+}).and("username", "password");
+
 guardianStudentsRouter.use(authenticate, authorize(UserRole.GUARDIAN));
 guardianStudentsRouter.get("/", guardianStudentsController.list);
 guardianStudentsRouter.post(
   "/pending/:id/accept",
-  validate(Joi.object({ id: Joi.string().uuid().required() }), "params"),
+  validate(acceptPendingParamsSchema, "params"),
+  validate(acceptPendingBodySchema),
   guardianStudentsController.acceptPending,
 );
 guardianStudentsRouter.patch(

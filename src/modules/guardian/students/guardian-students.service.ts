@@ -1,4 +1,4 @@
-import { In } from "typeorm";
+import { In, IsNull } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { UserRole } from "../../../common/constants/roles.js";
@@ -82,6 +82,30 @@ function toStudentDto(
   };
 }
 
+function toPendingEnrollmentDto(row: PendingEnrollment) {
+  return {
+    id: row.id,
+    studentFullName: row.studentFullName,
+    studentPreferredName: row.studentPreferredName,
+    studentDateOfBirth: row.studentDateOfBirth,
+    studentYearLevel: row.studentYearLevel,
+    fee: Number(row.fee),
+    term: row.term
+      ? {
+          id: row.term.id,
+          name: row.term.name,
+          startDate: row.term.startDate,
+          endDate: row.term.endDate,
+        }
+      : null,
+    subjects:
+      row.subjects
+        ?.map((link) => link.subject)
+        .filter(Boolean)
+        .map((subject) => ({ id: subject.id, name: subject.name })) ?? [],
+  };
+}
+
 export class GuardianStudentsService {
   private readonly links = AppDataSource.getRepository(GuardianStudent);
   private readonly enrollments = AppDataSource.getRepository(Enrollment);
@@ -89,13 +113,31 @@ export class GuardianStudentsService {
   private readonly users = AppDataSource.getRepository(User);
 
   async listForGuardian(guardianId: string) {
-    const links = await this.links.find({
-      where: { guardianId },
-      relations: { student: true },
-      order: { createdAt: "DESC" },
-    });
+    const [links, freshPendingRows] = await Promise.all([
+      this.links.find({
+        where: { guardianId },
+        relations: { student: true },
+        order: { createdAt: "DESC" },
+      }),
+      this.pendingEnrollments.find({
+        where: {
+          guardianId,
+          status: PendingEnrollmentStatus.PENDING,
+          replacesEnrollmentId: IsNull(),
+        },
+        relations: {
+          term: true,
+          subjects: { subject: true },
+        },
+        order: { createdAt: "DESC" },
+      }),
+    ]);
 
-    if (links.length === 0) return [];
+    const pendingEnrollments = freshPendingRows.map(toPendingEnrollmentDto);
+
+    if (links.length === 0) {
+      return { students: [], pendingEnrollments };
+    }
 
     const studentIds = links.map((link) => link.studentId);
     const userIds = links
@@ -145,7 +187,7 @@ export class GuardianStudentsService {
       enrollmentsByStudent.set(enrollment.studentId, current);
     }
 
-    return links.map((link) =>
+    const students = links.map((link) =>
       toStudentDto(
         link,
         enrollmentsByStudent.get(link.studentId) ?? [],
@@ -155,10 +197,20 @@ export class GuardianStudentsService {
         pendingByEnrollment,
       ),
     );
+
+    return { students, pendingEnrollments };
   }
 
-  async acceptPendingEnrollment(guardianId: string, pendingId: string) {
-    return adminEnrollmentsService.acceptPendingEnrollment(pendingId, guardianId);
+  async acceptPendingEnrollment(
+    guardianId: string,
+    pendingId: string,
+    studentLogin?: { username: string; password: string },
+  ) {
+    return adminEnrollmentsService.acceptPendingEnrollment(
+      pendingId,
+      guardianId,
+      studentLogin,
+    );
   }
 
   async updateStudentPassword(
