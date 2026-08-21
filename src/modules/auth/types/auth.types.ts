@@ -44,6 +44,7 @@ export type InvitationPreview = {
     fullName: string;
     preferredName: string | null;
     yearLevel: number | null;
+    isTrial?: boolean;
   }[];
 };
 

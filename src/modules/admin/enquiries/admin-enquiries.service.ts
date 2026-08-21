@@ -15,6 +15,8 @@ import {
   EnquirySource,
   EnquiryStage,
   EnquiryStageHistory,
+  Subject,
+  Term,
   User,
 } from "../../../entities/index.js";
 import { adminEnrollmentsService } from "../enrollments/admin-enrollments.service.js";
@@ -29,6 +31,7 @@ const ENQUIRY_RELATIONS = {
   currentStage: true,
   lostReason: true,
   competitor: true,
+  trialTerm: { academicYear: true, yearLevel: true },
 } as const;
 
 type Named = { id: string; name: string };
@@ -83,8 +86,31 @@ function toEnquiryDto(
     score: enquiry.score,
     waitingListPosition: enquiry.waitingListPosition,
     nurtureState: enquiry.nurtureState,
-    trialClassName: enquiry.trialClassName,
-    trialEndDate: enquiry.trialEndDate,
+    trialClassName: enquiry.trialTerm?.name ?? enquiry.trialClassName,
+    trialTerm: enquiry.trialTerm
+      ? {
+          id: enquiry.trialTerm.id,
+          name: enquiry.trialTerm.name,
+          startDate: enquiry.trialTerm.startDate,
+          endDate: enquiry.trialTerm.endDate,
+          isTrial: Boolean(enquiry.trialTerm.isTrial),
+          academicYear: enquiry.trialTerm.academicYear
+            ? {
+                id: enquiry.trialTerm.academicYear.id,
+                year: enquiry.trialTerm.academicYear.year,
+                displayName: enquiry.trialTerm.academicYear.displayName,
+              }
+            : undefined,
+          yearLevel: enquiry.trialTerm.yearLevel
+            ? {
+                id: enquiry.trialTerm.yearLevel.id,
+                name: enquiry.trialTerm.yearLevel.name,
+                sequence: enquiry.trialTerm.yearLevel.sequence,
+              }
+            : undefined,
+        }
+      : null,
+    trialEndDate: enquiry.trialTerm?.endDate ?? enquiry.trialEndDate,
     trialConfirmed: enquiry.trialConfirmed,
     trialAttended: enquiry.trialAttended,
     examSession: enquiry.examSession,
@@ -131,6 +157,8 @@ export class AdminEnquiriesService {
   private readonly history = AppDataSource.getRepository(EnquiryStageHistory);
   private readonly events = AppDataSource.getRepository(EnquiryEvent);
   private readonly users = AppDataSource.getRepository(User);
+  private readonly terms = AppDataSource.getRepository(Term);
+  private readonly subjects = AppDataSource.getRepository(Subject);
 
   async meta() {
     const [stages, sources, reasons, competitors, owners] = await Promise.all([
@@ -301,7 +329,7 @@ export class AdminEnquiriesService {
       school?: string | null;
       subjectOfInterest: string;
       guardianFullName: string;
-      guardianEmail?: string | null;
+      guardianEmail: string;
       guardianMobile?: string | null;
       sourceId: string;
       ownerUserId?: string | null;
@@ -315,6 +343,11 @@ export class AdminEnquiriesService {
     const stage = await this.stages.findOne({ where: { code: "new" } });
     if (!stage) throw new AppError(500, "Enquiry stages are not seeded", "STAGES_MISSING");
 
+    const guardianEmail = input.guardianEmail.trim().toLowerCase();
+    if (!guardianEmail) {
+      throw new AppError(400, "Guardian email is required", "VALIDATION_ERROR");
+    }
+
     const now = new Date();
     const enquiry = this.enquiries.create({
       studentFullName: input.studentFullName?.trim() || null,
@@ -322,7 +355,7 @@ export class AdminEnquiriesService {
       school: input.school?.trim() || null,
       subjectOfInterest: input.subjectOfInterest.trim(),
       guardianFullName: input.guardianFullName.trim(),
-      guardianEmail: input.guardianEmail?.trim().toLowerCase() || null,
+      guardianEmail,
       guardianMobile: input.guardianMobile?.trim() || null,
       firstSourceId: source.id,
       lastSourceId: source.id,
@@ -379,7 +412,11 @@ export class AdminEnquiriesService {
       if (key in input) {
         const value = input[key];
         if (key === "guardianEmail" && typeof value === "string") {
-          enquiry.guardianEmail = value.trim().toLowerCase() || null;
+          const email = value.trim().toLowerCase();
+          if (!email) {
+            throw new AppError(400, "Guardian email is required", "VALIDATION_ERROR");
+          }
+          enquiry.guardianEmail = email;
         } else if (key === "subjectOfInterest" && typeof value === "string") {
           const trimmed = value.trim();
           if (!trimmed) {
@@ -503,7 +540,7 @@ export class AdminEnquiriesService {
 
   async bookTrial(
     id: string,
-    input: { trialClassName: string; trialEndDate?: string | null; confirmed: boolean },
+    input: { termId: string; confirmed: boolean },
     actorId: string,
   ) {
     const enquiry = await this.requireOpen(id);
@@ -514,24 +551,139 @@ export class AdminEnquiriesService {
         "TRIAL_NOT_CONFIRMED",
       );
     }
-    const stage = await this.requireStageByCode("trial_booked");
-    const fromStageId = enquiry.currentStageId;
-    const leavingWaiting = this.isOnWaitingList(enquiry);
-    enquiry.trialClassName = input.trialClassName.trim();
-    enquiry.trialEndDate = input.trialEndDate || null;
-    enquiry.trialConfirmed = true;
-    if (leavingWaiting) this.clearWaitingListMembership(enquiry);
-    this.assignStage(enquiry, stage);
-    await this.enquiries.save(enquiry);
-    if (leavingWaiting) await this.recompactWaitingList();
-    await this.writeHistory(enquiry.id, fromStageId, stage.id, actorId);
-    await this.writeEvent(
-      enquiry.id,
-      "TRIAL_BOOKED",
-      `Trial place confirmed in ${enquiry.trialClassName}`,
-      actorId,
-    );
+
+    const guardianEmail = enquiry.guardianEmail?.trim().toLowerCase() || "";
+    if (!guardianEmail) {
+      throw new AppError(
+        400,
+        "Guardian email is required before booking a trial",
+        "EMAIL_REQUIRED",
+      );
+    }
+
+    const studentFullName = enquiry.studentFullName?.trim() || "";
+    if (!studentFullName) {
+      throw new AppError(
+        400,
+        "Student name is required before booking a trial",
+        "STUDENT_NAME_REQUIRED",
+      );
+    }
+
+    const term = await this.terms.findOne({
+      where: { id: input.termId },
+      relations: { academicYear: true, yearLevel: true },
+    });
+    if (!term) {
+      throw new AppError(404, "Term not found", "TERM_NOT_FOUND");
+    }
+    if (!term.isTrial) {
+      throw new AppError(
+        400,
+        "Select a trial term",
+        "NOT_A_TRIAL_TERM",
+      );
+    }
+
+    const subjectIds = await this.matchSubjectsForEnquiry(enquiry);
+    const stageCode = enquiry.currentStage?.code;
+    const alreadyInvitedSameTerm =
+      enquiry.trialTermId === term.id &&
+      (stageCode === "trial_invitation_sent" || stageCode === "trial_booked");
+
+    if (!alreadyInvitedSameTerm) {
+      await adminEnrollmentsService.inviteWithEnrollment(
+        {
+          guardian: {
+            fullName: enquiry.guardianFullName,
+            email: guardianEmail,
+            mobile: enquiry.guardianMobile,
+          },
+          student: {
+            fullName: studentFullName,
+            yearLevel: enquiry.yearLevel,
+          },
+          enrollment: {
+            termId: term.id,
+            subjectIds,
+            fee: 0,
+          },
+        },
+        actorId,
+        { purpose: "trial" },
+      );
+
+      // Invitation sent now; "Trial booked" is set when the guardian creates their account.
+      const stage = await this.requireStageByCode("trial_invitation_sent");
+      const fromStageId = enquiry.currentStageId;
+      const leavingWaiting = this.isOnWaitingList(enquiry);
+      enquiry.trialTermId = term.id;
+      enquiry.trialTerm = term;
+      enquiry.trialClassName = term.name;
+      enquiry.trialEndDate = term.endDate;
+      enquiry.trialConfirmed = false;
+      if (leavingWaiting) this.clearWaitingListMembership(enquiry);
+      this.assignStage(enquiry, stage);
+      await this.enquiries.save(enquiry);
+      if (leavingWaiting) await this.recompactWaitingList();
+      await this.writeHistory(enquiry.id, fromStageId, stage.id, actorId);
+      await this.writeEvent(
+        enquiry.id,
+        "TRIAL_INVITATION_SENT",
+        `Trial invitation sent for ${term.name}`,
+        actorId,
+      );
+    } else {
+      await adminEnrollmentsService.resendTrialBookingEmail(guardianEmail);
+      enquiry.trialTermId = term.id;
+      enquiry.trialTerm = term;
+      enquiry.trialClassName = term.name;
+      enquiry.trialEndDate = term.endDate;
+      await this.enquiries.save(enquiry);
+      await this.writeEvent(
+        enquiry.id,
+        "TRIAL_INVITATION_SENT",
+        `Trial invitation resent for ${term.name}`,
+        actorId,
+      );
+    }
     return this.getById(id);
+  }
+
+  /**
+   * Moves matching enquiries from "Trial invitation sent" → "Trial booked"
+   * once the guardian has created their trial account / student login.
+   */
+  async markTrialBookedForGuardian(guardianEmail: string, termIds?: string[]) {
+    const email = guardianEmail.trim().toLowerCase();
+    if (!email) return;
+
+    const stageBooked = await this.requireStageByCode("trial_booked");
+    const qb = this.enquiries
+      .createQueryBuilder("enquiry")
+      .leftJoinAndSelect("enquiry.currentStage", "stage")
+      .where("LOWER(enquiry.guardianEmail) = :email", { email })
+      .andWhere("enquiry.closedAt IS NULL")
+      .andWhere("stage.code = :code", { code: "trial_invitation_sent" });
+
+    if (termIds?.length) {
+      qb.andWhere("enquiry.trialTermId IN (:...termIds)", { termIds });
+    }
+
+    const rows = await qb.getMany();
+    for (const enquiry of rows) {
+      const fromStageId = enquiry.currentStageId;
+      enquiry.trialConfirmed = true;
+      this.assignStage(enquiry, stageBooked);
+      await this.enquiries.save(enquiry);
+      await this.writeHistory(enquiry.id, fromStageId, stageBooked.id, null);
+      await this.writeEvent(
+        enquiry.id,
+        "TRIAL_BOOKED",
+        `Trial booked — guardian created account for ${enquiry.trialClassName ?? "trial"}`,
+        null,
+      );
+    }
   }
 
   async recordTrialAttendance(id: string, attended: boolean, actorId: string) {
@@ -969,6 +1121,47 @@ export class AdminEnquiriesService {
     enquiry.currentStageId = stage.id;
     enquiry.currentStage = stage;
     enquiry.lastStageChangedAt = at;
+  }
+
+  private async matchSubjectsForEnquiry(enquiry: Enquiry) {
+    const tokens = (enquiry.subjectOfInterest ?? "")
+      .split(/[,;/]+/)
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (tokens.length === 0) {
+      throw new AppError(
+        400,
+        "Subject of interest is required before booking a trial",
+        "SUBJECT_REQUIRED",
+      );
+    }
+
+    const yearName = enquiry.yearLevel ? `Year ${enquiry.yearLevel}` : null;
+    const catalogue = await this.subjects.find({
+      relations: { yearLevel: true },
+    });
+
+    const matched = catalogue.filter((subject) => {
+      const name = subject.name.trim().toLowerCase();
+      const nameHit = tokens.some(
+        (token) => name === token || name.includes(token) || token.includes(name),
+      );
+      if (!nameHit) return false;
+      if (!yearName || !subject.yearLevel?.name) return true;
+      return subject.yearLevel.name.toLowerCase() === yearName.toLowerCase();
+    });
+
+    const ids = [...new Set(matched.map((subject) => subject.id))];
+    if (ids.length === 0) {
+      throw new AppError(
+        400,
+        `No catalogue subject matches "${enquiry.subjectOfInterest}". Update the subject of interest to a real subject, then book the trial.`,
+        "SUBJECT_NOT_FOUND",
+      );
+    }
+
+    return ids;
   }
 
   private async writeHistory(

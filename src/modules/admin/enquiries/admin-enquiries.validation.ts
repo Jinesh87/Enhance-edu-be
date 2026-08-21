@@ -32,7 +32,7 @@ export const createEnquirySchema = Joi.object({
   school: Joi.string().trim().max(160).allow(null, ""),
   subjectOfInterest: Joi.string().trim().min(1).max(120).required(),
   guardianFullName: Joi.string().trim().min(2).max(120).required(),
-  guardianEmail: Joi.string().trim().email().max(255).allow(null, ""),
+  guardianEmail: Joi.string().trim().email().max(255).required(),
   guardianMobile: Joi.string().trim().max(30).allow(null, ""),
   sourceId: uuid.required(),
   ownerUserId: uuid.allow(null, ""),
@@ -45,7 +45,7 @@ export const updateEnquirySchema = Joi.object({
   school: Joi.string().trim().max(160).allow(null, ""),
   subjectOfInterest: Joi.string().trim().min(1).max(120),
   guardianFullName: Joi.string().trim().min(2).max(120),
-  guardianEmail: Joi.string().trim().email().max(255).allow(null, ""),
+  guardianEmail: Joi.string().trim().email().max(255),
   guardianMobile: Joi.string().trim().max(30).allow(null, ""),
   lastSourceId: uuid,
   ownerUserId: uuid.allow(null, ""),
@@ -71,10 +71,7 @@ export const changeStageSchema = Joi.object({
 });
 
 export const bookTrialSchema = Joi.object({
-  trialClassName: Joi.string().trim().min(2).max(160).required(),
-  trialEndDate: Joi.string()
-    .pattern(/^\d{4}-\d{2}-\d{2}$/)
-    .allow(null, ""),
+  termId: uuid.required(),
   confirmed: Joi.boolean().required(),
 });
 
