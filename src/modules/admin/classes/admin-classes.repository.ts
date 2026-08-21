@@ -83,6 +83,28 @@ export class AdminClassesRepository {
     return this.terms.findOne({ where: { name } });
   }
 
+  async findGraceMinutesByClassIds(
+    classIds: string[],
+  ): Promise<Map<string, number>> {
+    const graceByClassId = new Map<string, number>();
+    if (classIds.length === 0) {
+      return graceByClassId;
+    }
+
+    const sessions = await AppDataSource.getRepository(Session).find({
+      where: { classId: In(classIds) },
+      select: { classId: true, gracePeriodMinutes: true },
+    });
+
+    for (const session of sessions) {
+      if (!graceByClassId.has(session.classId)) {
+        graceByClassId.set(session.classId, session.gracePeriodMinutes);
+      }
+    }
+
+    return graceByClassId;
+  }
+
   async create(data: Partial<Class>): Promise<Class> {
     return this.classes.create(data);
   }

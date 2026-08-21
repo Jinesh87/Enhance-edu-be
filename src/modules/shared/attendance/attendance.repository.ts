@@ -264,6 +264,7 @@ export class AttendanceRepository {
 
       relations: {
         student: true,
+        followUpStaff: true,
         session: {
           class: true,
         },
@@ -334,5 +335,20 @@ export class AttendanceRepository {
       where.scannedAt = MoreThanOrEqual(since);
     }
     return this.scans.count({ where });
+  }
+
+  async countStudentsInGraceWindow(now = new Date()): Promise<number> {
+    const result = await this.enrolments
+      .createQueryBuilder("enrolment")
+      .innerJoin(Session, "session", "session.classId = enrolment.classId")
+      .where("session.startAt <= :now", { now })
+      .andWhere(
+        "session.startAt + (session.gracePeriodMinutes * INTERVAL '1 minute') >= :now",
+        { now },
+      )
+      .select("COUNT(DISTINCT enrolment.studentId)", "count")
+      .getRawOne<{ count: string }>();
+
+    return Number(result?.count ?? 0);
   }
 }

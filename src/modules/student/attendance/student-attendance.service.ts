@@ -1,10 +1,55 @@
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import {
+  AttendanceRecord,
   AttendanceStatus,
   ScanStatus,
   ScanFlagReason,
   InstitutionSetting,
 } from "../../../entities/index.js";
+
+type ScanOutcomeStatus =
+  | "CONFIRMED"
+  | "EXCEPTION"
+  | "GRACE_CLOSED"
+  | "ALREADY_CHECKED_IN";
+
+function alreadySubmittedOutcome(record: AttendanceRecord | null): {
+  status: ScanOutcomeStatus;
+  previousOutcome: "CONFIRMED" | "EXCEPTION" | "GRACE_CLOSED";
+  scannedAt?: Date | null;
+} | null {
+  if (!record) return null;
+
+  if (
+    record.status === AttendanceStatus.PRESENT ||
+    record.status === AttendanceStatus.LATE ||
+    record.status === AttendanceStatus.EXCUSED
+  ) {
+    return {
+      status: "ALREADY_CHECKED_IN",
+      previousOutcome: "CONFIRMED",
+      scannedAt: record.scannedAt,
+    };
+  }
+
+  if (record.status === AttendanceStatus.EXCEPTION) {
+    return {
+      status: "ALREADY_CHECKED_IN",
+      previousOutcome: "EXCEPTION",
+      scannedAt: record.scannedAt,
+    };
+  }
+
+  if (record.status === AttendanceStatus.ABSENT && record.scannedAt) {
+    return {
+      status: "ALREADY_CHECKED_IN",
+      previousOutcome: "GRACE_CLOSED",
+      scannedAt: record.scannedAt,
+    };
+  }
+
+  return null;
+}
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
@@ -138,6 +183,16 @@ export class StudentAttendanceService {
       );
     }
 
+    const existingRecord = await this.repo.findAttendanceRecord(
+      targetSessionId,
+      studentId,
+    );
+
+    const alreadySubmitted = alreadySubmittedOutcome(existingRecord);
+    if (alreadySubmitted) {
+      return alreadySubmitted;
+    }
+
     const qrResult = validateAttendanceQr(scannedCode, targetSessionId, scannedAt);
 
     let reasonFlagged: ScanFlagReason = ScanFlagReason.NONE;
@@ -147,18 +202,8 @@ export class StudentAttendanceService {
         : ScanFlagReason.TOKEN_EXPIRED;
     }
 
-    const existingRecord = await this.repo.findAttendanceRecord(
-      targetSessionId,
-      studentId,
-    );
-
-    if (
-      reasonFlagged === ScanFlagReason.NONE &&
-      existingRecord &&
-      (existingRecord.status === AttendanceStatus.PRESENT ||
-        existingRecord.status === AttendanceStatus.LATE)
-    ) {
-      const duplicateScan = await this.repo.createScanEvent({
+    if (reasonFlagged === ScanFlagReason.WRONG_SESSION_CODE) {
+      const scanEvent = await this.repo.createScanEvent({
         studentId,
         sessionId: targetSessionId,
         scannedAt,
@@ -167,33 +212,24 @@ export class StudentAttendanceService {
         deviceSignal,
         isOfflineSync,
         status: ScanStatus.PENDING,
-        reasonFlagged: ScanFlagReason.DUPLICATE_SCAN,
+        reasonFlagged,
       });
 
       return {
-        status: "ALREADY_CHECKED_IN",
-        reasonFlagged: ScanFlagReason.DUPLICATE_SCAN,
-        scanEventId: duplicateScan.id,
+        status: "EXCEPTION",
+        reasonFlagged,
+        scanEventId: scanEvent.id,
       };
     }
 
     const gracePeriodMinutes = session.gracePeriodMinutes ?? 25;
 
-    const checkInOpensAt = session.startAt.getTime();
-
     const checkInClosesAt =
       session.startAt.getTime() + gracePeriodMinutes * 60_000;
 
-    const classEndsAt = session.endAt.getTime();
-
     const scanTime = scannedAt.getTime();
 
-    const isAfterGracePeriod =
-      scanTime > checkInClosesAt && scanTime <= classEndsAt;
-
-    if (scanTime < checkInOpensAt || scanTime > classEndsAt) {
-      reasonFlagged = ScanFlagReason.TOKEN_EXPIRED;
-    }
+    const isAfterGracePeriod = scanTime > checkInClosesAt;
 
     if (reasonFlagged === ScanFlagReason.NONE && isOfflineSync) {
       const nowTime = Date.now();
@@ -381,7 +417,7 @@ export class StudentAttendanceService {
     }
 
     return {
-      status: "CONFIRMED",
+      status: isAfterGracePeriod ? "GRACE_CLOSED" : "CONFIRMED",
       sessionName: session.class.name,
       room: session.room ?? session.class.room,
       scannedAt,

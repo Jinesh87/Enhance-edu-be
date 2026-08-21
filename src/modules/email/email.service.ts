@@ -43,6 +43,15 @@ export interface SendEnrollmentChangeEmailParams {
   reviewLink: string;
 }
 
+export interface SendAbsenceAlertEmailParams {
+  to: string;
+  guardianName: string;
+  studentFullName: string;
+  sessionName: string;
+  sessionWhen: string;
+  message: string;
+}
+
 export interface SendPasswordResetEmailParams {
   to: string;
   fullName: string;
@@ -255,6 +264,78 @@ export class EmailService {
       throw new AppError(
         500,
         "Error sending password reset email",
+        "EMAIL_SEND_ERROR",
+        { error: err },
+      );
+    }
+  }
+
+  async sendAbsenceAlertEmail(
+    params: SendAbsenceAlertEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+
+    if (!config) {
+      throw new AppError(
+        500,
+        "Email configuration not found. Please configure email settings first.",
+        "EMAIL_NOT_CONFIGURED",
+      );
+    }
+
+    if (!config.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email sending is disabled, skipping absence alert email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    const bodyHtml = escapeHtml(params.message).replace(/\n/g, "<br />");
+
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `Absence notice — ${params.studentFullName}`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">Absence notice</h1>
+    <p>Hi ${escapeHtml(params.guardianName)},</p>
+    <p>${bodyHtml}</p>
+    <p style="color: #7f8c8d; font-size: 14px; margin-top: 24px;">${escapeHtml(params.sessionName)} · ${escapeHtml(params.sessionWhen)}</p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send absence alert email",
+        );
+        throw new AppError(
+          500,
+          "Failed to send absence alert email",
+          "EMAIL_SEND_FAILED",
+          { error },
+        );
+      }
+
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Absence alert email sent",
+      );
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      logger.error({ err, to: params.to }, "Error sending absence alert email");
+      throw new AppError(
+        500,
+        "Error sending absence alert email",
         "EMAIL_SEND_ERROR",
         { error: err },
       );

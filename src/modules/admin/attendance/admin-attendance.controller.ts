@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response } from "express";
-import { adminAttendanceService } from "./admin-attendance.service.js";
 import { sharedAttendanceService } from "../../shared/attendance/shared-attendance.service.js";
+import { adminAttendanceService } from "./admin-attendance.service.js";
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
 import { AdminDecision } from "../../../entities/index.js";
 import { AppError } from "../../../common/errors/AppError.js";
@@ -77,11 +77,40 @@ class AdminAttendanceController {
     }
   }
 
-  async getEligibleSessions(req: Request, res: Response, next: NextFunction) {
+  async updateAbsenceFollowUp(req: Request, res: Response, next: NextFunction) {
     try {
-      const scanEventId = req.params.id as string;
-      const data = await adminAttendanceService.getEligibleSessionsForException(scanEventId);
-      res.status(200).json(data);
+      const absence = await adminAttendanceService.updateAbsenceFollowUp(
+        req.params.id as string,
+        {
+          policy: req.body.policy,
+          followUpStaffId: req.body.followUpStaffId,
+        },
+      );
+      res.status(200).json({ absence });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getAbsenceReviewDraft(req: Request, res: Response, next: NextFunction) {
+    try {
+      const draft = await adminAttendanceService.getAbsenceReviewDraft(
+        req.params.id as string,
+      );
+      res.status(200).json(draft);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async reviewAndSendAbsence(req: Request, res: Response, next: NextFunction) {
+    try {
+      const absence = await adminAttendanceService.reviewAndSendAbsence(
+        req.params.id as string,
+        String(req.body.message ?? ""),
+        req.user!.id,
+      );
+      res.status(200).json({ absence });
     } catch (error) {
       next(error);
     }
