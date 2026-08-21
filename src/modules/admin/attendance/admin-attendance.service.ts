@@ -15,10 +15,12 @@ import {
   TaskStatus,
   TaskType,
   User,
+  AuditChange,
 } from "../../../entities/index.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { emailService } from "../../email/email.service.js";
+import { writeAuditLog } from "../../../common/utils/audit-log.js";
 
 export const ABSENCE_POLICIES = [
   "TASK_AND_ALERT",
@@ -588,6 +590,159 @@ export class AdminAttendanceService {
     }
 
     return Array.from(byEmail.values());
+  }
+
+  async listRecordsForCorrection(filters: {
+    year?: number;
+    yearLevel?: string;
+    term?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const { rows, total } = await this.repo.findCorrectionRecords(filters);
+
+    const deviceSignals = await this.repo.findLatestDeviceSignals(
+      rows.map((row) => ({
+        sessionId: row.sessionId,
+        studentId: row.studentId,
+      })),
+    );
+
+    return {
+      records: rows.map((row) =>
+        this.toCorrectionRow(
+          row,
+          deviceSignals.get(`${row.sessionId}|${row.studentId}`) ?? null,
+        ),
+      ),
+      total,
+    };
+  }
+
+  async correctAttendanceRecord(
+    id: string,
+    status: AttendanceStatus,
+    reason: string,
+    markedByUserId: string,
+  ) {
+    if (!reason.trim()) {
+      throw new AppError(
+        400,
+        "A reason is required",
+        "MANUAL_REASON_REQUIRED",
+      );
+    }
+
+    const allowed = new Set<AttendanceStatus>([
+      AttendanceStatus.PRESENT,
+      AttendanceStatus.LATE,
+      AttendanceStatus.ABSENT,
+      AttendanceStatus.EXCUSED,
+    ]);
+
+    if (!allowed.has(status)) {
+      throw new AppError(400, "Invalid attendance status", "INVALID_STATUS");
+    }
+
+    const record = await this.repo.findAttendanceRecordById(id);
+    if (!record) {
+      throw new AppError(404, "Attendance record not found", "NOT_FOUND");
+    }
+
+    const previousStatus = record.status;
+    record.status = status;
+    record.markedManually = true;
+    record.manualReason = reason.trim();
+    record.markedByUserId = markedByUserId;
+    await this.repo.saveAttendanceRecord(record);
+
+    const studentName = record.student?.fullName ?? "Student";
+    const className = record.session?.class
+      ? `${record.session.class.code} ${record.session.class.name}`.trim()
+      : "session";
+
+    await writeAuditLog({
+      actorUserId: markedByUserId,
+      action: "EDITED",
+      recordType: "attendance",
+      recordId: record.id,
+      recordLabel: `${studentName} · ${className}`,
+      recordPath: "/admin/attendance/correct",
+      before: { status: previousStatus },
+      after: { status, reason: reason.trim() },
+    });
+
+    const saved = await this.repo.findAttendanceRecordById(id);
+    if (!saved) {
+      throw new AppError(404, "Attendance record not found", "NOT_FOUND");
+    }
+
+    const deviceSignals = await this.repo.findLatestDeviceSignals([
+      { sessionId: saved.sessionId, studentId: saved.studentId },
+    ]);
+
+    return {
+      record: this.toCorrectionRow(
+        saved,
+        deviceSignals.get(`${saved.sessionId}|${saved.studentId}`) ?? null,
+      ),
+    };
+  }
+
+  async getCorrectionHistory(id: string) {
+    const record = await this.repo.findAttendanceRecordById(id);
+    if (!record) {
+      throw new AppError(404, "Attendance record not found", "NOT_FOUND");
+    }
+
+    const entries = await AppDataSource.getRepository(AuditChange).find({
+      where: { recordType: "attendance", recordId: id },
+      order: { createdAt: "DESC" },
+    });
+
+    return {
+      studentName: record.student?.fullName ?? "Student",
+      entries: entries.map((entry) => ({
+        id: entry.id,
+        actorName: entry.actorName,
+        createdAt: entry.createdAt,
+        beforeStatus:
+          typeof entry.before?.status === "string" ? entry.before.status : null,
+        afterStatus:
+          typeof entry.after?.status === "string" ? entry.after.status : null,
+        reason:
+          typeof entry.after?.reason === "string" ? entry.after.reason : null,
+      })),
+    };
+  }
+
+  private toCorrectionRow(
+    row: AttendanceRecord,
+    deviceSignal: string | null,
+  ) {
+    const cls = row.session.class;
+    const term = cls.term;
+    return {
+      id: row.id,
+      sessionId: row.sessionId,
+      studentName: row.student.fullName,
+      subject: cls.subject || cls.name,
+      termName: term?.name ?? cls.termName ?? null,
+      year: term?.academicYear?.year ?? null,
+      yearLevel: term?.yearLevel?.name ?? null,
+      sessionName: `${cls.code} · ${cls.name}`,
+      sessionStartAt: row.session.startAt,
+      status: row.status,
+      scannedAt: row.scannedAt,
+      deviceSignal: deviceSignal ?? (row.scannedAt ? null : "no scan"),
+      markedManually: row.markedManually,
+      manualReason: row.manualReason,
+      correctedByName: row.markedManually
+        ? (row.markedByUser?.fullName ?? null)
+        : null,
+      correctedAt: row.markedManually ? row.updatedAt : null,
+    };
   }
 }
 

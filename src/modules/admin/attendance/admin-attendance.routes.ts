@@ -30,5 +30,11 @@ router.post(
   "/absences/:id/review-and-send",
   adminAttendanceController.reviewAndSendAbsence,
 );
+router.get("/records", adminAttendanceController.listRecords);
+router.post("/records/:id/correct", adminAttendanceController.correctRecord);
+router.get(
+  "/records/:id/history",
+  adminAttendanceController.getCorrectionHistory,
+);
 
 export default router;

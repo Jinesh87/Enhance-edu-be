@@ -115,6 +115,78 @@ class AdminAttendanceController {
       next(error);
     }
   }
+
+  async listRecords(req: Request, res: Response, next: NextFunction) {
+    try {
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      const yearLevel =
+        typeof req.query.yearLevel === "string" && req.query.yearLevel
+          ? req.query.yearLevel
+          : undefined;
+      const term =
+        typeof req.query.term === "string" && req.query.term
+          ? req.query.term
+          : undefined;
+      const search =
+        typeof req.query.search === "string" && req.query.search.trim()
+          ? req.query.search.trim()
+          : undefined;
+      const page = req.query.page ? Number(req.query.page) : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+      const data = await adminAttendanceService.listRecordsForCorrection({
+        year: Number.isFinite(year) ? year : undefined,
+        yearLevel,
+        term,
+        search,
+        page,
+        limit,
+      });
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async correctRecord(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await adminAttendanceService.correctAttendanceRecord(
+        req.params.id as string,
+        req.body.status,
+        String(req.body.reason ?? ""),
+        req.user!.id,
+      );
+
+      try {
+        if (result.record.sessionId) {
+          const rollData = await sharedAttendanceService.getLiveRollData(
+            result.record.sessionId,
+          );
+          liveUpdateManager.broadcast(result.record.sessionId, {
+            type: "ROLL_UPDATE",
+            ...rollData,
+          });
+        }
+      } catch (err) {
+        console.error("Failed to broadcast attendance correction roll update:", err);
+      }
+
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getCorrectionHistory(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await adminAttendanceService.getCorrectionHistory(
+        req.params.id as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const adminAttendanceController = new AdminAttendanceController();
