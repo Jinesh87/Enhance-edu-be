@@ -21,6 +21,7 @@ import { AppError } from "../../../common/errors/AppError.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { emailService } from "../../email/email.service.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
+import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
 
 export const ABSENCE_POLICIES = [
   "TASK_AND_ALERT",
@@ -137,7 +138,7 @@ export class AdminAttendanceService {
 
       const scan = await scansRepo.findOne({
         where: { id: scanEventId },
-        relations: { student: true, session: { class: true } },
+        relations: { student: true, session: { class: { term: true } } },
       });
 
       if (!scan) {
@@ -196,6 +197,7 @@ export class AdminAttendanceService {
 
         const newSession = await sessionsRepo.findOne({
           where: { id: reassignedSessionId },
+          relations: { class: { term: true } },
         });
         if (!newSession) {
           throw new AppError(
@@ -251,6 +253,13 @@ export class AdminAttendanceService {
           await attendanceRepo.save(newRecord);
         }
 
+        await syncTrialEnquiryOnAttendance({
+          studentUserId: scan.studentId,
+          status: targetRecordStatus,
+          termId: newSession.class?.term?.id ?? null,
+          actorId: resolvedByUserId,
+        });
+
         // Set original session attendance to ABSENT and clear scannedAt
         const originalRecord = await attendanceRepo.findOne({
           where: { sessionId: scan.sessionId, studentId: scan.studentId },
@@ -285,6 +294,22 @@ export class AdminAttendanceService {
           }
           await attendanceRepo.save(record);
         }
+      }
+
+      if (
+        decision === AdminDecision.ACCEPT ||
+        decision === AdminDecision.ACCEPT_AS_LATE
+      ) {
+        const acceptedStatus =
+          decision === AdminDecision.ACCEPT_AS_LATE
+            ? AttendanceStatus.LATE
+            : AttendanceStatus.PRESENT;
+        await syncTrialEnquiryOnAttendance({
+          studentUserId: scan.studentId,
+          status: acceptedStatus,
+          termId: scan.session?.class?.term?.id ?? null,
+          actorId: resolvedByUserId,
+        });
       }
 
       // Save scans
@@ -656,6 +681,13 @@ export class AdminAttendanceService {
     record.manualReason = reason.trim();
     record.markedByUserId = markedByUserId;
     await this.repo.saveAttendanceRecord(record);
+
+    await syncTrialEnquiryOnAttendance({
+      studentUserId: record.studentId,
+      status,
+      termId: record.session?.class?.term?.id ?? null,
+      actorId: markedByUserId,
+    });
 
     const studentName = record.student?.fullName ?? "Student";
     const className = record.session?.class

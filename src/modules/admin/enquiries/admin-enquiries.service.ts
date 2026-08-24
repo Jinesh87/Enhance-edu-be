@@ -15,6 +15,8 @@ import {
   EnquirySource,
   EnquiryStage,
   EnquiryStageHistory,
+  Enrollment,
+  Student,
   Subject,
   Term,
   User,
@@ -686,8 +688,72 @@ export class AdminEnquiriesService {
     }
   }
 
-  async recordTrialAttendance(id: string, attended: boolean, actorId: string) {
+  /**
+   * Moves matching enquiries from "Trial booked" → "Trial attended"
+   * when a trial student is marked present (or late) in class.
+   */
+  async markTrialAttendedForStudent(
+    studentUserId: string,
+    options?: { termId?: string; actorId?: string | null },
+  ) {
+    if (!studentUserId) return;
+
+    const student = await AppDataSource.getRepository(Student).findOne({
+      where: { userId: studentUserId },
+    });
+    if (!student) return;
+
+    const enrollments = await AppDataSource.getRepository(Enrollment).find({
+      where: { studentId: student.id },
+      relations: { term: true, guardian: true },
+    });
+    const trialEnrollments = enrollments.filter((row) => {
+      if (!row.term?.isTrial) return false;
+      if (options?.termId && row.termId !== options.termId) return false;
+      return true;
+    });
+    if (trialEnrollments.length === 0) return;
+
+    const termIds = [...new Set(trialEnrollments.map((row) => row.termId))];
+    const emails = [
+      ...new Set(
+        trialEnrollments
+          .map((row) => row.guardian?.email?.trim().toLowerCase())
+          .filter((email): email is string => Boolean(email)),
+      ),
+    ];
+    if (emails.length === 0) return;
+
+    const studentName = student.fullName.trim().toLowerCase();
+    const rows = await this.enquiries
+      .createQueryBuilder("enquiry")
+      .leftJoinAndSelect("enquiry.currentStage", "stage")
+      .where("LOWER(enquiry.guardianEmail) IN (:...emails)", { emails })
+      .andWhere("enquiry.closedAt IS NULL")
+      .andWhere("stage.code = :code", { code: "trial_booked" })
+      .andWhere("enquiry.trialTermId IN (:...termIds)", { termIds })
+      .getMany();
+
+    const actorId = options?.actorId ?? null;
+    for (const enquiry of rows) {
+      const enquiryName = enquiry.studentFullName?.trim().toLowerCase() ?? "";
+      if (enquiryName && enquiryName !== studentName) continue;
+      await this.recordTrialAttendance(enquiry.id, true, actorId);
+    }
+  }
+
+  async recordTrialAttendance(
+    id: string,
+    attended: boolean,
+    actorId: string | null,
+  ) {
     const enquiry = await this.requireOpen(id);
+    if (attended && enquiry.currentStage?.code === "trial_attended") {
+      enquiry.trialAttended = true;
+      await this.enquiries.save(enquiry);
+      return this.getById(id);
+    }
+
     enquiry.trialAttended = attended;
     if (attended) {
       const fromStageId = enquiry.currentStageId;
