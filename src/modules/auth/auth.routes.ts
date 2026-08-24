@@ -11,6 +11,7 @@ import {
   invitationSetupIdSchema,
   invitationVerify2faSchema,
   invitationStudentAccountsSchema,
+  changePasswordSchema,
   loginSchema,
   loginChallengeIdSchema,
   loginVerify2faSchema,
@@ -84,5 +85,11 @@ authRouter.post(
 authRouter.post("/refresh", authController.refresh);
 authRouter.post("/logout", authController.logout);
 authRouter.get("/me", authenticate, authController.me);
+authRouter.post(
+  "/change-password",
+  authenticate,
+  validate(changePasswordSchema),
+  authController.changePassword,
+);
 
 export default authRouter;
