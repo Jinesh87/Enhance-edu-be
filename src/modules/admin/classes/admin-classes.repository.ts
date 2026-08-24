@@ -136,6 +136,22 @@ export class AdminClassesRepository {
     return studentsByClassId;
   }
 
+  async findEnrolledStudents(classId: string): Promise<
+    { id: string; fullName: string }[]
+  > {
+    const rows = await AppDataSource.getRepository(ClassStudent).find({
+      where: { classId },
+      relations: { student: true },
+      order: { createdAt: "ASC" },
+    });
+    return rows
+      .filter((row) => row.student)
+      .map((row) => ({
+        id: row.student.id,
+        fullName: row.student.fullName,
+      }));
+  }
+
   async create(data: Partial<Class>): Promise<Class> {
     return this.classes.create(data);
   }

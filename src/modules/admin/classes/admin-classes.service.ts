@@ -343,6 +343,15 @@ export class AdminClassesService {
     return toClassDto(cls);
   }
 
+  async listEnrolledStudents(id: string) {
+    const cls = await this.repo.findById(id);
+    if (!cls) {
+      throw new AppError(404, "Class not found", "CLASS_NOT_FOUND");
+    }
+    const students = await this.repo.findEnrolledStudents(id);
+    return { students };
+  }
+
   async create(input: ClassInput) {
     let termObj = null;
     if (input.termId) {
