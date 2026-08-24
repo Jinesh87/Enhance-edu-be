@@ -307,6 +307,7 @@ export class StudentClassesService {
             startAt: row.startAt,
             endAt: row.endAt,
             room: row.cls.room,
+            classroomId: row.cls.classroomId || null,
             gracePeriodMinutes: 25,
           }),
         ),

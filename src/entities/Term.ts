@@ -9,6 +9,7 @@ import {
 } from "typeorm";
 import { AcademicYear } from "./AcademicYear.js";
 import { YearLevel } from "./YearLevel.js";
+import { Classroom } from "./Classroom.js";
 
 @Entity("terms")
 export class Term {
@@ -23,6 +24,12 @@ export class Term {
 
   @ManyToOne(() => YearLevel, { nullable: true, onDelete: "SET NULL" })
   yearLevel!: Relation<YearLevel> | null;
+
+  @Column({ type: "uuid", nullable: true })
+  classroomId!: string | null;
+
+  @ManyToOne(() => Classroom, { nullable: true, onDelete: "SET NULL" })
+  classroom!: Relation<Classroom> | null;
 
   @Column({ type: "date" })
   startDate!: string;

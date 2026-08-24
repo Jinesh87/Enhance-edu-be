@@ -25,7 +25,8 @@ import {
 export type ClassInput = {
   name?: string;
   code: string;
-  room: string;
+  room?: string | null;
+  classroomId?: string | null;
   subject?: string | null;
   lesson?: string | null;
   dayTime?: string | null;
@@ -50,6 +51,7 @@ export class AdminClassesRepository {
       relations: {
         teacher: true,
         term: { academicYear: true, yearLevel: true },
+        classroom: true,
       },
       order: { createdAt: "DESC" },
     };
@@ -67,6 +69,7 @@ export class AdminClassesRepository {
       relations: {
         teacher: true,
         term: { academicYear: true, yearLevel: true },
+        classroom: true,
       },
     });
   }
@@ -76,7 +79,10 @@ export class AdminClassesRepository {
   }
 
   async findTermById(id: string): Promise<Term | null> {
-    return this.terms.findOne({ where: { id } });
+    return this.terms.findOne({
+      where: { id },
+      relations: { classroom: true },
+    });
   }
 
   async findTermByName(name: string): Promise<Term | null> {
@@ -105,6 +111,31 @@ export class AdminClassesRepository {
     return graceByClassId;
   }
 
+  async findStudentIdsByClassIds(
+    classIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const studentsByClassId = new Map<string, string[]>();
+    if (classIds.length === 0) {
+      return studentsByClassId;
+    }
+
+    const enrolments = await AppDataSource.getRepository(ClassStudent).find({
+      where: { classId: In(classIds) },
+      select: { classId: true, studentId: true },
+    });
+
+    for (const enrolment of enrolments) {
+      const existing = studentsByClassId.get(enrolment.classId);
+      if (existing) {
+        existing.push(enrolment.studentId);
+      } else {
+        studentsByClassId.set(enrolment.classId, [enrolment.studentId]);
+      }
+    }
+
+    return studentsByClassId;
+  }
+
   async create(data: Partial<Class>): Promise<Class> {
     return this.classes.create(data);
   }
@@ -113,12 +144,32 @@ export class AdminClassesRepository {
     return this.classes.save(cls);
   }
 
+  async updateSessionClassroom(
+    classId: string,
+    classroomId: string | null,
+    room: string | null,
+  ): Promise<void> {
+    await AppDataSource.getRepository(Session).update(
+      { classId },
+      { classroomId, room },
+    );
+  }
+
   async remove(cls: Class): Promise<void> {
     await this.classes.remove(cls);
   }
 
   async findOneSimple(id: string): Promise<Class | null> {
     return this.classes.findOne({ where: { id } });
+  }
+
+  async findByClassroomId(classroomId: string): Promise<Class[]> {
+    return this.classes.find({
+      where: { classroomId },
+      relations: {
+        term: { academicYear: true, yearLevel: true },
+      },
+    });
   }
 
   async bulkReplace(
@@ -275,7 +326,8 @@ export class AdminClassesRepository {
         if (existingClass) {
           existingClass.name =
             input.name?.trim() || `${input.subject ?? "Subject"} Class`;
-          existingClass.room = input.room.trim();
+          existingClass.room = (input.room ?? "").trim();
+          existingClass.classroomId = input.classroomId ?? null;
           existingClass.subject = input.subject?.trim() || null;
           existingClass.lesson = input.lesson?.trim() || null;
           existingClass.dayTime = input.dayTime?.trim() || null;
@@ -292,7 +344,8 @@ export class AdminClassesRepository {
           const newEntity = classRepo.create({
             name: input.name?.trim() || `${input.subject ?? "Subject"} Class`,
             code: input.code.trim(),
-            room: input.room.trim(),
+            room: (input.room ?? "").trim(),
+            classroomId: input.classroomId ?? null,
             subject: input.subject?.trim() || null,
             lesson: input.lesson?.trim() || null,
             dayTime: input.dayTime?.trim() || null,
@@ -399,6 +452,7 @@ export class AdminClassesRepository {
                 startAt,
                 endAt,
                 room: c.room || null,
+                classroomId: c.classroomId || null,
                 gracePeriodMinutes: termGrace,
               }),
             );

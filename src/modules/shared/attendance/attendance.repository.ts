@@ -101,6 +101,7 @@ export class AttendanceRepository {
             startAt: times.startAt,
             endAt: times.endAt,
             room: c.room || null,
+            classroomId: c.classroomId || null,
             gracePeriodMinutes: 25,
           }),
         );
