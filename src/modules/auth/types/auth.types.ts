@@ -120,6 +120,11 @@ export type ResetPasswordInput = {
   password: string;
 };
 
+export type ChangePasswordInput = {
+  currentPassword: string;
+  password: string;
+};
+
 export type AuthResult = {
   user: PublicUser;
   tokens: AuthTokens;
