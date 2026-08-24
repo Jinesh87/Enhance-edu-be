@@ -17,7 +17,7 @@ const enrollmentStudentSchema = Joi.object({
     .messages({
       "string.pattern.base": "Date of birth must be in YYYY-MM-DD format",
     }),
-  yearLevel: Joi.number().integer().min(1).max(13).allow(null),
+  yearLevel: Joi.number().integer().min(1).max(13).required(),
 });
 
 const enrollmentDetailsSchema = Joi.object({

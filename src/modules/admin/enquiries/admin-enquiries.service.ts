@@ -36,6 +36,21 @@ const ENQUIRY_RELATIONS = {
   trialTerm: { academicYear: true, yearLevel: true },
 } as const;
 
+type EnquiryListFilters = {
+  page?: number;
+  limit?: number;
+  search?: string;
+  stageId?: string;
+  ownerUserId?: string;
+  sourceId?: string;
+  status?: string;
+  idleDays?: number;
+  yearLevel?: number;
+  termId?: string;
+  subject?: string;
+  sort?: string;
+};
+
 type Named = { id: string; name: string };
 
 function named(row: { id: string; name: string } | null | undefined): Named | null {
@@ -210,17 +225,7 @@ export class AdminEnquiriesService {
     };
   }
 
-  async list(filters: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    stageId?: string;
-    ownerUserId?: string;
-    sourceId?: string;
-    status?: string;
-    idleDays?: number;
-    sort?: string;
-  }) {
+  async list(filters: EnquiryListFilters) {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 10;
 
@@ -231,7 +236,10 @@ export class AdminEnquiriesService {
       .leftJoinAndSelect("enquiry.owner", "owner")
       .leftJoinAndSelect("enquiry.currentStage", "stage")
       .leftJoinAndSelect("enquiry.lostReason", "lostReason")
-      .leftJoinAndSelect("enquiry.competitor", "competitor");
+      .leftJoinAndSelect("enquiry.competitor", "competitor")
+      .leftJoinAndSelect("enquiry.trialTerm", "trialTerm")
+      .leftJoinAndSelect("trialTerm.academicYear", "trialAcademicYear")
+      .leftJoinAndSelect("trialTerm.yearLevel", "trialYearLevel");
 
     this.applyFilters(qb, filters);
 
@@ -256,12 +264,7 @@ export class AdminEnquiriesService {
     return { enquiries: rows.map((row) => toEnquiryDto(row)), total };
   }
 
-  async board(filters: {
-    search?: string;
-    ownerUserId?: string;
-    sourceId?: string;
-    idleDays?: number;
-  }) {
+  async board(filters: EnquiryListFilters) {
     const stages = await this.stages.find({
       where: { retiredAt: IsNull() },
       order: { sortOrder: "ASC" },
@@ -278,6 +281,9 @@ export class AdminEnquiriesService {
       .leftJoinAndSelect("enquiry.currentStage", "stage")
       .leftJoinAndSelect("enquiry.lostReason", "lostReason")
       .leftJoinAndSelect("enquiry.competitor", "competitor")
+      .leftJoinAndSelect("enquiry.trialTerm", "trialTerm")
+      .leftJoinAndSelect("trialTerm.academicYear", "trialAcademicYear")
+      .leftJoinAndSelect("trialTerm.yearLevel", "trialYearLevel")
       .andWhere("stage.kind = :open", { open: EnquiryStageKind.OPEN });
 
     this.applyFilters(qb, { ...filters, status: "open" });
@@ -977,14 +983,7 @@ export class AdminEnquiriesService {
 
   private applyFilters(
     qb: ReturnType<typeof this.enquiries.createQueryBuilder>,
-    filters: {
-      search?: string;
-      stageId?: string;
-      ownerUserId?: string;
-      sourceId?: string;
-      status?: string;
-      idleDays?: number;
-    },
+    filters: EnquiryListFilters,
   ) {
     const status = filters.status || "open";
     if (status === "open") {
@@ -1018,6 +1017,19 @@ export class AdminEnquiriesService {
     if (filters.idleDays != null) {
       qb.andWhere("enquiry.lastStageChangedAt <= :idleSince", {
         idleSince: new Date(Date.now() - filters.idleDays * 86_400_000),
+      });
+    }
+    if (filters.yearLevel != null) {
+      qb.andWhere("enquiry.yearLevel = :yearLevel", {
+        yearLevel: filters.yearLevel,
+      });
+    }
+    if (filters.termId) {
+      qb.andWhere("enquiry.trialTermId = :termId", { termId: filters.termId });
+    }
+    if (filters.subject) {
+      qb.andWhere("enquiry.subjectOfInterest ILIKE :subject", {
+        subject: `%${filters.subject}%`,
       });
     }
   }

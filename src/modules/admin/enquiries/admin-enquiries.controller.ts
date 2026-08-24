@@ -6,6 +6,23 @@ function labelFor(enquiry: { studentFullName?: string | null; guardianFullName?:
   return enquiry.studentFullName || enquiry.guardianFullName || "Enquiry";
 }
 
+function listFiltersFromQuery(query: Request["query"]) {
+  return {
+    page: query.page ? Number(query.page) : undefined,
+    limit: query.limit ? Number(query.limit) : undefined,
+    search: query.search ? String(query.search) : undefined,
+    stageId: query.stageId ? String(query.stageId) : undefined,
+    ownerUserId: query.ownerUserId ? String(query.ownerUserId) : undefined,
+    sourceId: query.sourceId ? String(query.sourceId) : undefined,
+    status: query.status ? String(query.status) : undefined,
+    idleDays: query.idleDays ? Number(query.idleDays) : undefined,
+    yearLevel: query.yearLevel ? Number(query.yearLevel) : undefined,
+    termId: query.termId ? String(query.termId) : undefined,
+    subject: query.subject ? String(query.subject) : undefined,
+    sort: query.sort ? String(query.sort) : undefined,
+  };
+}
+
 class AdminEnquiriesController {
   meta = async (_req: Request, res: Response, next: NextFunction) => {
     try {
@@ -17,17 +34,7 @@ class AdminEnquiriesController {
 
   list = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const data = await adminEnquiriesService.list({
-        page: req.query.page ? Number(req.query.page) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
-        search: req.query.search ? String(req.query.search) : undefined,
-        stageId: req.query.stageId ? String(req.query.stageId) : undefined,
-        ownerUserId: req.query.ownerUserId ? String(req.query.ownerUserId) : undefined,
-        sourceId: req.query.sourceId ? String(req.query.sourceId) : undefined,
-        status: req.query.status ? String(req.query.status) : undefined,
-        idleDays: req.query.idleDays ? Number(req.query.idleDays) : undefined,
-        sort: req.query.sort ? String(req.query.sort) : undefined,
-      });
+      const data = await adminEnquiriesService.list(listFiltersFromQuery(req.query));
       res.status(200).json(data);
     } catch (error) {
       next(error);
@@ -36,12 +43,7 @@ class AdminEnquiriesController {
 
   board = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const data = await adminEnquiriesService.board({
-        search: req.query.search ? String(req.query.search) : undefined,
-        ownerUserId: req.query.ownerUserId ? String(req.query.ownerUserId) : undefined,
-        sourceId: req.query.sourceId ? String(req.query.sourceId) : undefined,
-        idleDays: req.query.idleDays ? Number(req.query.idleDays) : undefined,
-      });
+      const data = await adminEnquiriesService.board(listFiltersFromQuery(req.query));
       res.status(200).json(data);
     } catch (error) {
       next(error);
