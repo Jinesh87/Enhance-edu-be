@@ -21,6 +21,14 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   login2faEnabled!: boolean;
 
+  /**
+   * When true, admins create adult accounts as ACTIVE with a password
+   * (no invitation email / invitation 2FA). Student logins still go through
+   * the guardian accept flow.
+   */
+  @Column({ type: "boolean", default: false })
+  sandboxModeEnabled!: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 

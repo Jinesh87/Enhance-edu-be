@@ -46,11 +46,20 @@ export class SettingsController {
     const config = await settingsService.updateSecuritySettings(req.body);
 
     logger.info(
-      { userId: req.user?.id, login2faEnabled: config.login2faEnabled },
-      "Login 2FA setting updated by Super Admin",
+      {
+        userId: req.user?.id,
+        login2faEnabled: config.login2faEnabled,
+        sandboxModeEnabled: config.sandboxModeEnabled,
+      },
+      "Security settings updated by Super Admin",
     );
 
     res.json(config);
+  }
+
+  async getSandboxMode(_req: Request, res: Response): Promise<void> {
+    const sandboxModeEnabled = await settingsService.isSandboxModeEnabled();
+    res.json({ sandboxModeEnabled });
   }
 }
 

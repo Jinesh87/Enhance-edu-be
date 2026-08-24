@@ -48,6 +48,13 @@ router.get(
   classroomsController.list,
 );
 
+// Readable by people admins so Add Person can switch invite vs create UI.
+router.get(
+  "/sandbox-mode",
+  authorizeAdminModule("people", "settings"),
+  (req, res) => void settingsController.getSandboxMode(req, res),
+);
+
 router.use(authorizeAdminModule("settings"));
 
 router.get("/institution", (req, res) => void settingsController.getInstitutionSettings(req, res));

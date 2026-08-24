@@ -8,6 +8,7 @@ export interface UpdateInstitutionSettingInput {
 
 export interface UpdateSecuritySettingInput {
   login2faEnabled: boolean;
+  sandboxModeEnabled: boolean;
 }
 
 export class SettingsService {
@@ -21,6 +22,7 @@ export class SettingsService {
         latitude: null,
         longitude: null,
         login2faEnabled: false,
+        sandboxModeEnabled: false,
       });
       setting = await this.settingRepo.save(setting);
     }
@@ -38,23 +40,38 @@ export class SettingsService {
     return this.settingRepo.save(setting);
   }
 
-  async getSecuritySettings(): Promise<{ login2faEnabled: boolean }> {
+  async getSecuritySettings(): Promise<{
+    login2faEnabled: boolean;
+    sandboxModeEnabled: boolean;
+  }> {
     const setting = await this.getOrCreateDefault();
-    return { login2faEnabled: setting.login2faEnabled ?? false };
+    return {
+      login2faEnabled: setting.login2faEnabled ?? false,
+      sandboxModeEnabled: setting.sandboxModeEnabled ?? false,
+    };
   }
 
   async updateSecuritySettings(
     input: UpdateSecuritySettingInput,
-  ): Promise<{ login2faEnabled: boolean }> {
+  ): Promise<{ login2faEnabled: boolean; sandboxModeEnabled: boolean }> {
     const setting = await this.getOrCreateDefault();
     setting.login2faEnabled = input.login2faEnabled;
+    setting.sandboxModeEnabled = input.sandboxModeEnabled;
     await this.settingRepo.save(setting);
-    return { login2faEnabled: setting.login2faEnabled };
+    return {
+      login2faEnabled: setting.login2faEnabled,
+      sandboxModeEnabled: setting.sandboxModeEnabled,
+    };
   }
 
   async isLogin2faEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.login2faEnabled ?? false;
+  }
+
+  async isSandboxModeEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.sandboxModeEnabled ?? false;
   }
 }
 
