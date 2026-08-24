@@ -12,6 +12,9 @@ export const listEnquiriesQuerySchema = Joi.object({
   sourceId: Joi.string().uuid().allow(""),
   status: Joi.string().valid("open", "lost", "converted", "all").allow(""),
   idleDays: Joi.number().integer().min(0),
+  yearLevel: Joi.number().integer().min(7).max(12),
+  termId: uuid.allow(""),
+  subject: Joi.string().trim().max(120).allow(""),
   sort: Joi.string().valid(
     "updated",
     "idle",

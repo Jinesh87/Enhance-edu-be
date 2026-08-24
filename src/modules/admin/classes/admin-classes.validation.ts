@@ -31,12 +31,46 @@ export const updateClassSchema = Joi.object({
   term: Joi.string().trim().max(120).allow(null, ""),
   termId: Joi.string().uuid().allow(null, ""),
   teacherId: Joi.string().uuid().allow(null, ""),
+  /** When set with teacherId, only these upcoming session IDs inherit the new teacher. */
+  applyTeacherToSessionIds: Joi.array().items(Joi.string().uuid()).optional(),
   gracePeriodMinutes: Joi.number().integer().min(0).max(480),
 });
 
 export const classIdParamsSchema = Joi.object({
   id: Joi.string().uuid().required(),
 });
+
+export const groupSessionsQuerySchema = Joi.object({
+  subject: Joi.string().trim().min(1).max(120).required(),
+  term: Joi.string().trim().min(1).max(200).required(),
+});
+
+export const sessionIdParamsSchema = Joi.object({
+  id: Joi.string().uuid().required(),
+});
+
+export const updateSessionSchema = Joi.object({
+  startAt: Joi.string().isoDate(),
+  endAt: Joi.string().isoDate(),
+  room: Joi.string().trim().max(80).allow(null, ""),
+  classroomId: Joi.string().uuid().allow(null, ""),
+  teacherId: Joi.string().uuid().allow(null, ""),
+  classId: Joi.string().uuid(), // for weekly-slot rows that have no real session yet
+  isWeeklySlot: Joi.boolean(),
+})
+  .or("startAt", "endAt", "room", "classroomId", "teacherId")
+  .custom((value, helpers) => {
+    if (value.startAt && value.endAt) {
+      const start = new Date(value.startAt).getTime();
+      const end = new Date(value.endAt).getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        return helpers.error("any.custom", {
+          message: "endAt must be after startAt",
+        });
+      }
+    }
+    return value;
+  });
 
 export const bulkReplaceClassSchema = Joi.object({
   termId: Joi.string().uuid().required(),

@@ -12,6 +12,9 @@ import {
   createClassSchema,
   updateClassSchema,
   bulkReplaceClassSchema,
+  groupSessionsQuerySchema,
+  sessionIdParamsSchema,
+  updateSessionSchema,
 } from "./admin-classes.validation.js";
 
 const adminClassesRouter = Router();
@@ -23,6 +26,17 @@ adminClassesRouter.use(
 );
 
 adminClassesRouter.get("/", adminClassesController.list);
+adminClassesRouter.get(
+  "/group-sessions",
+  validate(groupSessionsQuerySchema, "query"),
+  adminClassesController.listGroupSessions,
+);
+adminClassesRouter.patch(
+  "/sessions/:id",
+  validate(sessionIdParamsSchema, "params"),
+  validate(updateSessionSchema),
+  adminClassesController.updateSession,
+);
 adminClassesRouter.post(
   "/bulk-replace",
   validate(bulkReplaceClassSchema),
