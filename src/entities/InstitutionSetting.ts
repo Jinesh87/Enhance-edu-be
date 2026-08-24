@@ -17,6 +17,18 @@ export class InstitutionSetting {
   @Column({ type: "double precision", nullable: true })
   longitude!: number | null;
 
+  /** When true, users with 2FA configured must enter a code at login. */
+  @Column({ type: "boolean", default: false })
+  login2faEnabled!: boolean;
+
+  /**
+   * When true, admins create adult accounts as ACTIVE with a password
+   * (no invitation email / invitation 2FA). Student logins still go through
+   * the guardian accept flow.
+   */
+  @Column({ type: "boolean", default: false })
+  sandboxModeEnabled!: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 

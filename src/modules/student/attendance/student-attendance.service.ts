@@ -61,6 +61,7 @@ import {
   ProcessScanInput,
 } from "../../shared/attendance/attendance.types.js";
 import { validateAttendanceQr } from "../../shared/attendance/attendance-qr.js";
+import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
 
 export class StudentAttendanceService {
   private readonly repo = new AttendanceRepository();
@@ -415,6 +416,12 @@ export class StudentAttendanceService {
         throw err;
       }
     }
+
+    await syncTrialEnquiryOnAttendance({
+      studentUserId: studentId,
+      status,
+      termId: session.class?.term?.id ?? null,
+    });
 
     return {
       status: isAfterGracePeriod ? "GRACE_CLOSED" : "CONFIRMED",

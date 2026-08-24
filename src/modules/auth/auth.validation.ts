@@ -51,6 +51,14 @@ export const resetPasswordSchema = Joi.object({
   }),
 });
 
+export const changePasswordSchema = Joi.object({
+  currentPassword: Joi.string().required(),
+  password: Joi.string().min(8).max(128).required(),
+  confirmPassword: Joi.string().valid(Joi.ref("password")).required().messages({
+    "any.only": "Passwords do not match",
+  }),
+});
+
 export const invitationPreviewQuerySchema = Joi.object({
   token: Joi.string().trim().min(20).required(),
 });

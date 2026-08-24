@@ -8,7 +8,10 @@ import {
   authorizeAdminModule,
 } from "../../common/middleware/authenticate.js";
 import { validate } from "../../common/middleware/validate.js";
-import { updateInstitutionSettingSchema } from "./settings.validation.js";
+import {
+  updateInstitutionSettingSchema,
+  updateSecuritySettingSchema,
+} from "./settings.validation.js";
 import {
   createHolidaySchema,
   holidayIdParamsSchema,
@@ -45,6 +48,13 @@ router.get(
   classroomsController.list,
 );
 
+// Readable by people admins so Add Person can switch invite vs create UI.
+router.get(
+  "/sandbox-mode",
+  authorizeAdminModule("people", "settings"),
+  (req, res) => void settingsController.getSandboxMode(req, res),
+);
+
 router.use(authorizeAdminModule("settings"));
 
 router.get("/institution", (req, res) => void settingsController.getInstitutionSettings(req, res));
@@ -53,6 +63,20 @@ router.put(
   "/institution",
   validate(updateInstitutionSettingSchema, "body"),
   (req, res) => void settingsController.updateInstitutionSettings(req, res),
+);
+
+// Login 2FA toggle — Super Admin only
+router.get(
+  "/security",
+  authorize(UserRole.SUPER_ADMIN),
+  (req, res) => void settingsController.getSecuritySettings(req, res),
+);
+
+router.put(
+  "/security",
+  authorize(UserRole.SUPER_ADMIN),
+  validate(updateSecuritySettingSchema, "body"),
+  (req, res) => void settingsController.updateSecuritySettings(req, res),
 );
 
 router.post(

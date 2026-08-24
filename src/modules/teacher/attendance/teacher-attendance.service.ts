@@ -4,6 +4,7 @@ import { MarkManualRollInput } from "../../shared/attendance/attendance.types.js
 import { generateAttendanceQr } from "../../shared/attendance/attendance-qr.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { Session } from "../../../entities/Session.js";
+import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
 
 export class TeacherAttendanceService {
   private readonly repo = new AttendanceRepository();
@@ -112,6 +113,13 @@ export class TeacherAttendanceService {
 
       await this.repo.saveAttendanceRecord(record);
     }
+
+    await syncTrialEnquiryOnAttendance({
+      studentUserId: studentId,
+      status,
+      termId: session.class?.term?.id ?? null,
+      actorId: markedByUserId,
+    });
 
     return record;
   }

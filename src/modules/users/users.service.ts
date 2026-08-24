@@ -9,11 +9,13 @@ import {
   deleteUserInvitationTokens,
 } from "../../common/utils/invitation-redis.js";
 import { deleteUserPasswordResetTokens } from "../../common/utils/password-reset-redis.js";
+import { hashPassword } from "../../common/utils/password.js";
 import { In } from "typeorm";
 import { User, TeacherSubject, Enrollment, PendingEnrollment, Student } from "../../entities/index.js";
 import { PendingEnrollmentStatus } from "../../common/constants/enrollment.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
+import { settingsService } from "../settings/settings.service.js";
 import { sanitizeModulePermissions } from "../../common/constants/modules.js";
 import { writeAuditLog, changedFields } from "../../common/utils/audit-log.js";
 import type {
@@ -66,6 +68,7 @@ function toPersonDto(user: User): PersonDto {
     invitationExpiresAt: user.invitationExpiresAt,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
+    createdViaSandbox: user.createdViaSandbox ?? false,
   };
 }
 
@@ -206,6 +209,22 @@ export class UsersService {
     }
     assertActorCanManagePerson(actor, input.role, input.modulePermissions);
 
+    const sandboxMode = await settingsService.isSandboxModeEnabled();
+    if (sandboxMode && !input.password) {
+      throw new AppError(
+        400,
+        "Password is required while sandbox mode is enabled",
+        "SANDBOX_PASSWORD_REQUIRED",
+      );
+    }
+    if (!sandboxMode && input.password) {
+      throw new AppError(
+        400,
+        "Password can only be set when sandbox mode is enabled",
+        "SANDBOX_PASSWORD_NOT_ALLOWED",
+      );
+    }
+
     const email = input.email.toLowerCase();
     const existing = await this.users.findOne({ where: { email } });
 
@@ -224,30 +243,39 @@ export class UsersService {
       );
     }
 
-    // Create user record
     const user = this.users.create({
       fullName: input.fullName.trim(),
       preferredName: input.preferredName?.trim() || null,
       email,
       mobile: input.mobile?.trim() || null,
-      passwordHash: null,
+      passwordHash: sandboxMode ? await hashPassword(input.password!) : null,
       role: input.role,
-      status: UserStatus.INVITED,
+      status: sandboxMode ? UserStatus.ACTIVE : UserStatus.INVITED,
       employmentType: input.employmentType ?? null,
       modulePermissions:
         input.role === UserRole.OFFICE_STAFF
           ? sanitizeModulePermissions(input.modulePermissions)
           : null,
-      securitySetupComplete: false,
-      invitationTokenHash: null, // Not used anymore, using Redis
-      invitationExpiresAt: null,  // Not used anymore, using Redis
+      securitySetupComplete: sandboxMode,
+      createdViaSandbox: sandboxMode,
+      twoFactorMethod: null,
+      authenticatorSecret: null,
+      invitationTokenHash: null,
+      invitationExpiresAt: null,
     });
 
     await this.users.save(user);
 
     logger.info(
-      { userId: user.id, email: user.email },
-      "User created with INVITED status",
+      {
+        userId: user.id,
+        email: user.email,
+        sandboxMode,
+        status: user.status,
+      },
+      sandboxMode
+        ? "User created via sandbox mode"
+        : "User created with INVITED status",
     );
 
     await writeAuditLog({
@@ -262,6 +290,7 @@ export class UsersService {
         role: user.role,
         status: user.status,
         modulePermissions: user.modulePermissions,
+        createdViaSandbox: user.createdViaSandbox,
       },
     });
 
@@ -300,6 +329,10 @@ export class UsersService {
         studentFullName: input.student.fullName.trim(),
         status: "AWAITING_GUARDIAN",
       };
+    }
+
+    if (sandboxMode) {
+      return result;
     }
 
     // Generate one-time invitation token and store in Redis

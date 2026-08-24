@@ -38,6 +38,7 @@ export type PersonDto = {
   subjectIds?: string[];
   modulePermissions?: string[];
   isTrialAccount?: boolean;
+  createdViaSandbox?: boolean;
   students?: GuardianConnectedStudentDto[];
   guardians?: {
     id: string;
@@ -69,6 +70,8 @@ export type InvitePersonInput = {
   mobile?: string | null;
   role: UserRole;
   employmentType?: EmploymentType | null;
+  /** Required when institution sandbox mode is enabled. */
+  password?: string;
   student?: EnrollmentStudentInput;
   enrollment?: EnrollmentDetailsInput;
   subjectIds?: string[];

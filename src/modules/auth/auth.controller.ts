@@ -252,6 +252,18 @@ export class AuthController {
       next(error);
     }
   };
+
+  changePassword = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await authService.changePassword(req.user!.id, {
+        currentPassword: req.body.currentPassword,
+        password: req.body.password,
+      });
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const authController = new AuthController();

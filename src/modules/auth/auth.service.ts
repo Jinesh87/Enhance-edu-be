@@ -42,6 +42,7 @@ import {
 } from "../../common/utils/two-factor-redis.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
+import { settingsService } from "../settings/settings.service.js";
 import { hashValue, verifyHash } from "../../common/utils/hash.js";
 import {
   getRefreshExpiresAt,
@@ -56,6 +57,7 @@ import type {
   AcceptInvitationInput,
   AuthResult,
   AuthTokens,
+  ChangePasswordInput,
   ForgotPasswordInput,
   Invitation2faMethodInput,
   Invitation2faMethodResult,
@@ -750,6 +752,58 @@ export class AuthService {
     return { user: toPublicUser(user), tokens };
   }
 
+  async changePassword(
+    userId: string,
+    input: ChangePasswordInput,
+  ): Promise<void> {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      throw new AppError(401, "Authentication required", "UNAUTHORIZED");
+    }
+    if (!user.passwordHash) {
+      throw new AppError(
+        400,
+        "This account does not have a password yet",
+        "PASSWORD_NOT_SET",
+      );
+    }
+
+    const matches = await verifyPassword(
+      input.currentPassword,
+      user.passwordHash,
+    );
+    if (!matches) {
+      throw new AppError(
+        400,
+        "Current password is incorrect",
+        "INVALID_CURRENT_PASSWORD",
+      );
+    }
+
+    if (input.currentPassword === input.password) {
+      throw new AppError(
+        400,
+        "New password must be different from the current password",
+        "PASSWORD_UNCHANGED",
+      );
+    }
+
+    user.passwordHash = await hashPassword(input.password);
+    await this.users.save(user);
+    await deleteUserPasswordResetTokens(user.id);
+
+    await writeAuditLog({
+      actorUserId: user.id,
+      action: "EDITED",
+      recordType: "account",
+      recordId: user.id,
+      recordLabel: user.fullName,
+      after: { reason: "PASSWORD_CHANGED" },
+    });
+
+    logger.info({ userId: user.id }, "User changed password");
+  }
+
   async login(input: LoginInput): Promise<LoginResult> {
     const identifier = input.identifier.trim();
     const lockKey = identifier.toLowerCase();
@@ -831,10 +885,14 @@ export class AuthService {
 
     await clearLoginLockout(lockKey);
 
-    // 2FA is disabled for login for now.
-    // if (user.securitySetupComplete && user.twoFactorMethod) {
-    //   return this.startLogin2faChallenge(user);
-    // }
+    const login2faEnabled = await settingsService.isLogin2faEnabled();
+    if (
+      login2faEnabled &&
+      user.securitySetupComplete &&
+      user.twoFactorMethod
+    ) {
+      return this.startLogin2faChallenge(user);
+    }
 
     user.lastSignedInAt = new Date();
     await this.users.save(user);

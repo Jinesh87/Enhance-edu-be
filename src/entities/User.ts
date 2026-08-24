@@ -57,6 +57,10 @@ export class User {
   @Column({ type: "boolean", default: false })
   securitySetupComplete!: boolean;
 
+  /** True when this account was provisioned while institution sandbox mode was on. */
+  @Column({ type: "boolean", default: false })
+  createdViaSandbox!: boolean;
+
   @Column({ type: "enum", enum: TwoFactorMethod, nullable: true })
   twoFactorMethod!: TwoFactorMethod | null;
 
