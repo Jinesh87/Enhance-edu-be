@@ -19,6 +19,7 @@ import adminYearLevelsRouter from "./modules/admin/year-levels/admin-year-levels
 import adminTermsRouter from "./modules/admin/terms/admin-terms.routes.js";
 import adminEnrollmentsRouter from "./modules/admin/enrollments/admin-enrollments.routes.js";
 import adminClassesRouter from "./modules/admin/classes/admin-classes.routes.js";
+import adminAssessmentsRouter from "./modules/admin/assessments/admin-assessments.routes.js";
 import adminAuditRouter from "./modules/admin/audit/admin-audit.routes.js";
 import adminEnquiriesRouter from "./modules/admin/enquiries/admin-enquiries.routes.js";
 import guardianStudentsRouter from "./modules/guardian/students/guardian-students.routes.js";
@@ -72,6 +73,7 @@ app.use("/api/terms", adminTermsRouter);
 app.use("/api/enquiries", adminEnquiriesRouter);
 app.use("/api/enrollments", adminEnrollmentsRouter);
 app.use("/api/classes", adminClassesRouter);
+app.use("/api/assessments", adminAssessmentsRouter);
 app.use("/api/audit-logs", adminAuditRouter);
 app.use("/api/student", studentClassesRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);

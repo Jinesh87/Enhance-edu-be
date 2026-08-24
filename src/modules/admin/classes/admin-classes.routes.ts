@@ -29,6 +29,11 @@ adminClassesRouter.post(
   adminClassesController.bulkReplace,
 );
 adminClassesRouter.get(
+  "/:id/enrolled-students",
+  validate(classIdParamsSchema, "params"),
+  adminClassesController.listEnrolledStudents,
+);
+adminClassesRouter.get(
   "/:id",
   validate(classIdParamsSchema, "params"),
   adminClassesController.getById,

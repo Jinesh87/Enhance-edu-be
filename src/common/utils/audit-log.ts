@@ -25,6 +25,7 @@ const RECORD_PATHS: Record<string, (id: string) => string> = {
   person: (id) => `/admin/people/${id}`,
   enrolment: (id) => `/admin/enrolments/${id}`,
   class: () => `/admin/classes`,
+  assessment: () => `/admin/classes/assessments`,
   subject: () => `/admin/subjects`,
   term: () => `/admin/terms`,
   holiday: () => `/admin/holidays-settings`,

@@ -35,6 +35,21 @@ class AdminClassesController {
     }
   };
 
+  listEnrolledStudents = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const { students } = await adminClassesService.listEnrolledStudents(
+        req.params.id as string,
+      );
+      res.status(200).json({ students });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   create = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const classItem = await adminClassesService.create(req.body);
