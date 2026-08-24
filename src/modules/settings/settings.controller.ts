@@ -36,6 +36,22 @@ export class SettingsController {
       longitude: config.longitude,
     });
   }
+
+  async getSecuritySettings(_req: Request, res: Response): Promise<void> {
+    const config = await settingsService.getSecuritySettings();
+    res.json(config);
+  }
+
+  async updateSecuritySettings(req: Request, res: Response): Promise<void> {
+    const config = await settingsService.updateSecuritySettings(req.body);
+
+    logger.info(
+      { userId: req.user?.id, login2faEnabled: config.login2faEnabled },
+      "Login 2FA setting updated by Super Admin",
+    );
+
+    res.json(config);
+  }
 }
 
 export const settingsController = new SettingsController();

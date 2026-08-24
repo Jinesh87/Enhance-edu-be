@@ -42,6 +42,7 @@ import {
 } from "../../common/utils/two-factor-redis.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
+import { settingsService } from "../settings/settings.service.js";
 import { hashValue, verifyHash } from "../../common/utils/hash.js";
 import {
   getRefreshExpiresAt,
@@ -831,10 +832,14 @@ export class AuthService {
 
     await clearLoginLockout(lockKey);
 
-    // 2FA is disabled for login for now.
-    // if (user.securitySetupComplete && user.twoFactorMethod) {
-    //   return this.startLogin2faChallenge(user);
-    // }
+    const login2faEnabled = await settingsService.isLogin2faEnabled();
+    if (
+      login2faEnabled &&
+      user.securitySetupComplete &&
+      user.twoFactorMethod
+    ) {
+      return this.startLogin2faChallenge(user);
+    }
 
     user.lastSignedInAt = new Date();
     await this.users.save(user);

@@ -17,6 +17,10 @@ export class InstitutionSetting {
   @Column({ type: "double precision", nullable: true })
   longitude!: number | null;
 
+  /** When true, users with 2FA configured must enter a code at login. */
+  @Column({ type: "boolean", default: false })
+  login2faEnabled!: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 
