@@ -43,6 +43,7 @@ export class UsersController {
           mobile: req.body.mobile,
           role: req.body.role as UserRole,
           employmentType: req.body.employmentType as EmploymentType | null,
+          password: req.body.password,
           student: req.body.student,
           enrollment: req.body.enrollment,
           subjectIds: req.body.subjectIds,

@@ -64,6 +64,7 @@ export const createUserSchema = Joi.object({
       then: Joi.array().min(1).required(),
       otherwise: Joi.forbidden(),
     }),
+  password: Joi.string().min(8).max(128).optional(),
 });
 
 export const updateUserSchema = Joi.object({
