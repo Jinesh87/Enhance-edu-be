@@ -11,6 +11,7 @@ import {
   adminClassesRepository,
   type ClassInput,
 } from "./admin-classes.repository.js";
+import { syncClassRosterFromEnrollments } from "../../shared/classes/sync-class-roster.js";
 
 function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Date | null {
   return parseDayTime(dayTime, timeZone)?.startAt ?? null;
@@ -220,6 +221,9 @@ export class AdminClassesService {
       });
     }
 
+    await Promise.all(
+      filteredClasses.map((cls) => syncClassRosterFromEnrollments(cls)),
+    );
     const studentsByClassId = await this.repo.findStudentIdsByClassIds(
       filteredClasses.map((item) => item.id),
     );

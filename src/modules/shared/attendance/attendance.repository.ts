@@ -36,7 +36,7 @@ export class AttendanceRepository {
       relations: {
         class: {
           teacher: true,
-          term: true,
+          term: { academicYear: true, yearLevel: true },
         },
       },
     });

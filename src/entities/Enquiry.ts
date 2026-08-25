@@ -115,6 +115,10 @@ export class Enquiry {
   @Column({ type: "boolean", default: false })
   trialAttended!: boolean;
 
+  /** True when the student submitted entrance-exam answers. */
+  @Column({ type: "boolean", default: false })
+  examAttended!: boolean;
+
   @Column({ type: "varchar", length: 120, nullable: true })
   examSession!: string | null;
 

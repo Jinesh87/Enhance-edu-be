@@ -24,6 +24,7 @@ import adminAuditRouter from "./modules/admin/audit/admin-audit.routes.js";
 import adminEnquiriesRouter from "./modules/admin/enquiries/admin-enquiries.routes.js";
 import guardianStudentsRouter from "./modules/guardian/students/guardian-students.routes.js";
 import studentClassesRouter from "./modules/student/classes/student-classes.routes.js";
+import studentEntranceExamsRouter from "./modules/student/entrance-exams/student-entrance-exams.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -76,6 +77,7 @@ app.use("/api/classes", adminClassesRouter);
 app.use("/api/assessments", adminAssessmentsRouter);
 app.use("/api/audit-logs", adminAuditRouter);
 app.use("/api/student", studentClassesRouter);
+app.use("/api/student/entrance-exams", studentEntranceExamsRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
 
 app.use(errorHandler);

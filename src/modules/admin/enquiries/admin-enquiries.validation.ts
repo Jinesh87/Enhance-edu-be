@@ -12,7 +12,7 @@ export const listEnquiriesQuerySchema = Joi.object({
   sourceId: Joi.string().uuid().allow(""),
   status: Joi.string().valid("open", "lost", "converted", "all").allow(""),
   idleDays: Joi.number().integer().min(0),
-  yearLevel: Joi.number().integer().min(7).max(12),
+  yearLevel: Joi.number().integer().min(1).max(13),
   termId: uuid.allow(""),
   subject: Joi.string().trim().max(120).allow(""),
   sort: Joi.string().valid(
@@ -31,7 +31,7 @@ export const enquiryIdParamsSchema = Joi.object({
 
 export const createEnquirySchema = Joi.object({
   studentFullName: Joi.string().trim().max(120).allow(null, ""),
-  yearLevel: Joi.number().integer().min(7).max(12).required(),
+  yearLevel: Joi.number().integer().min(1).max(13).required(),
   school: Joi.string().trim().max(160).allow(null, ""),
   subjectOfInterest: Joi.string().trim().min(1).max(120).required(),
   guardianFullName: Joi.string().trim().min(2).max(120).required(),
@@ -44,7 +44,7 @@ export const createEnquirySchema = Joi.object({
 
 export const updateEnquirySchema = Joi.object({
   studentFullName: Joi.string().trim().max(120).allow(null, ""),
-  yearLevel: Joi.number().integer().min(7).max(12),
+  yearLevel: Joi.number().integer().min(1).max(13),
   school: Joi.string().trim().max(160).allow(null, ""),
   subjectOfInterest: Joi.string().trim().min(1).max(120),
   guardianFullName: Joi.string().trim().min(2).max(120),
