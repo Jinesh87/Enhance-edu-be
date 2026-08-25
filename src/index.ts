@@ -7,6 +7,7 @@ import { connectRedis } from "./config/redis.js";
 import { seedSuperAdmin } from "./seeder/seed-super-admin.js";
 import { seedEnquiryCatalogue } from "./seeder/seed-enquiry-catalogue.js";
 import { adminTasksService } from "./modules/admin/tasks/admin-tasks.service.js";
+import { startOcrWorker } from "./common/queues/ocr-queue.js";
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
 
@@ -19,6 +20,7 @@ async function bootstrap() {
 
   await connectRedis();
   await seedSuperAdmin();
+  startOcrWorker();
 
   app.listen(port, "0.0.0.0", () => {
     logger.info({ port }, "API listening");

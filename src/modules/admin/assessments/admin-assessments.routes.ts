@@ -8,6 +8,8 @@ import {
 import { validate } from "../../../common/middleware/validate.js";
 import { adminAssessmentsController } from "./admin-assessments.controller.js";
 import {
+  assessmentAttendeeFileParamsSchema,
+  assessmentAttendeeParamsSchema,
   assessmentIdParamsSchema,
   createAssessmentSchema,
   listAssessmentsQuerySchema,
@@ -26,6 +28,21 @@ adminAssessmentsRouter.get(
   "/",
   validate(listAssessmentsQuerySchema, "query"),
   adminAssessmentsController.list,
+);
+adminAssessmentsRouter.get(
+  "/:id/attendees",
+  validate(assessmentIdParamsSchema, "params"),
+  adminAssessmentsController.listAttendees,
+);
+adminAssessmentsRouter.get(
+  "/:id/attendees/:studentId/files/:fileId",
+  validate(assessmentAttendeeFileParamsSchema, "params"),
+  adminAssessmentsController.getAttendeeFile,
+);
+adminAssessmentsRouter.get(
+  "/:id/attendees/:studentId",
+  validate(assessmentAttendeeParamsSchema, "params"),
+  adminAssessmentsController.getAttendeeSubmission,
 );
 adminAssessmentsRouter.get(
   "/:id",

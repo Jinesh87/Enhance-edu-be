@@ -25,10 +25,17 @@ export const ASSESSMENT_STATUSES = [
 
 export type AssessmentStatus = (typeof ASSESSMENT_STATUSES)[number];
 
+export const ASSESSMENT_KINDS = ["SCHOOL", "ENTRANCE"] as const;
+export type AssessmentKind = (typeof ASSESSMENT_KINDS)[number];
+
 @Entity("assessments")
 export class Assessment {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
+
+  @Column({ type: "varchar", length: 20, default: "SCHOOL" })
+  @Index()
+  kind!: AssessmentKind;
 
   @Column({ type: "varchar", length: 160 })
   name!: string;

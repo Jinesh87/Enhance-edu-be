@@ -28,6 +28,11 @@ import type { EnrollmentSnapshot } from "../../../entities/PendingEnrollment.js"
 import { emailService } from "../../email/email.service.js";
 import type { InvitationEnrollmentDetails } from "../../email/email.service.js";
 import { hashPassword } from "../../../common/utils/password.js";
+import {
+  termYearLevelNumber,
+  yearLevelNumber,
+  yearLevelsCompatible,
+} from "../../../common/utils/year-level.js";
 
 export type StudentLoginInput = {
   username: string;
@@ -355,6 +360,7 @@ export class AdminEnrollmentsService {
   ) {
     const { term, subjectRows } = await this.validateEnrollmentCatalogue(
       input.enrollment,
+      input.student.yearLevel,
     );
 
     const enrollment = await this.enrollments.findOne({
@@ -738,6 +744,7 @@ export class AdminEnrollmentsService {
   ) {
     const { term, subjectRows } = await this.validateEnrollmentCatalogue(
       input.enrollment,
+      input.student.yearLevel,
     );
 
     const { guardian } = input.guardianId
@@ -832,7 +839,10 @@ export class AdminEnrollmentsService {
       );
     }
 
-    const { term, subjectRows } = await this.validateEnrollmentCatalogue(enrollment);
+    const { term, subjectRows } = await this.validateEnrollmentCatalogue(
+      enrollment,
+      student.yearLevel,
+    );
 
     const pending = await this.queuePendingEnrollment(
       guardian.id,
@@ -999,14 +1009,34 @@ export class AdminEnrollmentsService {
     return studentUser;
   }
 
-  private async validateEnrollmentCatalogue(enrollment: EnrollmentInput) {
-    const term = await this.terms.findOne({ where: { id: enrollment.termId } });
+  private async validateEnrollmentCatalogue(
+    enrollment: EnrollmentInput,
+    studentYearLevel?: number | null,
+  ) {
+    const term = await this.terms.findOne({
+      where: { id: enrollment.termId },
+      relations: { academicYear: true, yearLevel: true },
+    });
     if (!term) {
       throw new AppError(404, "Term not found", "TERM_NOT_FOUND");
     }
 
+    const termYear = termYearLevelNumber(term);
+    if (
+      studentYearLevel != null &&
+      termYear != null &&
+      !yearLevelsCompatible(studentYearLevel, termYear)
+    ) {
+      throw new AppError(
+        400,
+        `Student year level (Year ${studentYearLevel}) does not match the selected term (${term.yearLevel?.name ?? `Year ${termYear}`})`,
+        "YEAR_LEVEL_MISMATCH",
+      );
+    }
+
     const subjectRows = await this.subjects.find({
       where: { id: In(enrollment.subjectIds) },
+      relations: { yearLevel: true },
     });
     if (subjectRows.length !== enrollment.subjectIds.length) {
       throw new AppError(
@@ -1014,6 +1044,26 @@ export class AdminEnrollmentsService {
         "One or more subjects were not found",
         "SUBJECT_NOT_FOUND",
       );
+    }
+
+    const expectedYear =
+      studentYearLevel ?? termYear ?? null;
+    for (const subject of subjectRows) {
+      const subjectYear =
+        yearLevelNumber(subject.yearLevel?.name) ??
+        subject.yearLevel?.sequence ??
+        null;
+      if (
+        expectedYear != null &&
+        subjectYear != null &&
+        !yearLevelsCompatible(expectedYear, subjectYear)
+      ) {
+        throw new AppError(
+          400,
+          `Subject "${subject.name}" is for ${subject.yearLevel?.name}, not Year ${expectedYear}`,
+          "SUBJECT_YEAR_MISMATCH",
+        );
+      }
     }
 
     return { term, subjectRows };

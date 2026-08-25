@@ -4,6 +4,10 @@ import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { parseDayTime, resolveIanaTimeZone } from "../../../common/utils/timezone.js";
 import {
+  termYearLevelNumber,
+  yearLevelsCompatible,
+} from "../../../common/utils/year-level.js";
+import {
   AttendanceRecord,
   AttendanceStatus,
   Class,
@@ -394,12 +398,26 @@ export class StudentClassesService {
   }
 
   private async resolveStudentClasses(userId: string): Promise<Class[]> {
+    const student = await this.students.findOne({ where: { userId } });
     const linked = await this.classStudents.find({
       where: { studentId: userId },
+      relations: { class: { term: { yearLevel: true } } },
     });
-    const classIds = new Set(linked.map((row) => row.classId));
+    const classIds = new Set<string>();
+    for (const row of linked) {
+      if (
+        student &&
+        !yearLevelsCompatible(
+          student.yearLevel,
+          termYearLevelNumber(row.class?.term),
+        )
+      ) {
+        await this.classStudents.remove(row);
+        continue;
+      }
+      classIds.add(row.classId);
+    }
 
-    const student = await this.students.findOne({ where: { userId } });
     if (student) {
       const enrollments = await this.enrollments.find({
         where: {
@@ -422,6 +440,7 @@ export class StudentClassesService {
       const termIds = new Set(
         enrollments.map((enrollment) => enrollment.termId).filter(Boolean),
       );
+      const studentYear = student.yearLevel;
 
       if (subjectNames.size > 0) {
         const catalogue = await this.classes.find({
@@ -434,6 +453,11 @@ export class StudentClassesService {
           const subject = (cls.subject ?? "").trim().toLowerCase();
           if (!subjectNames.has(subject)) continue;
           if (termIds.size > 0 && cls.term?.id && !termIds.has(cls.term.id)) {
+            continue;
+          }
+          if (
+            !yearLevelsCompatible(studentYear, termYearLevelNumber(cls.term))
+          ) {
             continue;
           }
           classIds.add(cls.id);

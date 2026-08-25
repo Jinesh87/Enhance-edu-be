@@ -12,6 +12,7 @@ export const listAssessmentsQuerySchema = Joi.object({
   termId: uuid.allow(""),
   subject: Joi.string().trim().max(120).allow(""),
   yearGroup: Joi.string().trim().max(80).allow(""),
+  kind: Joi.string().valid("SCHOOL", "ENTRANCE", "ALL").allow(""),
   status: Joi.string()
     .valid(...ASSESSMENT_STATUSES, "ACTIVE")
     .allow(""),
@@ -21,8 +22,20 @@ export const assessmentIdParamsSchema = Joi.object({
   id: uuid.required(),
 });
 
+export const assessmentAttendeeParamsSchema = Joi.object({
+  id: uuid.required(),
+  studentId: uuid.required(),
+});
+
+export const assessmentAttendeeFileParamsSchema = Joi.object({
+  id: uuid.required(),
+  studentId: uuid.required(),
+  fileId: uuid.required(),
+});
+
 export const createAssessmentSchema = Joi.object({
   name: Joi.string().trim().min(1).max(160).required(),
+  kind: Joi.string().valid("SCHOOL", "ENTRANCE").default("SCHOOL"),
   classId: uuid.allow(null, ""),
   termId: uuid.required(),
   subject: Joi.string().trim().min(1).max(120).required(),
@@ -39,6 +52,7 @@ export const createAssessmentSchema = Joi.object({
 
 export const updateAssessmentSchema = Joi.object({
   name: Joi.string().trim().min(1).max(160),
+  kind: Joi.string().valid("SCHOOL", "ENTRANCE"),
   classId: uuid.allow(null, ""),
   termId: uuid,
   subject: Joi.string().trim().min(1).max(120),

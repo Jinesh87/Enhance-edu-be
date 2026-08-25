@@ -21,6 +21,9 @@ class AdminAssessmentsController {
             | "ARCHIVED"
             | "ACTIVE")
         : undefined;
+      const kind = req.query.kind
+        ? (String(req.query.kind) as "SCHOOL" | "ENTRANCE" | "ALL")
+        : undefined;
       const { assessments, total } = await adminAssessmentsService.list({
         page,
         limit,
@@ -28,6 +31,7 @@ class AdminAssessmentsController {
         termId,
         subject,
         yearGroup,
+        kind,
         status,
       });
       res.status(200).json({ assessments, total });
@@ -123,6 +127,56 @@ class AdminAssessmentsController {
         recordLabel: existing.name,
       });
       res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listAttendees = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await adminAssessmentsService.listAttendees(
+        req.params.id as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getAttendeeSubmission = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAssessmentsService.getAttendeeSubmission(
+        req.params.id as string,
+        req.params.studentId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getAttendeeFile = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const file = await adminAssessmentsService.getAttendeeFile(
+        req.params.id as string,
+        req.params.studentId as string,
+        req.params.fileId as string,
+      );
+      res.setHeader("Content-Type", file.mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${encodeURIComponent(file.originalName)}"`,
+      );
+      res.setHeader("Cache-Control", "private, max-age=60");
+      res.status(200).send(file.buffer);
     } catch (error) {
       next(error);
     }
