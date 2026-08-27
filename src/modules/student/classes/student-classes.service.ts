@@ -4,6 +4,7 @@ import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
   DEFAULT_CLASS_TIMEZONE,
+  dayRangeInTimeZone,
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
@@ -13,6 +14,7 @@ import {
 } from "../../../common/utils/year-level.js";
 import {
   Assessment,
+  AssessmentResource,
   AssessmentStudent,
   AttendanceRecord,
   AttendanceStatus,
@@ -21,6 +23,7 @@ import {
   Enrollment,
   Session,
   Student,
+  type AssessmentScheduleType,
 } from "../../../entities/index.js";
 import {
   assessmentScheduleWindow,
@@ -42,6 +45,8 @@ export type StudentLessonStatus =
 export type StudentLessonDto = {
   sessionId: string;
   kind: StudentLessonKind;
+  scheduleType?: AssessmentScheduleType;
+  assessmentId?: string;
   classId: string;
   subject: string;
   className: string;
@@ -67,9 +72,10 @@ export type StudentLessonDto = {
   resources: {
     id: string;
     title: string;
-    kind: "SLIDES" | "WORKSHEET" | "RECORDING" | "PAPER";
+    kind: "SLIDES" | "WORKSHEET" | "RECORDING" | "PAPER" | "DOCUMENT";
     releasedAt: string;
     released: boolean;
+    downloadable?: boolean;
   }[];
 };
 
@@ -209,16 +215,17 @@ export class StudentClassesService {
   private readonly sessions = AppDataSource.getRepository(Session);
   private readonly attendance = AppDataSource.getRepository(AttendanceRecord);
   private readonly assessments = AppDataSource.getRepository(Assessment);
+  private readonly assessmentResources =
+    AppDataSource.getRepository(AssessmentResource);
   private readonly assessmentStudents =
     AppDataSource.getRepository(AssessmentStudent);
 
   async getTimetable(userId: string) {
     const lessons = await this.listLessons(userId);
     const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date(startOfToday);
-    endOfToday.setDate(endOfToday.getDate() + 1);
+    const todayRange = dayRangeInTimeZone(now, DEFAULT_CLASS_TIMEZONE);
+    const startOfToday = todayRange.start;
+    const endOfToday = todayRange.end;
     const startOfWeek = new Date(startOfToday);
     const weekday = startOfWeek.getDay();
     const daysFromMonday = weekday === 0 ? 6 : weekday - 1;
@@ -323,7 +330,23 @@ export class StudentClassesService {
       userId,
       context,
     );
-    return [...classLessons, ...assessmentLessons].sort(
+    const fullDayExamWindows = assessmentLessons
+      .filter((lesson) => lesson.scheduleType === "FULL_DAY")
+      .map((lesson) => ({
+        startAt: new Date(lesson.startAt).getTime(),
+        endAt: new Date(lesson.endAt).getTime(),
+      }));
+    const visibleClassLessons = classLessons.filter((lesson) => {
+      const startAt = new Date(lesson.startAt).getTime();
+      const endAt = new Date(lesson.endAt).getTime();
+      return !fullDayExamWindows.some(
+        (exam) =>
+          startAt < exam.endAt &&
+          exam.startAt < endAt,
+      );
+    });
+
+    return [...visibleClassLessons, ...assessmentLessons].sort(
       (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
     );
   }
@@ -594,6 +617,19 @@ export class StudentClassesService {
       .orderBy("assessment.assessmentDate", "ASC")
       .addOrderBy("assessment.startTime", "ASC")
       .getMany();
+    const resourceRows =
+      assessments.length > 0
+        ? await this.assessmentResources.find({
+            where: { assessmentId: In(assessments.map((row) => row.id)) },
+            order: { createdAt: "ASC" },
+          })
+        : [];
+    const resourcesByAssessment = new Map<string, AssessmentResource[]>();
+    for (const resource of resourceRows) {
+      const rows = resourcesByAssessment.get(resource.assessmentId) ?? [];
+      rows.push(resource);
+      resourcesByAssessment.set(resource.assessmentId, rows);
+    }
 
     const now = new Date();
     const lessons: StudentLessonDto[] = [];
@@ -613,6 +649,7 @@ export class StudentClassesService {
           assessment.assessmentDate,
           assessment.startTime,
           assessment.durationMinutes,
+          assessment.scheduleType,
         ) ?? {
           startAt: session.startAt,
           endAt: session.endAt,
@@ -645,6 +682,8 @@ export class StudentClassesService {
       lessons.push({
         sessionId: session.id,
         kind: "assessment",
+        scheduleType: assessment.scheduleType ?? "SESSION",
+        assessmentId: assessment.id,
         classId: session.classId ?? assessment.classId ?? "",
         subject: assessment.subject,
         className: assessment.name,
@@ -667,7 +706,16 @@ export class StudentClassesService {
         isOnline: online,
         canCheckIn,
         timeZone: DEFAULT_CLASS_TIMEZONE,
-        resources: [],
+        resources: [
+          ...resourcesByAssessment.get(assessment.id)?.map((resource) => ({
+            id: resource.id,
+            title: resource.originalName,
+            kind: "DOCUMENT" as const,
+            releasedAt: resource.createdAt.toISOString(),
+            released: true,
+            downloadable: true,
+          })) ?? [],
+        ],
       });
     }
 

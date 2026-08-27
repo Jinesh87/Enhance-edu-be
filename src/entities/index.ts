@@ -52,3 +52,4 @@ export * from "./EnquiryStageHistory.js";
 export * from "./EnquiryEvent.js";
 export * from "./AssessmentSubmission.js";
 export * from "./AssessmentSubmissionFile.js";
+export * from "./AssessmentResource.js";

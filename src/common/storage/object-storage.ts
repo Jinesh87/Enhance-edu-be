@@ -120,3 +120,22 @@ export function buildExamAnswerKey(parts: {
   const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
   return `entrance-exams/${parts.assessmentId}/${parts.studentId}/${parts.submissionId}/${Date.now()}-${safe}`;
 }
+
+export function buildAssessmentSubmissionKey(parts: {
+  assessmentId: string;
+  studentId: string;
+  submissionId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `assessment-submissions/${parts.assessmentId}/${parts.studentId}/${parts.submissionId}/${Date.now()}-${safe}`;
+}
+
+export function buildAssessmentResourceKey(parts: {
+  assessmentId: string;
+  resourceId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `assessment-resources/${parts.assessmentId}/${parts.resourceId}/${Date.now()}-${safe}`;
+}

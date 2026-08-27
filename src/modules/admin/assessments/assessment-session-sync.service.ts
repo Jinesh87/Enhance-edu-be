@@ -9,6 +9,7 @@ import {
   AttendanceRecord,
   AttendanceStatus,
   Session,
+  type AssessmentScheduleType,
 } from "../../../entities/index.js";
 import { adminAssessmentsRepository } from "../assessments/admin-assessments.repository.js";
 
@@ -30,11 +31,14 @@ export function assessmentScheduleWindow(
   assessmentDate: string | Date,
   startTime: string,
   durationMinutes: number,
+  scheduleType: AssessmentScheduleType = "SESSION",
 ): { startAt: Date; endAt: Date } | null {
   const dateKey = normalizeDateKey(assessmentDate);
   if (!dateKey) return null;
   const [year, month, day] = dateKey.split("-").map(Number);
-  const [hour, minute] = startTime.split(":").map(Number);
+  const [hour, minute] = (scheduleType === "FULL_DAY" ? "00:00" : startTime)
+    .split(":")
+    .map(Number);
   if (
     !Number.isFinite(year) ||
     !Number.isFinite(month) ||
@@ -49,7 +53,10 @@ export function assessmentScheduleWindow(
     DEFAULT_CLASS_TIMEZONE,
   );
   if (Number.isNaN(startAt.getTime())) return null;
-  const duration = Math.max(durationMinutes || 60, 15);
+  const duration =
+    scheduleType === "FULL_DAY"
+      ? 1440
+      : Math.max(durationMinutes || 60, 15);
   return {
     startAt,
     endAt: new Date(startAt.getTime() + duration * 60_000),
@@ -81,6 +88,7 @@ export class AssessmentSessionSyncService {
       assessment.assessmentDate,
       assessment.startTime,
       assessment.durationMinutes,
+      assessment.scheduleType,
     );
     if (!window) return null;
 
@@ -102,7 +110,8 @@ export class AssessmentSessionSyncService {
         room,
         classroomId: assessment.classroomId,
         teacherId: assessment.teacherId,
-        gracePeriodMinutes: 25,
+        gracePeriodMinutes:
+          assessment.scheduleType === "FULL_DAY" ? 1440 : 25,
       });
     } else {
       session.classId = assessment.classId;
@@ -111,6 +120,8 @@ export class AssessmentSessionSyncService {
       session.room = room;
       session.classroomId = assessment.classroomId;
       session.teacherId = assessment.teacherId;
+      session.gracePeriodMinutes =
+        assessment.scheduleType === "FULL_DAY" ? 1440 : 25;
     }
 
     const saved = await this.sessions.save(session);

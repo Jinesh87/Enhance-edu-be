@@ -16,6 +16,7 @@ class AdminAssessmentsController {
       const status = req.query.status
         ? (String(req.query.status) as
             | "SCHEDULED"
+            | "LIVE"
             | "COMPLETED"
             | "CANCELLED"
             | "ARCHIVED"

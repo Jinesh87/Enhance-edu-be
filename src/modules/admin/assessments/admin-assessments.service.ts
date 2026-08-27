@@ -5,7 +5,7 @@ import { UserRole } from "../../../common/constants/roles.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
   DEFAULT_CLASS_TIMEZONE,
-  zonedWallTimeToUtc,
+  parseDayTime,
 } from "../../../common/utils/timezone.js";
 import { getObjectBuffer } from "../../../common/storage/object-storage.js";
 import {
@@ -19,14 +19,20 @@ import {
   Enrollment,
   Subject,
   Term,
+  Session,
   User,
+  type AssessmentScheduleType,
 } from "../../../entities/index.js";
 import { adminAssessmentsRepository } from "./admin-assessments.repository.js";
-import { assessmentSessionSyncService } from "./assessment-session-sync.service.js";
+import {
+  assessmentScheduleWindow,
+  assessmentSessionSyncService,
+} from "./assessment-session-sync.service.js";
 
 export type AssessmentInput = {
   name: string;
   kind?: "SCHOOL" | "ENTRANCE";
+  scheduleType?: AssessmentScheduleType;
   classId?: string | null;
   termId: string;
   subject: string;
@@ -56,53 +62,140 @@ function classLabel(cls: Class | null | undefined): string {
   return cls.code ? `${subject} · ${cls.code}` : subject;
 }
 
-function assessmentEndAt(
-  assessmentDate: string,
-  startTime: string,
-  durationMinutes: number,
-): Date | null {
-  const dateParts = assessmentDate.split("-").map(Number);
-  const timeParts = startTime.split(":").map(Number);
-  if (dateParts.length < 3 || timeParts.length < 2) return null;
-  const [year, month, day] = dateParts;
-  const [hour, minute] = timeParts;
-  if (
-    !Number.isFinite(year) ||
-    !Number.isFinite(month) ||
-    !Number.isFinite(day) ||
-    !Number.isFinite(hour) ||
-    !Number.isFinite(minute) ||
-    !Number.isFinite(durationMinutes)
-  ) {
-    return null;
-  }
-  const startAt = zonedWallTimeToUtc(
-    { year, month, day, hour, minute, second: 0 },
-    DEFAULT_CLASS_TIMEZONE,
-  );
-  if (Number.isNaN(startAt.getTime())) return null;
-  return new Date(startAt.getTime() + durationMinutes * 60_000);
-}
-
-function hasAssessmentEnded(
-  assessmentDate: string,
-  startTime: string,
-  durationMinutes: number,
-  now = new Date(),
-): boolean {
-  const endAt = assessmentEndAt(assessmentDate, startTime, durationMinutes);
-  if (!endAt) return false;
-  return endAt.getTime() <= now.getTime();
-}
-
 function autoStatusForTiming(
   assessmentDate: string,
   startTime: string,
   durationMinutes: number,
-): Extract<AssessmentStatus, "SCHEDULED" | "COMPLETED"> {
-  return hasAssessmentEnded(assessmentDate, startTime, durationMinutes)
-    ? "COMPLETED"
-    : "SCHEDULED";
+  scheduleType: AssessmentScheduleType = "SESSION",
+): Extract<AssessmentStatus, "SCHEDULED" | "LIVE" | "COMPLETED"> {
+  const window = assessmentScheduleWindow(
+    assessmentDate,
+    startTime,
+    durationMinutes,
+    scheduleType,
+  );
+  if (!window) return "SCHEDULED";
+  const now = Date.now();
+  if (now >= window.endAt.getTime()) return "COMPLETED";
+  if (now >= window.startAt.getTime()) return "LIVE";
+  return "SCHEDULED";
+}
+
+type ScheduleResource = {
+  termId: string | null;
+  teacherId: string | null;
+  classroomId: string | null;
+  classId: string | null;
+  room: string | null;
+  subject: string | null;
+  yearGroup: string | null;
+};
+
+type ScheduleCandidate = ScheduleResource & {
+  label: string;
+  startAt: Date;
+  endAt: Date;
+};
+
+function sameText(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const normalizedLeft = left?.trim().toLowerCase();
+  const normalizedRight = right?.trim().toLowerCase();
+  return Boolean(normalizedLeft && normalizedRight) && normalizedLeft === normalizedRight;
+}
+
+function sharedScheduleResource(
+  proposed: ScheduleResource,
+  existing: ScheduleResource,
+): string | null {
+  if (proposed.teacherId && proposed.teacherId === existing.teacherId) {
+    return "the same teacher";
+  }
+  if (
+    proposed.classroomId &&
+    proposed.classroomId === existing.classroomId
+  ) {
+    return "the same classroom";
+  }
+  if (proposed.classId && proposed.classId === existing.classId) {
+    return "the same class";
+  }
+  if (
+    proposed.termId &&
+    proposed.termId === existing.termId &&
+    sameText(proposed.yearGroup, existing.yearGroup)
+  ) {
+    return "the same class cohort";
+  }
+  if (
+    sameText(proposed.subject, existing.subject) &&
+    sameText(proposed.yearGroup, existing.yearGroup)
+  ) {
+    return "the same subject and year-group cohort";
+  }
+  if (
+    !proposed.classroomId &&
+    !existing.classroomId &&
+    sameText(proposed.room, existing.room)
+  ) {
+    return "the same room";
+  }
+  return null;
+}
+
+function overlaps(
+  proposedStart: Date,
+  proposedEnd: Date,
+  existingStart: Date,
+  existingEnd: Date,
+): boolean {
+  return (
+    proposedStart.getTime() < existingEnd.getTime() &&
+    existingStart.getTime() < proposedEnd.getTime()
+  );
+}
+
+function scheduleConflictError(
+  candidate: ScheduleCandidate,
+  existing: ScheduleCandidate,
+  resource: string,
+): AppError {
+  const field =
+    resource === "the same teacher"
+      ? "teacherId"
+      : resource === "the same classroom" || resource === "the same room"
+        ? "classroomId"
+        : "startTime";
+  const time = existing.startAt.toLocaleTimeString("en-AU", {
+    timeZone: DEFAULT_CLASS_TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return new AppError(
+    409,
+    `Assessment "${candidate.label}" overlaps ${existing.label} at ${time} because it uses ${resource}.`,
+    "ASSESSMENT_TIME_CONFLICT",
+    {
+      field,
+      conflictSubject: existing.subject?.trim() || existing.label,
+    },
+  );
+}
+
+function assertAssessmentDateWithinTerm(
+  assessmentDate: string,
+  term: Term,
+): void {
+  if (assessmentDate < term.startDate || assessmentDate > term.endDate) {
+    throw new AppError(
+      400,
+      "Assessment date is outside the selected term",
+      "ASSESSMENT_DATE_OUTSIDE_TERM",
+      { field: "assessmentDate" },
+    );
+  }
 }
 
 function toAssessmentDto(
@@ -128,6 +221,7 @@ function toAssessmentDto(
     id: assessment.id,
     name: assessment.name,
     kind: assessment.kind ?? "SCHOOL",
+    scheduleType: assessment.scheduleType ?? "SESSION",
     classId: assessment.classId,
     classLabel: classLabel(assessment.linkedClass),
     termId: assessment.termId,
@@ -153,6 +247,7 @@ function toAssessmentDto(
 
 export class AdminAssessmentsService {
   private readonly repo = adminAssessmentsRepository;
+  private readonly sessions = AppDataSource.getRepository(Session);
   private readonly classes = AppDataSource.getRepository(Class);
   private readonly terms = AppDataSource.getRepository(Term);
   private readonly classrooms = AppDataSource.getRepository(Classroom);
@@ -407,17 +502,20 @@ export class AdminAssessmentsService {
   }
 
   private async ensureAutoStatus(assessment: Assessment): Promise<Assessment> {
-    if (assessment.status !== "SCHEDULED") return assessment;
     if (
-      !hasAssessmentEnded(
-        assessment.assessmentDate,
-        assessment.startTime,
-        assessment.durationMinutes,
-      )
+      assessment.status !== "SCHEDULED" &&
+      assessment.status !== "LIVE"
     ) {
       return assessment;
     }
-    assessment.status = "COMPLETED";
+    const nextStatus = autoStatusForTiming(
+      assessment.assessmentDate,
+      assessment.startTime,
+      assessment.durationMinutes,
+      assessment.scheduleType,
+    );
+    if (assessment.status === nextStatus) return assessment;
+    assessment.status = nextStatus;
     return this.repo.save(assessment);
   }
 
@@ -425,6 +523,130 @@ export class AdminAssessmentsService {
     const scheduled = await this.repo.listScheduledForSync();
     for (const assessment of scheduled) {
       await this.ensureAutoStatus(assessment);
+    }
+  }
+
+  private async assertScheduleAvailable(
+    input: {
+      termId: string;
+      scheduleType: AssessmentScheduleType;
+      assessmentDate: string;
+      startTime: string;
+      durationMinutes: number;
+      teacherId: string | null;
+      classroomId: string | null;
+      classId: string | null;
+      room: string | null;
+      subject: string;
+      yearGroup: string;
+    },
+    excludeAssessmentId?: string,
+  ): Promise<void> {
+    const window = assessmentScheduleWindow(
+      input.assessmentDate,
+      input.startTime,
+      input.durationMinutes,
+      input.scheduleType,
+    );
+    if (!window) {
+      throw new AppError(
+        400,
+        "Assessment date and time are invalid",
+        "ASSESSMENT_SCHEDULE_INVALID",
+      );
+    }
+
+    const proposed: ScheduleCandidate = {
+      ...input,
+      termId: input.termId,
+      label: `assessment "${input.subject}"`,
+      startAt: window.startAt,
+      endAt: window.endAt,
+    };
+
+    const assessments = await this.repo.findByAssessmentDate(
+      input.assessmentDate,
+    );
+    for (const assessment of assessments) {
+      if (
+        assessment.id === excludeAssessmentId ||
+        assessment.status === "ARCHIVED" ||
+        assessment.status === "CANCELLED"
+      ) {
+        continue;
+      }
+      const existingWindow = assessmentScheduleWindow(
+        assessment.assessmentDate,
+        assessment.startTime,
+        assessment.durationMinutes,
+        assessment.scheduleType,
+      );
+      if (
+        !existingWindow ||
+        !overlaps(
+          proposed.startAt,
+          proposed.endAt,
+          existingWindow.startAt,
+          existingWindow.endAt,
+        )
+      ) {
+        continue;
+      }
+
+      const existing: ScheduleCandidate = {
+        termId: assessment.termId,
+        label: `assessment "${assessment.name}"`,
+        startAt: existingWindow.startAt,
+        endAt: existingWindow.endAt,
+        teacherId: assessment.teacherId,
+        classroomId: assessment.classroomId,
+        classId: assessment.classId,
+        room: assessment.room,
+        subject: assessment.subject,
+        yearGroup: assessment.yearGroup,
+      };
+      const resource = sharedScheduleResource(proposed, existing);
+      if (resource) throw scheduleConflictError(proposed, existing, resource);
+    }
+
+    const sessions = await this.sessions
+      .createQueryBuilder("session")
+      .leftJoinAndSelect("session.class", "class")
+      .leftJoinAndSelect("class.teacher", "classTeacher")
+      .leftJoinAndSelect("class.term", "classTerm")
+      .leftJoinAndSelect("classTerm.yearLevel", "classYearLevel")
+      .where("session.assessmentId IS NULL")
+      .andWhere("session.startAt < :endAt", { endAt: proposed.endAt })
+      .andWhere("session.endAt > :startAt", { startAt: proposed.startAt })
+      .getMany();
+
+    for (const session of sessions) {
+      const existingClass = session.class;
+      const currentClassWindow = existingClass?.dayTime
+        ? parseDayTime(existingClass.dayTime, existingClass.timeZone)
+        : null;
+      if (
+        !currentClassWindow ||
+        currentClassWindow.startAt.getTime() !== session.startAt.getTime() ||
+        currentClassWindow.endAt.getTime() !== session.endAt.getTime()
+      ) {
+        continue;
+      }
+      const existing: ScheduleCandidate = {
+        termId: existingClass?.term?.id ?? null,
+        label: `normal session "${existingClass?.subject || existingClass?.name || "class"}"`,
+        startAt: session.startAt,
+        endAt: session.endAt,
+        teacherId: existingClass?.teacher?.id ?? session.teacherId ?? null,
+        classroomId: existingClass?.classroomId ?? session.classroomId ?? null,
+        classId: session.classId,
+        room: existingClass?.room ?? session.room ?? null,
+        subject: existingClass?.subject ?? null,
+        yearGroup: existingClass?.term?.yearLevel?.name ?? null,
+      };
+      if (input.scheduleType === "FULL_DAY") continue;
+      const resource = sharedScheduleResource(proposed, existing);
+      if (resource) throw scheduleConflictError(proposed, existing, resource);
     }
   }
 
@@ -458,7 +680,19 @@ export class AdminAssessmentsService {
   async create(input: AssessmentInput) {
     const cls = await this.loadClass(input.classId ?? null);
     const term = await this.loadTerm(input.termId);
+    assertAssessmentDateWithinTerm(input.assessmentDate, term);
     const kind = input.kind === "ENTRANCE" ? "ENTRANCE" : "SCHOOL";
+    const scheduleType = input.scheduleType ?? "SESSION";
+    if (scheduleType === "FULL_DAY" && kind !== "SCHOOL") {
+      throw new AppError(
+        400,
+        "Full-day scheduling is only available for school assessments",
+        "FULL_DAY_SCHOOL_ONLY",
+      );
+    }
+    const startTime = scheduleType === "FULL_DAY" ? "00:00" : input.startTime;
+    const durationMinutes =
+      scheduleType === "FULL_DAY" ? 1440 : input.durationMinutes;
     if (kind === "ENTRANCE" && !term.isTrial) {
       throw new AppError(
         400,
@@ -477,6 +711,19 @@ export class AdminAssessmentsService {
     if (!yearGroup) {
       throw new AppError(400, "Year group is required", "YEAR_GROUP_REQUIRED");
     }
+    await this.assertScheduleAvailable({
+      termId: term.id,
+      scheduleType,
+      assessmentDate: input.assessmentDate,
+      startTime,
+      durationMinutes,
+      teacherId,
+      classroomId: classroom.classroomId,
+      classId: kind === "ENTRANCE" ? null : cls?.id ?? null,
+      room: classroom.room,
+      subject: input.subject.trim(),
+      yearGroup,
+    });
     const studentIds =
       kind === "ENTRANCE"
         ? []
@@ -494,21 +741,23 @@ export class AdminAssessmentsService {
     const created = this.repo.create({
       name: input.name.trim(),
       kind,
+      scheduleType,
       classId: kind === "ENTRANCE" ? null : cls?.id ?? null,
       termId: term.id,
       subject: input.subject.trim(),
       yearGroup,
       assessmentDate: input.assessmentDate,
-      startTime: input.startTime,
-      durationMinutes: input.durationMinutes,
+      startTime,
+      durationMinutes,
       classroomId: classroom.classroomId,
       room: classroom.room,
       teacherId,
       notes: input.notes?.trim() || null,
       status: autoStatusForTiming(
         input.assessmentDate,
-        input.startTime,
-        input.durationMinutes,
+        startTime,
+        durationMinutes,
+        scheduleType,
       ),
     });
     const saved = await this.repo.save(created);
@@ -553,19 +802,64 @@ export class AdminAssessmentsService {
     const teacherId = await this.resolveTeacher(
       input.teacherId === undefined ? assessment.teacherId : input.teacherId,
     );
+    const nextKind = input.kind ?? assessment.kind;
+    const nextScheduleType =
+      input.scheduleType ?? assessment.scheduleType ?? "SESSION";
+    if (nextScheduleType === "FULL_DAY" && nextKind !== "SCHOOL") {
+      throw new AppError(
+        400,
+        "Full-day scheduling is only available for school assessments",
+        "FULL_DAY_SCHOOL_ONLY",
+      );
+    }
+    const nextSubject = input.subject?.trim() ?? assessment.subject;
+    const nextYearGroup =
+      input.yearGroup?.trim() || assessment.yearGroup;
+    const nextAssessmentDate =
+      input.assessmentDate ?? assessment.assessmentDate;
+    const nextStartTime =
+      nextScheduleType === "FULL_DAY"
+        ? "00:00"
+        : input.startTime ??
+          (assessment.scheduleType === "FULL_DAY"
+            ? "09:00"
+            : assessment.startTime);
+    const nextDurationMinutes =
+      nextScheduleType === "FULL_DAY"
+        ? 1440
+        : input.durationMinutes ??
+          (assessment.scheduleType === "FULL_DAY"
+            ? 60
+            : assessment.durationMinutes);
+    assertAssessmentDateWithinTerm(nextAssessmentDate, term);
+    await this.assertScheduleAvailable(
+      {
+        termId: term.id,
+        scheduleType: nextScheduleType,
+        assessmentDate: nextAssessmentDate,
+        startTime: nextStartTime,
+        durationMinutes: nextDurationMinutes,
+        teacherId,
+        classroomId: classroom.classroomId,
+        classId: nextKind === "ENTRANCE" ? null : cls?.id ?? null,
+        room: classroom.room,
+        subject: nextSubject,
+        yearGroup: nextYearGroup,
+      },
+      id,
+    );
     const existingStudentIds = await this.repo.findSittingStudentIds(id);
     assessment.name = input.name?.trim() ?? assessment.name;
-    if (input.kind) assessment.kind = input.kind;
+    assessment.kind = nextKind;
+    assessment.scheduleType = nextScheduleType;
     assessment.classId =
       assessment.kind === "ENTRANCE" ? null : cls?.id ?? null;
     assessment.termId = term.id;
-    assessment.subject = input.subject?.trim() ?? assessment.subject;
-    assessment.yearGroup = input.yearGroup?.trim() || assessment.yearGroup;
-    assessment.assessmentDate =
-      input.assessmentDate ?? assessment.assessmentDate;
-    assessment.startTime = input.startTime ?? assessment.startTime;
-    assessment.durationMinutes =
-      input.durationMinutes ?? assessment.durationMinutes;
+    assessment.subject = nextSubject;
+    assessment.yearGroup = nextYearGroup;
+    assessment.assessmentDate = nextAssessmentDate;
+    assessment.startTime = nextStartTime;
+    assessment.durationMinutes = nextDurationMinutes;
     assessment.classroomId = classroom.classroomId;
     assessment.room = classroom.room;
     assessment.teacherId = teacherId;
@@ -576,6 +870,7 @@ export class AdminAssessmentsService {
       assessment.assessmentDate,
       assessment.startTime,
       assessment.durationMinutes,
+      assessment.scheduleType,
     );
 
     const studentIds =

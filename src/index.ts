@@ -6,6 +6,7 @@ import {
   ensureAssessmentSessionSchema,
   ensureAuditSchema,
   ensureEnquiryConstraints,
+  repairLegacyClassScheduleTimezones,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
 import { connectRedis } from "./config/redis.js";
@@ -21,6 +22,7 @@ async function bootstrap() {
   await ensureAssessmentSessionSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");
+  await repairLegacyClassScheduleTimezones();
   await seedEnquiryCatalogue();
   await ensureEnquiryConstraints();
 

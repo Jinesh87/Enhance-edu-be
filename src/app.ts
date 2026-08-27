@@ -12,6 +12,7 @@ import settingsRouter from "./modules/settings/settings.routes.js";
 import studentAttendanceRouter from "./modules/student/attendance/student-attendance.routes.js";
 import teacherAttendanceRouter from "./modules/teacher/attendance/teacher-attendance.routes.js";
 import teacherClassRouter from "./modules/teacher/class/teacher-class.routes.js";
+import teacherAssessmentResourcesRouter from "./modules/teacher/assessments/teacher-assessment-resources.routes.js";
 import adminAttendanceRouter from "./modules/admin/attendance/admin-attendance.routes.js";
 import adminTasksRouter from "./modules/admin/tasks/admin-tasks.routes.js";
 import adminSubjectsRouter from "./modules/admin/subjects/admin-subjects.routes.js";
@@ -64,6 +65,7 @@ attendanceRouter.use(authenticate);
 attendanceRouter.use(studentAttendanceRouter);
 attendanceRouter.use(teacherAttendanceRouter);
 attendanceRouter.use(teacherClassRouter);
+attendanceRouter.use(teacherAssessmentResourcesRouter);
 attendanceRouter.use(adminAttendanceRouter);
 
 app.use("/api/attendance", attendanceRouter);

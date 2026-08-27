@@ -1,4 +1,6 @@
-export const DEFAULT_CLASS_TIMEZONE = "Australia/Sydney";
+import { env } from "../../config/env.js";
+
+export const DEFAULT_CLASS_TIMEZONE = env.APP_TIMEZONE;
 
 export type WallClock = {
   year: number;
@@ -97,6 +99,36 @@ export function calendarDateInTimeZone(
   const month = String(parts.month).padStart(2, "0");
   const day = String(parts.day).padStart(2, "0");
   return `${parts.year}-${month}-${day}`;
+}
+
+export function dayRangeInTimeZone(
+  date: Date,
+  timeZone?: string | null,
+): { start: Date; end: Date } {
+  const tz = resolveIanaTimeZone(timeZone);
+  const dateKey = calendarDateInTimeZone(date, tz);
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const start = zonedWallTimeToUtc(
+    { year, month, day, hour: 0, minute: 0, second: 0 },
+    tz,
+  );
+  const nextDay = new Date(Date.UTC(year, month - 1, day + 1, 12));
+  const nextDateKey = calendarDateInTimeZone(nextDay, "UTC");
+  const [nextYear, nextMonth, nextDayOfMonth] = nextDateKey
+    .split("-")
+    .map(Number);
+  const end = zonedWallTimeToUtc(
+    {
+      year: nextYear,
+      month: nextMonth,
+      day: nextDayOfMonth,
+      hour: 0,
+      minute: 0,
+      second: 0,
+    },
+    tz,
+  );
+  return { start, end };
 }
 
 export function formatInTimeZone(
