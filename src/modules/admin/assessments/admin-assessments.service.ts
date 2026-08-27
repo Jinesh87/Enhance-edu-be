@@ -19,6 +19,7 @@ import {
   User,
 } from "../../../entities/index.js";
 import { adminAssessmentsRepository } from "./admin-assessments.repository.js";
+import { assessmentSessionSyncService } from "./assessment-session-sync.service.js";
 
 export type AssessmentInput = {
   name: string;
@@ -493,6 +494,7 @@ export class AdminAssessmentsService {
     });
     const saved = await this.repo.save(created);
     await this.repo.replaceStudents(saved.id, studentIds);
+    await assessmentSessionSyncService.syncFromAssessment(saved.id);
     return this.getById(saved.id);
   }
 
@@ -558,6 +560,7 @@ export class AdminAssessmentsService {
 
     await this.repo.save(assessment);
     await this.repo.replaceStudents(id, studentIds);
+    await assessmentSessionSyncService.syncFromAssessment(id);
     return this.getById(id);
   }
 
@@ -568,6 +571,7 @@ export class AdminAssessmentsService {
     }
     assessment.status = "ARCHIVED";
     await this.repo.save(assessment);
+    await assessmentSessionSyncService.syncFromAssessment(id);
     return this.enrichDto(assessment, false);
   }
 
@@ -576,6 +580,7 @@ export class AdminAssessmentsService {
     if (!assessment) {
       throw new AppError(404, "Assessment not found", "ASSESSMENT_NOT_FOUND");
     }
+    // Session.assessmentId has ON DELETE CASCADE; delete assessment sitting+row.
     await this.repo.deleteById(id);
   }
 }

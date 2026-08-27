@@ -103,6 +103,7 @@ export class AdminClassesRepository {
     });
 
     for (const session of sessions) {
+      if (!session.classId) continue;
       if (!graceByClassId.has(session.classId)) {
         graceByClassId.set(session.classId, session.gracePeriodMinutes);
       }
@@ -250,7 +251,9 @@ export class AdminClassesRepository {
 
           const sessionsToRemove: Session[] = [];
           for (const s of existingSessions) {
-            const tz = classTzById.get(s.classId);
+            const tz = s.classId
+              ? classTzById.get(s.classId)
+              : undefined;
             const sessionDateStr = calendarDateInTimeZone(s.startAt, tz);
             const todayDateString = calendarDateInTimeZone(now, tz);
             if (
@@ -436,11 +439,13 @@ export class AdminClassesRepository {
 
       const remainingSessionKeys = new Set<string>();
       for (const s of existingSessions) {
-        const tz = classTzById.get(s.classId);
+        const tz = s.classId ? classTzById.get(s.classId) : undefined;
         const sessionDateStr = calendarDateInTimeZone(s.startAt, tz);
         const todayDateString = calendarDateInTimeZone(now, tz);
         if (sessionDateStr < todayDateString || lockedSessionIds.has(s.id)) {
-          remainingSessionKeys.add(`${s.classId}|${s.startAt.getTime()}`);
+          remainingSessionKeys.add(
+            `${s.classId}|${s.startAt.getTime()}`,
+          );
         }
       }
 
@@ -485,6 +490,7 @@ export class AdminClassesRepository {
       if (sessionsToCreate.length > 0) {
         const savedSessions = await sessionRepo.save(sessionsToCreate);
         for (const s of savedSessions) {
+          if (!s.classId) continue;
           const enrolments = await classStudentRepo.find({
             where: { classId: s.classId },
           });

@@ -4,6 +4,8 @@ import { MarkManualRollInput } from "../../shared/attendance/attendance.types.js
 import { generateAttendanceQr } from "../../shared/attendance/attendance-qr.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { Session } from "../../../entities/Session.js";
+import { AssessmentStudent } from "../../../entities/AssessmentStudent.js";
+import { AppDataSource } from "../../../config/data-source.js";
 import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
 
 export class TeacherAttendanceService {
@@ -20,7 +22,11 @@ export class TeacherAttendanceService {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
 
-    if (role !== UserRole.SUPER_ADMIN && session.class.teacher?.id !== userId) {
+    if (role === UserRole.SUPER_ADMIN) return session;
+
+    const classTeacherId = session.class?.teacher?.id ?? null;
+    const assessmentTeacherId = session.assessment?.teacherId ?? null;
+    if (classTeacherId !== userId && assessmentTeacherId !== userId) {
       throw new AppError(
         403,
         "You are not authorized to manage this session",
@@ -38,7 +44,8 @@ export class TeacherAttendanceService {
 
     const opensAt = session.startAt.getTime();
 
-    const graceClosesAt = session.startAt.getTime() + gracePeriodMinutes * 60_000;
+    const graceClosesAt =
+      session.startAt.getTime() + gracePeriodMinutes * 60_000;
     const classEndsAt = session.endAt.getTime();
 
     if (now < opensAt) {
@@ -80,15 +87,13 @@ export class TeacherAttendanceService {
       );
     }
 
-    const isEnrolled = await this.repo.isStudentEnrolled(
-      session.classId,
-      studentId,
-    );
-
-    if (!isEnrolled) {
+    const allowed = await this.isStudentAllowedOnSession(session, studentId);
+    if (!allowed) {
       throw new AppError(
         400,
-        "Student is not enrolled in this class",
+        session.assessmentId
+          ? "Student is not on this assessment roll"
+          : "Student is not enrolled in this class",
         "STUDENT_NOT_ENROLLED",
       );
     }
@@ -117,11 +122,27 @@ export class TeacherAttendanceService {
     await syncTrialEnquiryOnAttendance({
       studentUserId: studentId,
       status,
-      termId: session.class?.term?.id ?? null,
+      termId: session.class?.term?.id ?? session.assessment?.termId ?? null,
       actorId: markedByUserId,
     });
 
     return record;
+  }
+
+  private async isStudentAllowedOnSession(
+    session: Session,
+    studentId: string,
+  ): Promise<boolean> {
+    if (session.assessmentId) {
+      const sitting = await AppDataSource.getRepository(
+        AssessmentStudent,
+      ).findOne({
+        where: { assessmentId: session.assessmentId, studentId },
+      });
+      return Boolean(sitting);
+    }
+    if (!session.classId) return false;
+    return this.repo.isStudentEnrolled(session.classId, studentId);
   }
 }
 

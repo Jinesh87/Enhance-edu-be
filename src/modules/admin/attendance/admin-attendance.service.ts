@@ -73,7 +73,7 @@ export class AdminAttendanceService {
     let mappedExceptions = uniqueExceptions.map((e) => ({
       id: e.id,
       studentName: e.student.fullName,
-      sessionName: `${e.session.class.code} - ${e.session.class.name}`,
+      sessionName: `${e.session.class?.code ?? "EXAM"} - ${e.session.class?.name ?? e.session.assessment?.name ?? "Session"}`,
       scannedAt: e.scannedAt,
       reasonFlagged: e.reasonFlagged,
       deviceSignal: e.deviceSignal,
@@ -91,7 +91,7 @@ export class AdminAttendanceService {
     let mappedAbsences = unresolvedAbsences.map((ua) => ({
       id: ua.id,
       studentName: ua.student.fullName,
-      sessionName: `${ua.session.class.code} - ${ua.session.class.name}`,
+      sessionName: `${ua.session.class?.code ?? "EXAM"} - ${ua.session.class?.name ?? ua.session.assessment?.name ?? "Session"}`,
       graceClosed: new Date(
         ua.session.startAt.getTime() + ua.session.gracePeriodMinutes * 60000,
       ).toISOString(),
@@ -208,6 +208,13 @@ export class AdminAttendanceService {
         }
 
         // Validate student eligibility
+        if (!newSession.classId) {
+          throw new AppError(
+            400,
+            "Student is not enrolled in the class for the reassigned session",
+            "STUDENT_NOT_ELIGIBLE",
+          );
+        }
         const isEligible = await enrollmentsRepo.findOne({
           where: { classId: newSession.classId, studentId: scan.studentId },
         });
@@ -381,7 +388,7 @@ export class AdminAttendanceService {
   async getAbsenceReviewDraft(attendanceId: string) {
     const record = await this.requireUnresolvedAbsence(attendanceId);
     const guardians = await this.findGuardiansForStudentUser(record.studentId);
-    const sessionName = `${record.session.class.code} — ${record.session.class.name}`;
+    const sessionName = `${record.session.class?.code ?? "EXAM"} — ${record.session.class?.name ?? record.session.assessment?.name ?? "Session"}`;
     const graceClosed = new Date(
       record.session.startAt.getTime() +
         record.session.gracePeriodMinutes * 60_000,
@@ -449,7 +456,7 @@ export class AdminAttendanceService {
       );
     }
 
-    const sessionName = `${record.session.class.code} — ${record.session.class.name}`;
+    const sessionName = `${record.session.class?.code ?? "EXAM"} — ${record.session.class?.name ?? record.session.assessment?.name ?? "Session"}`;
     const sessionWhen = new Date(
       record.session.startAt.getTime() +
         record.session.gracePeriodMinutes * 60_000,
@@ -547,7 +554,7 @@ export class AdminAttendanceService {
     return {
       id: record.id,
       studentName: record.student.fullName,
-      sessionName: `${record.session.class.code} - ${record.session.class.name}`,
+      sessionName: `${record.session.class?.code ?? "EXAM"} - ${record.session.class?.name ?? record.session.assessment?.name ?? "Session"}`,
       graceClosed: new Date(
         record.session.startAt.getTime() +
           record.session.gracePeriodMinutes * 60000,
@@ -754,16 +761,17 @@ export class AdminAttendanceService {
     deviceSignal: string | null,
   ) {
     const cls = row.session.class;
-    const term = cls.term;
+    const assessment = row.session.assessment;
+    const term = cls?.term;
     return {
       id: row.id,
       sessionId: row.sessionId,
       studentName: row.student.fullName,
-      subject: cls.subject || cls.name,
-      termName: term?.name ?? cls.termName ?? null,
+      subject: cls?.subject || cls?.name || assessment?.subject || "Session",
+      termName: term?.name ?? cls?.termName ?? null,
       year: term?.academicYear?.year ?? null,
       yearLevel: term?.yearLevel?.name ?? null,
-      sessionName: `${cls.code} · ${cls.name}`,
+      sessionName: `${cls?.code ?? "EXAM"} · ${cls?.name ?? assessment?.name ?? "Session"}`,
       sessionStartAt: row.session.startAt,
       status: row.status,
       scannedAt: row.scannedAt,
