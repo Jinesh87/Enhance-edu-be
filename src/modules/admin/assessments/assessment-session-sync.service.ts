@@ -8,7 +8,6 @@ import {
   Assessment,
   AttendanceRecord,
   AttendanceStatus,
-  Class,
   Session,
 } from "../../../entities/index.js";
 import { adminAssessmentsRepository } from "../assessments/admin-assessments.repository.js";
@@ -63,7 +62,6 @@ export function assessmentScheduleWindow(
  */
 export class AssessmentSessionSyncService {
   private readonly sessions = AppDataSource.getRepository(Session);
-  private readonly classes = AppDataSource.getRepository(Class);
   private readonly attendance = AppDataSource.getRepository(AttendanceRecord);
   private readonly assessments = adminAssessmentsRepository;
 
@@ -86,7 +84,6 @@ export class AssessmentSessionSyncService {
     );
     if (!window) return null;
 
-    const classId = await this.resolveClassId(assessment);
     const room =
       assessment.room?.trim() ||
       assessment.classroom?.name?.trim() ||
@@ -99,19 +96,21 @@ export class AssessmentSessionSyncService {
     if (!session) {
       session = this.sessions.create({
         assessmentId: assessment.id,
-        classId,
+        classId: assessment.classId,
         startAt: window.startAt,
         endAt: window.endAt,
         room,
         classroomId: assessment.classroomId,
+        teacherId: assessment.teacherId,
         gracePeriodMinutes: 25,
       });
     } else {
-      session.classId = classId;
+      session.classId = assessment.classId;
       session.startAt = window.startAt;
       session.endAt = window.endAt;
       session.room = room;
       session.classroomId = assessment.classroomId;
+      session.teacherId = assessment.teacherId;
     }
 
     const saved = await this.sessions.save(session);
@@ -138,47 +137,6 @@ export class AssessmentSessionSyncService {
       if (row.status === "ARCHIVED" || row.status === "CANCELLED") continue;
       await this.syncFromAssessment(row.id);
     }
-  }
-
-  private async resolveClassId(assessment: Assessment): Promise<string | null> {
-    if (assessment.classId) return assessment.classId;
-
-    const subjectKey = assessment.subject.trim().toLowerCase();
-    if (!subjectKey) return null;
-
-    const candidates = await this.classes.find({
-      where: assessment.teacherId
-        ? { teacher: { id: assessment.teacherId } }
-        : {},
-      relations: {
-        teacher: true,
-        term: { academicYear: true, yearLevel: true },
-      },
-    });
-
-    const yearKey = (assessment.yearGroup ?? "").trim().toLowerCase();
-    const termYear = assessment.term?.academicYear?.year;
-
-    const scored = candidates
-      .map((cls) => {
-        const subject = (cls.subject || cls.name || "").trim().toLowerCase();
-        if (subject !== subjectKey) return null;
-        let score = 1;
-        if (assessment.termId && cls.term?.id === assessment.termId) score += 4;
-        const level = (cls.term?.yearLevel?.name ?? "").trim().toLowerCase();
-        if (yearKey && level === yearKey) score += 2;
-        if (
-          termYear != null &&
-          cls.term?.academicYear?.year === termYear
-        ) {
-          score += 2;
-        }
-        return { id: cls.id, score };
-      })
-      .filter((row): row is { id: string; score: number } => Boolean(row))
-      .sort((a, b) => b.score - a.score);
-
-    return scored[0]?.id ?? null;
   }
 
   private async seedAttendance(sessionId: string, assessmentId: string) {

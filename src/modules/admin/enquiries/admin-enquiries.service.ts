@@ -36,6 +36,21 @@ const ENQUIRY_RELATIONS = {
   trialTerm: { academicYear: true, yearLevel: true },
 } as const;
 
+type EnquiryListFilters = {
+  page?: number;
+  limit?: number;
+  search?: string;
+  stageId?: string;
+  ownerUserId?: string;
+  sourceId?: string;
+  status?: string;
+  idleDays?: number;
+  yearLevel?: number;
+  termId?: string;
+  subject?: string;
+  sort?: string;
+};
+
 type Named = { id: string; name: string };
 
 function named(row: { id: string; name: string } | null | undefined): Named | null {
@@ -115,6 +130,7 @@ function toEnquiryDto(
     trialEndDate: enquiry.trialTerm?.endDate ?? enquiry.trialEndDate,
     trialConfirmed: enquiry.trialConfirmed,
     trialAttended: enquiry.trialAttended,
+    examAttended: enquiry.examAttended,
     examSession: enquiry.examSession,
     examMark: enquiry.examMark == null ? null : Number(enquiry.examMark),
     examThreshold:
@@ -210,17 +226,7 @@ export class AdminEnquiriesService {
     };
   }
 
-  async list(filters: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    stageId?: string;
-    ownerUserId?: string;
-    sourceId?: string;
-    status?: string;
-    idleDays?: number;
-    sort?: string;
-  }) {
+  async list(filters: EnquiryListFilters) {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 10;
 
@@ -231,7 +237,10 @@ export class AdminEnquiriesService {
       .leftJoinAndSelect("enquiry.owner", "owner")
       .leftJoinAndSelect("enquiry.currentStage", "stage")
       .leftJoinAndSelect("enquiry.lostReason", "lostReason")
-      .leftJoinAndSelect("enquiry.competitor", "competitor");
+      .leftJoinAndSelect("enquiry.competitor", "competitor")
+      .leftJoinAndSelect("enquiry.trialTerm", "trialTerm")
+      .leftJoinAndSelect("trialTerm.academicYear", "trialAcademicYear")
+      .leftJoinAndSelect("trialTerm.yearLevel", "trialYearLevel");
 
     this.applyFilters(qb, filters);
 
@@ -256,12 +265,7 @@ export class AdminEnquiriesService {
     return { enquiries: rows.map((row) => toEnquiryDto(row)), total };
   }
 
-  async board(filters: {
-    search?: string;
-    ownerUserId?: string;
-    sourceId?: string;
-    idleDays?: number;
-  }) {
+  async board(filters: EnquiryListFilters) {
     const stages = await this.stages.find({
       where: { retiredAt: IsNull() },
       order: { sortOrder: "ASC" },
@@ -278,6 +282,9 @@ export class AdminEnquiriesService {
       .leftJoinAndSelect("enquiry.currentStage", "stage")
       .leftJoinAndSelect("enquiry.lostReason", "lostReason")
       .leftJoinAndSelect("enquiry.competitor", "competitor")
+      .leftJoinAndSelect("enquiry.trialTerm", "trialTerm")
+      .leftJoinAndSelect("trialTerm.academicYear", "trialAcademicYear")
+      .leftJoinAndSelect("trialTerm.yearLevel", "trialYearLevel")
       .andWhere("stage.kind = :open", { open: EnquiryStageKind.OPEN });
 
     this.applyFilters(qb, { ...filters, status: "open" });
@@ -776,6 +783,82 @@ export class AdminEnquiriesService {
     return this.getById(id);
   }
 
+  /**
+   * When a trial student submits entrance-exam answers, mark exam attended and
+   * move the enquiry to the entrance_exam stage (from trial_attended).
+   */
+  async markExamAttendedForStudent(
+    studentUserId: string,
+    options: {
+      termId: string;
+      examSession?: string | null;
+      actorId?: string | null;
+    },
+  ) {
+    if (!studentUserId || !options.termId) return;
+
+    const student = await AppDataSource.getRepository(Student).findOne({
+      where: { userId: studentUserId },
+    });
+    if (!student) return;
+
+    const enrollments = await AppDataSource.getRepository(Enrollment).find({
+      where: { studentId: student.id, termId: options.termId },
+      relations: { term: true, guardian: true },
+    });
+    const trialEnrollments = enrollments.filter((row) => row.term?.isTrial);
+    if (trialEnrollments.length === 0) return;
+
+    const emails = [
+      ...new Set(
+        trialEnrollments
+          .map((row) => row.guardian?.email?.trim().toLowerCase())
+          .filter((email): email is string => Boolean(email)),
+      ),
+    ];
+    if (emails.length === 0) return;
+
+    const studentName = student.fullName.trim().toLowerCase();
+    const rows = await this.enquiries
+      .createQueryBuilder("enquiry")
+      .leftJoinAndSelect("enquiry.currentStage", "stage")
+      .where("LOWER(enquiry.guardianEmail) IN (:...emails)", { emails })
+      .andWhere("enquiry.closedAt IS NULL")
+      .andWhere("enquiry.trialTermId = :termId", { termId: options.termId })
+      .andWhere("stage.code IN (:...codes)", {
+        codes: ["trial_attended", "entrance_exam"],
+      })
+      .getMany();
+
+    const actorId = options.actorId ?? null;
+    for (const enquiry of rows) {
+      const enquiryName = enquiry.studentFullName?.trim().toLowerCase() ?? "";
+      if (enquiryName && enquiryName !== studentName) continue;
+
+      if (enquiry.examAttended && enquiry.currentStage?.code === "entrance_exam") {
+        if (options.examSession && !enquiry.examSession) {
+          enquiry.examSession = options.examSession;
+          await this.enquiries.save(enquiry);
+        }
+        continue;
+      }
+
+      const fromStageId = enquiry.currentStageId;
+      const stage = await this.requireStageByCode("entrance_exam");
+      enquiry.examAttended = true;
+      if (options.examSession) enquiry.examSession = options.examSession.trim();
+      this.assignStage(enquiry, stage);
+      await this.writeHistory(enquiry.id, fromStageId, stage.id, actorId);
+      await this.enquiries.save(enquiry);
+      await this.writeEvent(
+        enquiry.id,
+        "EXAM",
+        "Entrance exam answers submitted",
+        actorId,
+      );
+    }
+  }
+
   async recordExam(
     id: string,
     input: {
@@ -977,14 +1060,7 @@ export class AdminEnquiriesService {
 
   private applyFilters(
     qb: ReturnType<typeof this.enquiries.createQueryBuilder>,
-    filters: {
-      search?: string;
-      stageId?: string;
-      ownerUserId?: string;
-      sourceId?: string;
-      status?: string;
-      idleDays?: number;
-    },
+    filters: EnquiryListFilters,
   ) {
     const status = filters.status || "open";
     if (status === "open") {
@@ -1018,6 +1094,19 @@ export class AdminEnquiriesService {
     if (filters.idleDays != null) {
       qb.andWhere("enquiry.lastStageChangedAt <= :idleSince", {
         idleSince: new Date(Date.now() - filters.idleDays * 86_400_000),
+      });
+    }
+    if (filters.yearLevel != null) {
+      qb.andWhere("enquiry.yearLevel = :yearLevel", {
+        yearLevel: filters.yearLevel,
+      });
+    }
+    if (filters.termId) {
+      qb.andWhere("enquiry.trialTermId = :termId", { termId: filters.termId });
+    }
+    if (filters.subject) {
+      qb.andWhere("enquiry.subjectOfInterest ILIKE :subject", {
+        subject: `%${filters.subject}%`,
       });
     }
   }

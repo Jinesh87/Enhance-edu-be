@@ -1,14 +1,14 @@
-import { In } from "typeorm";
+import { In, IsNull } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   calendarDateFromDayTime,
   isHolidayForTerm,
 } from "../../../common/utils/holidays.js";
 import {
-  calendarDateInTimeZone,
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
+import { sessionHasStarted, sessionStatus } from "../../../common/utils/session-status.js";
 import {
   Class,
   User,
@@ -98,7 +98,7 @@ export class AdminClassesRepository {
     }
 
     const sessions = await AppDataSource.getRepository(Session).find({
-      where: { classId: In(classIds) },
+      where: { classId: In(classIds), assessmentId: IsNull() },
       select: { classId: true, gracePeriodMinutes: true },
     });
 
@@ -166,10 +166,20 @@ export class AdminClassesRepository {
     classroomId: string | null,
     room: string | null,
   ): Promise<void> {
-    await AppDataSource.getRepository(Session).update(
-      { classId },
-      { classroomId, room },
-    );
+    const now = Date.now();
+    const sessions = await AppDataSource.getRepository(Session).find({
+      where: { classId, assessmentId: IsNull() },
+    });
+    for (const session of sessions) {
+      const start = session.startAt.getTime();
+      const end = session.endAt.getTime();
+      // Only sync room onto sessions that have not started yet.
+      if (Number.isFinite(start) && now < start) {
+        session.classroomId = classroomId;
+        session.room = room;
+        await AppDataSource.getRepository(Session).save(session);
+      }
+    }
   }
 
   async remove(cls: Class): Promise<void> {
@@ -210,24 +220,18 @@ export class AdminClassesRepository {
       });
 
       const now = new Date();
-      const classTzById = new Map(
-        existingClasses.map((c) => [
-          c.id,
-          resolveIanaTimeZone(c.timeZone),
-        ]),
-      );
 
       const existingClassMap = new Map<string, Class>();
       existingClasses.forEach((c) => existingClassMap.set(c.code, c));
 
-      // Collect existing sessions and protect locked/past sessions
+      // Collect existing sessions and protect live/ended ones
       const existingClassIds = existingClasses.map((c) => c.id);
       let existingSessions: Session[] = [];
       const lockedSessionIds = new Set<string>();
 
       if (existingClassIds.length > 0) {
         existingSessions = await sessionRepo.find({
-          where: { classId: In(existingClassIds) },
+          where: { classId: In(existingClassIds), assessmentId: IsNull() },
         });
 
         if (existingSessions.length > 0) {
@@ -249,15 +253,12 @@ export class AdminClassesRepository {
           scanEvents.forEach((r) => lockedSessionIds.add(r.sessionId));
           tasks.forEach((r) => lockedSessionIds.add(r.sessionId));
 
+          const nowMs = now.getTime();
           const sessionsToRemove: Session[] = [];
           for (const s of existingSessions) {
-            const tz = s.classId
-              ? classTzById.get(s.classId)
-              : undefined;
-            const sessionDateStr = calendarDateInTimeZone(s.startAt, tz);
-            const todayDateString = calendarDateInTimeZone(now, tz);
+            // Keep live/ended (already started) and any session with activity.
             if (
-              sessionDateStr < todayDateString ||
+              sessionHasStarted(s.startAt, nowMs) ||
               lockedSessionIds.has(s.id)
             ) {
               continue;
@@ -267,15 +268,6 @@ export class AdminClassesRepository {
 
           if (sessionsToRemove.length > 0) {
             await sessionRepo.remove(sessionsToRemove);
-          }
-
-          if (typeof gracePeriodMinutes === "number") {
-            await sessionRepo
-              .createQueryBuilder()
-              .update(Session)
-              .set({ gracePeriodMinutes })
-              .where("classId IN (:...existingClassIds)", { existingClassIds })
-              .execute();
           }
         }
       }
@@ -343,6 +335,19 @@ export class AdminClassesRepository {
         }
 
         if (existingClass) {
+          const previousTeacherId = existingClass.teacher?.id ?? null;
+          const nextTeacherId = teacher?.id ?? null;
+          if (previousTeacherId && previousTeacherId !== nextTeacherId) {
+            const nowMs = now.getTime();
+            for (const s of existingSessions) {
+              if (s.classId !== existingClass.id) continue;
+              if (!sessionHasStarted(s.startAt, nowMs)) continue;
+              if (s.teacherId) continue;
+              s.teacherId = previousTeacherId;
+              await sessionRepo.save(s);
+            }
+          }
+
           existingClass.name =
             input.name?.trim() || `${input.subject ?? "Subject"} Class`;
           existingClass.room = (input.room ?? "").trim();
@@ -431,21 +436,17 @@ export class AdminClassesRepository {
         }
       }
 
-      // Generate future sessions for saved classes
+      // Generate upcoming sessions for saved classes
       const sessionsToCreate: Session[] = [];
-      for (const c of savedClasses) {
-        classTzById.set(c.id, resolveIanaTimeZone(c.timeZone));
-      }
 
+      const nowMs = now.getTime();
       const remainingSessionKeys = new Set<string>();
       for (const s of existingSessions) {
-        const tz = s.classId ? classTzById.get(s.classId) : undefined;
-        const sessionDateStr = calendarDateInTimeZone(s.startAt, tz);
-        const todayDateString = calendarDateInTimeZone(now, tz);
-        if (sessionDateStr < todayDateString || lockedSessionIds.has(s.id)) {
-          remainingSessionKeys.add(
-            `${s.classId}|${s.startAt.getTime()}`,
-          );
+        if (
+          sessionHasStarted(s.startAt, nowMs) ||
+          lockedSessionIds.has(s.id)
+        ) {
+          remainingSessionKeys.add(`${s.classId}|${s.startAt.getTime()}`);
         }
       }
 
@@ -457,12 +458,9 @@ export class AdminClassesRepository {
           const { startAt, endAt } = times;
 
           const sessionKey = `${c.id}|${startAt.getTime()}`;
-          const tz = resolveIanaTimeZone(c.timeZone);
-          const sessionDateStr = calendarDateInTimeZone(startAt, tz);
-          const todayDateString = calendarDateInTimeZone(now, tz);
-
+          // Only generate occurrences that have not started yet.
           if (
-            sessionDateStr >= todayDateString &&
+            sessionStatus(startAt, endAt, nowMs) === "UPCOMING" &&
             !remainingSessionKeys.has(sessionKey)
           ) {
             const termGrace =

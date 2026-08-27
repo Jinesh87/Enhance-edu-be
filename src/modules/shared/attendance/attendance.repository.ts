@@ -36,7 +36,7 @@ export class AttendanceRepository {
       relations: {
         class: {
           teacher: true,
-          term: true,
+          term: { academicYear: true, yearLevel: true },
         },
         assessment: {
           teacher: true,
@@ -80,7 +80,7 @@ export class AttendanceRepository {
     if (classIds.length === 0) return;
 
     const existingSessions = await this.sessions.find({
-      where: { classId: In(classIds) },
+      where: { classId: In(classIds), assessmentId: IsNull() },
       select: { classId: true },
     });
     const classesWithSessions = new Set(
@@ -151,6 +151,7 @@ export class AttendanceRepository {
 
     const where: any = {
       classId: In(classIds),
+      assessmentId: IsNull(),
     };
     if (since) {
       where.endAt = MoreThanOrEqual(since);

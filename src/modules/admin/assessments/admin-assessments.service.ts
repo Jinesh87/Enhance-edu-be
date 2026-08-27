@@ -7,8 +7,11 @@ import {
   DEFAULT_CLASS_TIMEZONE,
   zonedWallTimeToUtc,
 } from "../../../common/utils/timezone.js";
+import { getObjectBuffer } from "../../../common/storage/object-storage.js";
 import {
   Assessment,
+  AssessmentSubmission,
+  AssessmentSubmissionFile,
   type AssessmentStatus,
   Class,
   ClassStudent,
@@ -23,6 +26,7 @@ import { assessmentSessionSyncService } from "./assessment-session-sync.service.
 
 export type AssessmentInput = {
   name: string;
+  kind?: "SCHOOL" | "ENTRANCE";
   classId?: string | null;
   termId: string;
   subject: string;
@@ -123,10 +127,12 @@ function toAssessmentDto(
   return {
     id: assessment.id,
     name: assessment.name,
+    kind: assessment.kind ?? "SCHOOL",
     classId: assessment.classId,
     classLabel: classLabel(assessment.linkedClass),
     termId: assessment.termId,
     termLabel: termLabel(assessment.term),
+    isTrialTerm: Boolean(assessment.term?.isTrial),
     subject: assessment.subject,
     yearGroup: assessment.yearGroup,
     assessmentDate: assessment.assessmentDate,
@@ -429,6 +435,7 @@ export class AdminAssessmentsService {
     termId?: string;
     subject?: string;
     yearGroup?: string;
+    kind?: "SCHOOL" | "ENTRANCE" | "ALL";
     status?: AssessmentStatus | "ACTIVE";
   }) {
     await this.syncPastScheduled();
@@ -451,6 +458,14 @@ export class AdminAssessmentsService {
   async create(input: AssessmentInput) {
     const cls = await this.loadClass(input.classId ?? null);
     const term = await this.loadTerm(input.termId);
+    const kind = input.kind === "ENTRANCE" ? "ENTRANCE" : "SCHOOL";
+    if (kind === "ENTRANCE" && !term.isTrial) {
+      throw new AppError(
+        400,
+        "Entrance exams must use a trial term",
+        "TRIAL_TERM_REQUIRED",
+      );
+    }
     const classroom = await this.resolveClassroom(
       input.classroomId ?? cls?.classroomId ?? cls?.classroom?.id,
       input.room ?? cls?.room,
@@ -462,20 +477,24 @@ export class AdminAssessmentsService {
     if (!yearGroup) {
       throw new AppError(400, "Year group is required", "YEAR_GROUP_REQUIRED");
     }
-    const studentIds = await this.resolveStudentIds(
-      cls?.id ?? null,
-      input.studentIds,
-      undefined,
-      {
-        subject: input.subject.trim(),
-        termId: term.id,
-        yearGroup,
-      },
-    );
+    const studentIds =
+      kind === "ENTRANCE"
+        ? []
+        : await this.resolveStudentIds(
+            cls?.id ?? null,
+            input.studentIds,
+            undefined,
+            {
+              subject: input.subject.trim(),
+              termId: term.id,
+              yearGroup,
+            },
+          );
 
     const created = this.repo.create({
       name: input.name.trim(),
-      classId: cls?.id ?? null,
+      kind,
+      classId: kind === "ENTRANCE" ? null : cls?.id ?? null,
       termId: term.id,
       subject: input.subject.trim(),
       yearGroup,
@@ -515,6 +534,16 @@ export class AdminAssessmentsService {
       input.classId === undefined ? assessment.classId : input.classId || null;
     const cls = await this.loadClass(nextClassId);
     const term = await this.loadTerm(input.termId ?? assessment.termId);
+    if (input.kind === "ENTRANCE" || assessment.kind === "ENTRANCE") {
+      const nextKind = input.kind ?? assessment.kind;
+      if (nextKind === "ENTRANCE" && !term.isTrial) {
+        throw new AppError(
+          400,
+          "Entrance exams must use a trial term",
+          "TRIAL_TERM_REQUIRED",
+        );
+      }
+    }
     const classroom = await this.resolveClassroom(
       input.classroomId === undefined
         ? assessment.classroomId
@@ -526,7 +555,9 @@ export class AdminAssessmentsService {
     );
     const existingStudentIds = await this.repo.findSittingStudentIds(id);
     assessment.name = input.name?.trim() ?? assessment.name;
-    assessment.classId = cls?.id ?? null;
+    if (input.kind) assessment.kind = input.kind;
+    assessment.classId =
+      assessment.kind === "ENTRANCE" ? null : cls?.id ?? null;
     assessment.termId = term.id;
     assessment.subject = input.subject?.trim() ?? assessment.subject;
     assessment.yearGroup = input.yearGroup?.trim() || assessment.yearGroup;
@@ -547,16 +578,19 @@ export class AdminAssessmentsService {
       assessment.durationMinutes,
     );
 
-    const studentIds = await this.resolveStudentIds(
-      cls?.id ?? null,
-      input.studentIds,
-      existingStudentIds,
-      {
-        subject: assessment.subject,
-        termId: assessment.termId,
-        yearGroup: assessment.yearGroup,
-      },
-    );
+    const studentIds =
+      assessment.kind === "ENTRANCE"
+        ? []
+        : await this.resolveStudentIds(
+            cls?.id ?? null,
+            input.studentIds,
+            existingStudentIds,
+            {
+              subject: assessment.subject,
+              termId: assessment.termId,
+              yearGroup: assessment.yearGroup,
+            },
+          );
 
     await this.repo.save(assessment);
     await this.repo.replaceStudents(id, studentIds);
@@ -582,6 +616,149 @@ export class AdminAssessmentsService {
     }
     // Session.assessmentId has ON DELETE CASCADE; delete assessment sitting+row.
     await this.repo.deleteById(id);
+  }
+
+  async listAttendees(assessmentId: string) {
+    const assessment = await this.repo.findById(assessmentId);
+    if (!assessment) {
+      throw new AppError(404, "Assessment not found", "ASSESSMENT_NOT_FOUND");
+    }
+
+    const submissions = await AppDataSource.getRepository(
+      AssessmentSubmission,
+    ).find({
+      where: {
+        assessmentId,
+        status: In(["SUBMITTED", "PROCESSING", "READY", "FAILED"]),
+      },
+      relations: { student: true, files: true },
+      order: { submittedAt: "DESC", createdAt: "DESC" },
+    });
+
+    const attendees = submissions
+      .filter((row) => row.student)
+      .map((row) => ({
+        studentId: row.studentId,
+        fullName: row.student.fullName,
+        preferredName: row.student.preferredName,
+        submissionId: row.id,
+        status: row.status,
+        submittedAt: row.submittedAt?.toISOString() ?? null,
+        fileCount: row.files?.length ?? 0,
+        hasExtractedText: Boolean(row.extractedText?.trim()),
+        ocrError: row.ocrError,
+      }))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    return {
+      assessment: {
+        id: assessment.id,
+        name: assessment.name,
+        kind: assessment.kind ?? "SCHOOL",
+        subject: assessment.subject,
+        yearGroup: assessment.yearGroup,
+        termLabel: termLabel(assessment.term),
+        assessmentDate: assessment.assessmentDate,
+      },
+      attendees,
+    };
+  }
+
+  async getAttendeeSubmission(assessmentId: string, studentId: string) {
+    const assessment = await this.repo.findById(assessmentId);
+    if (!assessment) {
+      throw new AppError(404, "Assessment not found", "ASSESSMENT_NOT_FOUND");
+    }
+
+    const submission = await AppDataSource.getRepository(
+      AssessmentSubmission,
+    ).findOne({
+      where: { assessmentId, studentId },
+      relations: { student: true, files: true },
+    });
+
+    if (!submission || submission.status === "DRAFT") {
+      throw new AppError(
+        404,
+        "No submitted answers found for this student",
+        "SUBMISSION_NOT_FOUND",
+      );
+    }
+
+    const files = (submission.files ?? [])
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((file) => ({
+        id: file.id,
+        originalName: file.originalName,
+        mimeType: file.mimeType,
+        byteSize: file.byteSize,
+        sortOrder: file.sortOrder,
+        extractedText: file.extractedText,
+        kind: file.mimeType.startsWith("image/")
+          ? ("image" as const)
+          : file.mimeType === "application/pdf"
+            ? ("pdf" as const)
+            : ("other" as const),
+      }));
+
+    return {
+      assessment: {
+        id: assessment.id,
+        name: assessment.name,
+        subject: assessment.subject,
+      },
+      student: {
+        id: submission.studentId,
+        fullName: submission.student?.fullName ?? "Student",
+        preferredName: submission.student?.preferredName ?? null,
+      },
+      submission: {
+        id: submission.id,
+        status: submission.status,
+        submittedAt: submission.submittedAt?.toISOString() ?? null,
+        extractedText: submission.extractedText,
+        ocrError: submission.ocrError,
+        files,
+      },
+    };
+  }
+
+  async getAttendeeFile(
+    assessmentId: string,
+    studentId: string,
+    fileId: string,
+  ): Promise<{ buffer: Buffer; mimeType: string; originalName: string }> {
+    const file = await AppDataSource.getRepository(
+      AssessmentSubmissionFile,
+    ).findOne({
+      where: { id: fileId },
+      relations: { submission: true },
+    });
+
+    if (
+      !file ||
+      !file.submission ||
+      file.submission.assessmentId !== assessmentId ||
+      file.submission.studentId !== studentId
+    ) {
+      throw new AppError(404, "File not found", "FILE_NOT_FOUND");
+    }
+
+    if (file.submission.status === "DRAFT") {
+      throw new AppError(404, "File not found", "FILE_NOT_FOUND");
+    }
+
+    try {
+      const buffer = await getObjectBuffer(file.storageKey);
+      return {
+        buffer,
+        mimeType: file.mimeType,
+        originalName: file.originalName,
+      };
+    } catch {
+      throw new AppError(404, "Stored file is missing", "FILE_MISSING");
+    }
   }
 }
 

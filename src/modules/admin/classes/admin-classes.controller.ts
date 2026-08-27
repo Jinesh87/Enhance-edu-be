@@ -50,6 +50,43 @@ class AdminClassesController {
     }
   };
 
+  listGroupSessions = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await adminClassesService.listGroupSessions(
+        String(req.query.subject ?? ""),
+        String(req.query.term ?? ""),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateSession = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const session = await adminClassesService.updateSession(
+        req.params.id as string,
+        req.body,
+      );
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "EDITED",
+        recordType: "session",
+        recordId: session.id,
+        recordLabel: session.class?.subject || session.class?.name || "Session",
+        after: {
+          startAt: session.startAt,
+          endAt: session.endAt,
+          room: session.room,
+          teacherId: session.class?.teacher?.id ?? null,
+        },
+      });
+      res.status(200).json({ session });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   create = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const classItem = await adminClassesService.create(req.body);

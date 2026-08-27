@@ -12,6 +12,7 @@ import {
 import { Assessment } from "./Assessment.js";
 import { Class } from "./Class.js";
 import { Classroom } from "./Classroom.js";
+import { User } from "./User.js";
 
 @Entity("sessions")
 export class Session {
@@ -53,6 +54,15 @@ export class Session {
   @ManyToOne(() => Classroom, { nullable: true, onDelete: "SET NULL" })
   @JoinColumn({ name: "classroomId" })
   classroom!: Relation<Classroom> | null;
+
+  /** Optional override for this occurrence only; falls back to class.teacher. */
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  teacherId!: string | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "teacherId" })
+  teacher!: Relation<User> | null;
 
   @Column({ type: "int", default: 25 })
   gracePeriodMinutes!: number;

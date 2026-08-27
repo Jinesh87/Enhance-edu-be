@@ -34,7 +34,11 @@ adminEnquiriesRouter.get(
   validate(listEnquiriesQuerySchema, "query"),
   adminEnquiriesController.list,
 );
-adminEnquiriesRouter.get("/board", adminEnquiriesController.board);
+adminEnquiriesRouter.get(
+  "/board",
+  validate(listEnquiriesQuerySchema, "query"),
+  adminEnquiriesController.board,
+);
 adminEnquiriesRouter.post(
   "/bulk",
   validate(bulkEnquiriesSchema),

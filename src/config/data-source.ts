@@ -8,6 +8,8 @@ import {
   ClassStudent,
   Assessment,
   AssessmentStudent,
+  AssessmentSubmission,
+  AssessmentSubmissionFile,
   AttendanceRecord,
   ScanEvent,
   Task,
@@ -67,6 +69,50 @@ export async function ensureAuditSchema() {
   await bootstrap.destroy();
 }
 
+/**
+ * Backward-compatible schema bootstrap for assessment roll sessions.
+ *
+ * The project currently has no tracked TypeORM migrations, so this keeps
+ * existing production databases compatible when synchronize is disabled.
+ */
+export async function ensureAssessmentSessionSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  const [{ sessionsTable, assessmentsTable }] = await bootstrap.query(`
+    SELECT
+      to_regclass('public.sessions') IS NOT NULL AS "sessionsTable",
+      to_regclass('public.assessments') IS NOT NULL AS "assessmentsTable"
+  `);
+  if (!sessionsTable || !assessmentsTable) {
+    await bootstrap.destroy();
+    return;
+  }
+  await bootstrap.query(`
+    ALTER TABLE sessions
+      ALTER COLUMN "classId" DROP NOT NULL;
+    ALTER TABLE sessions
+      ADD COLUMN IF NOT EXISTS "assessmentId" uuid;
+    ALTER TABLE sessions
+      ADD COLUMN IF NOT EXISTS "teacherId" uuid;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_sessions_assessmentId"
+      ON sessions ("assessmentId")
+      WHERE "assessmentId" IS NOT NULL;
+    DO $$ BEGIN
+      ALTER TABLE sessions
+        ADD CONSTRAINT "FK_sessions_assessmentId"
+        FOREIGN KEY ("assessmentId") REFERENCES assessments(id)
+        ON DELETE CASCADE;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+  await bootstrap.destroy();
+}
+
 export async function ensureEnquiryConstraints() {
   if (!AppDataSource.isInitialized) return;
   await AppDataSource.query(`
@@ -105,6 +151,8 @@ export const AppDataSource = new DataSource({
     ClassStudent,
     Assessment,
     AssessmentStudent,
+    AssessmentSubmission,
+    AssessmentSubmissionFile,
     AttendanceRecord,
     ScanEvent,
     Task,
