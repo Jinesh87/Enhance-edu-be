@@ -52,9 +52,23 @@ class AdminClassesController {
 
   listGroupSessions = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const query = req.query as {
+        subject: string;
+        term: string;
+        page?: number;
+        limit?: number;
+        status?: "ALL" | "UPCOMING" | "LIVE" | "ENDED" | "SCHEDULED";
+        search?: string | null;
+      };
       const data = await adminClassesService.listGroupSessions(
-        String(req.query.subject ?? ""),
-        String(req.query.term ?? ""),
+        query.subject,
+        query.term,
+        {
+          page: query.page,
+          limit: query.limit,
+          status: query.status,
+          search: query.search ?? "",
+        },
       );
       res.status(200).json(data);
     } catch (error) {

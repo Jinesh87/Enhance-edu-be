@@ -580,7 +580,21 @@ export class AdminClassesService {
     await this.repo.remove(cls);
   }
 
-  async listGroupSessions(subject: string, term: string) {
+  async listGroupSessions(
+    subject: string,
+    term: string,
+    options: {
+      page?: number;
+      limit?: number;
+      status?: "ALL" | SessionStatus;
+      search?: string;
+    } = {},
+  ) {
+    const page = Math.max(1, Number(options.page) || 1);
+    const limit = Math.min(500, Math.max(1, Number(options.limit) || 10));
+    const statusFilter = options.status ?? "ALL";
+    const search = (options.search ?? "").trim().toLowerCase();
+
     const subjectNeedle = subject.trim().toLowerCase();
     const termNeedle = term.trim().toLowerCase();
     const { classes } = await this.repo.findAll();
@@ -600,6 +614,9 @@ export class AdminClassesService {
         termId: null,
         classes: [],
         sessions: [],
+        total: 0,
+        page,
+        limit,
       };
     }
 
@@ -618,50 +635,71 @@ export class AdminClassesService {
       order: { startAt: "ASC" },
     });
 
-    if (sessionRows.length > 0) {
-      return {
-        subject: subject.trim(),
-        term: term.trim(),
-        termId,
-        classes: classDtos,
-        sessions: sessionRows.map((row) => this.toSessionRow(row)),
-      };
+    let sessions =
+      sessionRows.length > 0
+        ? sessionRows.map((row) => this.toSessionRow(row))
+        : matching
+            .map((cls) => {
+              const times = parseDayTime(cls.dayTime, cls.timeZone);
+              if (!times) return null;
+              return {
+                id: cls.id,
+                classId: cls.id,
+                startAt: times.startAt.toISOString(),
+                endAt: times.endAt.toISOString(),
+                room: cls.room || cls.classroom?.name || null,
+                classroomId: cls.classroomId ?? cls.classroom?.id ?? null,
+                teacherId: cls.teacher?.id ?? null,
+                teacher: cls.teacher
+                  ? { id: cls.teacher.id, fullName: cls.teacher.fullName }
+                  : null,
+                gracePeriodMinutes: 25,
+                status: "SCHEDULED" as SessionStatus,
+                isWeeklySlot: true,
+                class: toClassDto(cls),
+              };
+            })
+            .filter((row): row is NonNullable<typeof row> => row !== null)
+            .sort(
+              (a, b) =>
+                new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+            );
+
+    if (statusFilter !== "ALL") {
+      sessions = sessions.filter((row) => row.status === statusFilter);
     }
 
-    // Fallback: weekly class slots before sessions are generated
-    const fallback = matching
-      .map((cls) => {
-        const times = parseDayTime(cls.dayTime, cls.timeZone);
-        if (!times) return null;
-        return {
-          id: cls.id,
-          classId: cls.id,
-          startAt: times.startAt.toISOString(),
-          endAt: times.endAt.toISOString(),
-          room: cls.room || cls.classroom?.name || null,
-          classroomId: cls.classroomId ?? cls.classroom?.id ?? null,
-          teacherId: cls.teacher?.id ?? null,
-          teacher: cls.teacher
-            ? { id: cls.teacher.id, fullName: cls.teacher.fullName }
-            : null,
-          gracePeriodMinutes: 25,
-          status: "SCHEDULED" as SessionStatus,
-          isWeeklySlot: true,
-          class: toClassDto(cls),
-        };
-      })
-      .filter((row): row is NonNullable<typeof row> => row !== null)
-      .sort(
-        (a, b) =>
-          new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-      );
+    if (search) {
+      sessions = sessions.filter((row) => {
+        const haystack = [
+          row.class?.subject,
+          row.class?.lesson,
+          row.class?.code,
+          row.teacher?.fullName,
+          row.class?.teacher?.fullName,
+          row.room,
+          row.class?.room,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(search);
+      });
+    }
+
+    const total = sessions.length;
+    const start = (page - 1) * limit;
+    const pageRows = sessions.slice(start, start + limit);
 
     return {
       subject: subject.trim(),
       term: term.trim(),
       termId,
       classes: classDtos,
-      sessions: fallback,
+      sessions: pageRows,
+      total,
+      page,
+      limit,
     };
   }
 
