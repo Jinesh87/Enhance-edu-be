@@ -52,7 +52,7 @@ class AdminClassesController {
 
   listGroupSessions = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const query = req.query as {
+      const query = req.query as unknown as {
         subject: string;
         term: string;
         page?: number;
