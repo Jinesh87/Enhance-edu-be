@@ -1,6 +1,5 @@
 import { AppError } from "../../../common/errors/AppError.js";
 import {
-  DEFAULT_CLASS_TIMEZONE,
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
@@ -31,7 +30,7 @@ function toClassDto(cls: Class, gracePeriodMinutes?: number | null) {
     subject: cls.subject,
     lesson: cls.lesson,
     dayTime: cls.dayTime,
-    timeZone: DEFAULT_CLASS_TIMEZONE,
+    timeZone: resolveIanaTimeZone(cls.timeZone),
     capacity: cls.capacity,
     contentGroup: cls.contentGroup,
     term: cls.term
@@ -409,7 +408,7 @@ export class AdminClassesService {
       subject: resolved.subject?.trim() || null,
       lesson: resolved.lesson?.trim() || null,
       dayTime: resolved.dayTime?.trim() || null,
-      timeZone: DEFAULT_CLASS_TIMEZONE,
+      timeZone: resolveIanaTimeZone(resolved.timeZone),
       capacity: resolved.capacity ?? 20,
       contentGroup: resolved.contentGroup?.trim() || null,
       termName: resolved.term?.trim() || "Term 3 2026",
@@ -501,7 +500,7 @@ export class AdminClassesService {
     if (input.dayTime !== undefined)
       cls.dayTime = input.dayTime?.trim() || null;
     if (input.timeZone !== undefined)
-      cls.timeZone = DEFAULT_CLASS_TIMEZONE;
+      cls.timeZone = resolveIanaTimeZone(input.timeZone);
     if (input.capacity !== undefined) cls.capacity = input.capacity;
     if (input.contentGroup !== undefined)
       cls.contentGroup = input.contentGroup?.trim() || null;

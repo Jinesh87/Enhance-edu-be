@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { DataSource, In, IsNull } from "typeorm";
+import { DataSource } from "typeorm";
 import {
   RefreshToken,
   User,
@@ -39,10 +39,6 @@ import {
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
-import {
-  DEFAULT_CLASS_TIMEZONE,
-  parseDayTime,
-} from "../common/utils/timezone.js";
 
 function postgresOptions() {
   return {
@@ -147,59 +143,6 @@ export async function ensureAssessmentSessionSchema() {
       ADD COLUMN IF NOT EXISTS "markNotes" text;
   `);
   await bootstrap.destroy();
-}
-
-/**
- * Repairs class schedules created with the browser's local timezone before
- * the school timetable was standardized on Sydney wall-clock time.
- *
- * Session rows are retained and their timestamps are corrected in place so
- * existing attendance and task history keeps the same session identity.
- */
-export async function repairLegacyClassScheduleTimezones() {
-  if (!AppDataSource.isInitialized) return;
-
-  const classRepo = AppDataSource.getRepository(Class);
-  const legacyClasses = await classRepo.find({
-    where: { timeZone: In(["Asia/Calcutta", "Asia/Kolkata"]) },
-  });
-  if (legacyClasses.length === 0) return;
-
-  await AppDataSource.transaction(async (manager) => {
-    const transactionClasses = manager.getRepository(Class);
-    const transactionSessions = manager.getRepository(Session);
-
-    for (const legacyClass of legacyClasses) {
-      const current = await transactionClasses.findOneBy({
-        id: legacyClass.id,
-      });
-      if (!current) continue;
-
-      const schedule = parseDayTime(
-        current.dayTime,
-        DEFAULT_CLASS_TIMEZONE,
-      );
-      current.timeZone = DEFAULT_CLASS_TIMEZONE;
-      await transactionClasses.save(current);
-
-      if (!schedule) continue;
-      const sessions = await transactionSessions.find({
-        where: {
-          classId: current.id,
-          assessmentId: IsNull(),
-        },
-      });
-      for (const session of sessions) {
-        session.startAt = schedule.startAt;
-        session.endAt = schedule.endAt;
-        session.room = current.room || null;
-        session.classroomId = current.classroomId;
-      }
-      if (sessions.length > 0) {
-        await transactionSessions.save(sessions);
-      }
-    }
-  });
 }
 
 export async function ensureEnquiryConstraints() {
