@@ -1,4 +1,4 @@
-import { ILike, Not } from "typeorm";
+import { ILike, In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   Assessment,
@@ -26,7 +26,7 @@ export class AdminAssessmentsRepository {
     if (filters.yearGroup) where.yearGroup = filters.yearGroup;
     if (filters.kind && filters.kind !== "ALL") where.kind = filters.kind;
     if (filters.status === "ACTIVE" || !filters.status) {
-      where.status = Not("ARCHIVED");
+      where.status = In(["SCHEDULED", "LIVE"]);
     } else {
       where.status = filters.status;
     }
@@ -67,15 +67,22 @@ export class AdminAssessmentsRepository {
     });
   }
 
+  findByAssessmentDate(assessmentDate: string): Promise<Assessment[]> {
+    return this.assessments.find({
+      where: { assessmentDate },
+    });
+  }
+
   listScheduledForSync(): Promise<Assessment[]> {
     return this.assessments.find({
-      where: { status: "SCHEDULED" },
+      where: { status: In(["SCHEDULED", "LIVE"]) },
       select: {
         id: true,
         assessmentDate: true,
         startTime: true,
         durationMinutes: true,
         status: true,
+        scheduleType: true,
       },
     });
   }

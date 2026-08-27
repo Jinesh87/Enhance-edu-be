@@ -89,6 +89,8 @@ export class SharedAttendanceService {
     return {
       session: {
         kind: "assessment" as const,
+        assessmentId: assessment.id,
+        scheduleType: assessment.scheduleType ?? "SESSION",
         className: assessment.name,
         classCode: "EXAM",
         room: session.room ?? assessment.room ?? assessment.classroom?.name ?? "",

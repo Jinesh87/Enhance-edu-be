@@ -1,5 +1,8 @@
 import { AppDataSource } from "../../../config/data-source.js";
-import { DEFAULT_CLASS_TIMEZONE } from "../../../common/utils/timezone.js";
+import {
+  DEFAULT_CLASS_TIMEZONE,
+  dayRangeInTimeZone,
+} from "../../../common/utils/timezone.js";
 import { Session } from "../../../entities/index.js";
 import { assessmentSessionSyncService } from "../../admin/assessments/assessment-session-sync.service.js";
 import { teacherClassRepository } from "./teacher-class.repository.js";
@@ -12,6 +15,9 @@ function mapSessionDto(session: Session) {
   return {
     id: session.id,
     kind: isAssessment ? ("assessment" as const) : ("class" as const),
+    scheduleType: isAssessment
+      ? assessment?.scheduleType ?? "SESSION"
+      : undefined,
     assessmentId: session.assessmentId ?? null,
     classId: session.classId ?? "assessment",
     className: isAssessment
@@ -37,12 +43,13 @@ export class TeacherClassService {
     const classes = await this.repo.findClassesByTeacherId(teacherId);
     const classIds = classes.map((classItem) => classItem.id);
 
-    const since = new Date();
-    since.setHours(0, 0, 0, 0);
-    const until = new Date();
-    until.setHours(23, 59, 59, 999);
-    const tomorrow = new Date(since);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const todayRange = dayRangeInTimeZone(
+      new Date(),
+      DEFAULT_CLASS_TIMEZONE,
+    );
+    const since = todayRange.start;
+    const until = new Date(todayRange.end.getTime() - 1);
+    const tomorrow = todayRange.end;
 
     const classSessions =
       classIds.length > 0
@@ -62,8 +69,22 @@ export class TeacherClassService {
       teacherId,
       tomorrow,
     );
+    const fullDayAssessmentSessions =
+      await this.findFullDayAssessmentSessions(since, until);
+    const fullDayWeekAssessmentSessions =
+      await this.findFullDayAssessmentSessions(tomorrow);
+    const visibleClassSessions = classSessions.filter(
+      (session) => !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions),
+    );
+    const visibleClassWeekSessions = classWeekSessions.filter(
+      (session) =>
+        !this.isSupersededByFullDayExam(
+          session,
+          fullDayWeekAssessmentSessions,
+        ),
+    );
 
-    const activeSessions = [...classSessions, ...assessmentSessions]
+    const activeSessions = [...visibleClassSessions, ...assessmentSessions]
       .filter((session, index, all) => {
         const first = all.findIndex((row) => row.id === session.id);
         return first === index;
@@ -73,7 +94,7 @@ export class TeacherClassService {
           new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
       );
 
-    const weekSessions = [...classWeekSessions, ...assessmentWeekSessions]
+    const weekSessions = [...visibleClassWeekSessions, ...assessmentWeekSessions]
       .filter((session, index, all) => {
         const first = all.findIndex((row) => row.id === session.id);
         return first === index && !activeSessions.some((a) => a.id === session.id);
@@ -118,6 +139,42 @@ export class TeacherClassService {
     }
 
     return qb.orderBy("session.startAt", "ASC").getMany();
+  }
+
+  private async findFullDayAssessmentSessions(
+    since?: Date,
+    until?: Date,
+  ): Promise<Session[]> {
+    const qb = this.sessions
+      .createQueryBuilder("session")
+      .innerJoinAndSelect("session.assessment", "assessment")
+      .where("assessment.scheduleType = :scheduleType", {
+        scheduleType: "FULL_DAY",
+      })
+      .andWhere("assessment.status NOT IN (:...excluded)", {
+        excluded: ["ARCHIVED", "CANCELLED"],
+      })
+      .andWhere("session.assessmentId IS NOT NULL");
+
+    if (since) {
+      qb.andWhere("session.endAt >= :since", { since });
+    }
+    if (until) {
+      qb.andWhere("session.startAt <= :until", { until });
+    }
+
+    return qb.getMany();
+  }
+
+  private isSupersededByFullDayExam(
+    session: Session,
+    fullDayAssessmentSessions: Session[],
+  ): boolean {
+    return fullDayAssessmentSessions.some(
+      (exam) =>
+        session.startAt.getTime() < exam.endAt.getTime() &&
+        exam.startAt.getTime() < session.endAt.getTime(),
+    );
   }
 }
 

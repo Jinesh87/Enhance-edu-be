@@ -5,6 +5,7 @@ import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AttendanceStatus } from "../../../entities/AttendanceRecord.js";
 import {
   Assessment,
+  AssessmentStudent,
   AssessmentSubmission,
   AssessmentSubmissionFile,
   AttendanceRecord,
@@ -15,7 +16,7 @@ import {
   Student,
 } from "../../../entities/index.js";
 import {
-  buildExamAnswerKey,
+  buildAssessmentSubmissionKey,
   deleteObject,
   putObject,
 } from "../../../common/storage/object-storage.js";
@@ -176,7 +177,7 @@ class StudentEntranceExamsService {
       where: {
         kind: "ENTRANCE",
         termId: In(eligibleTermIds),
-        status: In(["SCHEDULED", "COMPLETED"]),
+        status: In(["SCHEDULED", "LIVE", "COMPLETED"]),
       },
       relations: { term: true },
       order: { assessmentDate: "ASC", startTime: "ASC" },
@@ -283,6 +284,41 @@ class StudentEntranceExamsService {
     return assessment;
   }
 
+  private async assertCanAccessAssessment(
+    studentUserId: string,
+    assessmentId: string,
+  ): Promise<Assessment> {
+    await this.requireStudent(studentUserId);
+    const assessment = await this.assessments.findOne({
+      where: { id: assessmentId },
+      relations: { term: true },
+    });
+    if (
+      !assessment ||
+      assessment.status === "ARCHIVED" ||
+      assessment.status === "CANCELLED"
+    ) {
+      throw new AppError(
+        404,
+        "Assessment not found",
+        "ASSESSMENT_NOT_FOUND",
+      );
+    }
+    const sitting = await AppDataSource.getRepository(
+      AssessmentStudent,
+    ).findOne({
+      where: { assessmentId, studentId: studentUserId },
+    });
+    if (!sitting) {
+      throw new AppError(
+        403,
+        "You are not on this assessment roll",
+        "NOT_ENROLLED",
+      );
+    }
+    return assessment;
+  }
+
   async getSubmission(studentUserId: string, assessmentId: string) {
     const assessment = await this.assertCanAccessExam(
       studentUserId,
@@ -310,19 +346,59 @@ class StudentEntranceExamsService {
     return { submission: toSubmissionDto(submission, assessment) };
   }
 
+  async getAssessmentSubmission(studentUserId: string, assessmentId: string) {
+    const assessment = await this.assertCanAccessAssessment(
+      studentUserId,
+      assessmentId,
+    );
+    const submission = await this.getOrCreateDraft(
+      assessmentId,
+      studentUserId,
+    );
+    return { submission: toSubmissionDto(submission, assessment) };
+  }
+
   async uploadFiles(
     studentUserId: string,
     assessmentId: string,
     uploads: UploadedExamFile[],
   ) {
-    if (uploads.length === 0) {
-      throw new AppError(400, "Choose at least one file", "NO_FILES");
-    }
     const assessment = await this.assertCanAccessExam(
       studentUserId,
       assessmentId,
     );
-    const submission = await this.getOrCreateDraft(assessmentId, studentUserId);
+    return this.uploadFilesForAssessment(
+      assessment,
+      studentUserId,
+      uploads,
+    );
+  }
+
+  async uploadAssessmentFiles(
+    studentUserId: string,
+    assessmentId: string,
+    uploads: UploadedExamFile[],
+  ) {
+    const assessment = await this.assertCanAccessAssessment(
+      studentUserId,
+      assessmentId,
+    );
+    return this.uploadFilesForAssessment(
+      assessment,
+      studentUserId,
+      uploads,
+    );
+  }
+
+  private async uploadFilesForAssessment(
+    assessment: Assessment,
+    studentUserId: string,
+    uploads: UploadedExamFile[],
+  ) {
+    if (uploads.length === 0) {
+      throw new AppError(400, "Choose at least one file", "NO_FILES");
+    }
+    const submission = await this.getOrCreateDraft(assessment.id, studentUserId);
     if (submission.status !== "DRAFT") {
       throw new AppError(
         400,
@@ -355,8 +431,8 @@ class StudentEntranceExamsService {
         throw new AppError(400, "Each file must be under 15MB", "FILE_TOO_LARGE");
       }
 
-      const key = buildExamAnswerKey({
-        assessmentId,
+      const key = buildAssessmentSubmissionKey({
+        assessmentId: assessment.id,
         studentId: studentUserId,
         submissionId: submission.id,
         fileName: upload.originalName,
@@ -415,6 +491,29 @@ class StudentEntranceExamsService {
     return { ok: true };
   }
 
+  async removeAssessmentFile(
+    studentUserId: string,
+    assessmentId: string,
+    fileId: string,
+  ) {
+    await this.assertCanAccessAssessment(studentUserId, assessmentId);
+    const submission = await this.submissions.findOne({
+      where: { assessmentId, studentId: studentUserId },
+    });
+    if (!submission || submission.status !== "DRAFT") {
+      throw new AppError(400, "Cannot remove files now", "NOT_EDITABLE");
+    }
+    const file = await this.files.findOne({
+      where: { id: fileId, submissionId: submission.id },
+    });
+    if (!file) {
+      throw new AppError(404, "File not found", "FILE_NOT_FOUND");
+    }
+    await deleteObject(file.storageKey);
+    await this.files.remove(file);
+    return { ok: true };
+  }
+
   async submit(studentUserId: string, assessmentId: string) {
     const assessment = await this.assertCanAccessExam(
       studentUserId,
@@ -440,6 +539,37 @@ class StudentEntranceExamsService {
 
     await this.markExamAttended(studentUserId, assessment.termId, assessment);
 
+    await enqueueOcrJob(submission.id);
+
+    const refreshed = await this.submissions.findOneOrFail({
+      where: { id: submission.id },
+      relations: { files: true },
+    });
+    return { submission: toSubmissionDto(refreshed, assessment) };
+  }
+
+  async submitAssessment(studentUserId: string, assessmentId: string) {
+    const assessment = await this.assertCanAccessAssessment(
+      studentUserId,
+      assessmentId,
+    );
+    const submission = await this.submissions.findOne({
+      where: { assessmentId, studentId: studentUserId },
+      relations: { files: true },
+    });
+    if (!submission) {
+      throw new AppError(400, "Upload answers before submitting", "NO_SUBMISSION");
+    }
+    if (submission.status !== "DRAFT") {
+      throw new AppError(400, "Already submitted", "ALREADY_SUBMITTED");
+    }
+    if (!submission.files?.length) {
+      throw new AppError(400, "Upload at least one answer file", "NO_FILES");
+    }
+
+    submission.status = "SUBMITTED";
+    submission.submittedAt = new Date();
+    await this.submissions.save(submission);
     await enqueueOcrJob(submission.id);
 
     const refreshed = await this.submissions.findOneOrFail({

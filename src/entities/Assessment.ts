@@ -15,9 +15,11 @@ import { Classroom } from "./Classroom.js";
 import { Term } from "./Term.js";
 import { User } from "./User.js";
 import { AssessmentStudent } from "./AssessmentStudent.js";
+import { AssessmentResource } from "./AssessmentResource.js";
 
 export const ASSESSMENT_STATUSES = [
   "SCHEDULED",
+  "LIVE",
   "COMPLETED",
   "CANCELLED",
   "ARCHIVED",
@@ -28,6 +30,10 @@ export type AssessmentStatus = (typeof ASSESSMENT_STATUSES)[number];
 export const ASSESSMENT_KINDS = ["SCHOOL", "ENTRANCE"] as const;
 export type AssessmentKind = (typeof ASSESSMENT_KINDS)[number];
 
+export const ASSESSMENT_SCHEDULE_TYPES = ["SESSION", "FULL_DAY"] as const;
+export type AssessmentScheduleType =
+  (typeof ASSESSMENT_SCHEDULE_TYPES)[number];
+
 @Entity("assessments")
 export class Assessment {
   @PrimaryGeneratedColumn("uuid")
@@ -36,6 +42,9 @@ export class Assessment {
   @Column({ type: "varchar", length: 20, default: "SCHOOL" })
   @Index()
   kind!: AssessmentKind;
+
+  @Column({ type: "varchar", length: 20, default: "SESSION" })
+  scheduleType!: AssessmentScheduleType;
 
   @Column({ type: "varchar", length: 160 })
   name!: string;
@@ -107,6 +116,9 @@ export class Assessment {
 
   @OneToMany(() => AssessmentStudent, (row) => row.assessment)
   students!: Relation<AssessmentStudent>[];
+
+  @OneToMany(() => AssessmentResource, (row) => row.assessment)
+  resources!: Relation<AssessmentResource>[];
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

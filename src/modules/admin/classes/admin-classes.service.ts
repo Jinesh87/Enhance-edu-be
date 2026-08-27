@@ -1,5 +1,9 @@
 import { AppError } from "../../../common/errors/AppError.js";
-import { parseDayTime, resolveIanaTimeZone } from "../../../common/utils/timezone.js";
+import {
+  DEFAULT_CLASS_TIMEZONE,
+  parseDayTime,
+  resolveIanaTimeZone,
+} from "../../../common/utils/timezone.js";
 import {
   sessionStatus,
   type SessionStatus,
@@ -27,7 +31,7 @@ function toClassDto(cls: Class, gracePeriodMinutes?: number | null) {
     subject: cls.subject,
     lesson: cls.lesson,
     dayTime: cls.dayTime,
-    timeZone: resolveIanaTimeZone(cls.timeZone),
+    timeZone: DEFAULT_CLASS_TIMEZONE,
     capacity: cls.capacity,
     contentGroup: cls.contentGroup,
     term: cls.term
@@ -118,6 +122,7 @@ export class AdminClassesService {
     dayTime: string | null | undefined,
     timeZone: string | null | undefined,
     excludeClassIds: string[] = [],
+    proposedSubject?: string | null,
   ) {
     const proposed = this.occupancyTimes(dayTime, timeZone);
     if (!proposed) return;
@@ -144,19 +149,22 @@ export class AdminClassesService {
         ? `Classroom is already assigned to ${subject} (${termLabel}) at this time`
         : `Classroom is already assigned to ${subject} at this time`,
       "CLASSROOM_OCCUPIED",
+      {
+        field: "time",
+        subject,
+        proposedSubject: proposedSubject?.trim() || null,
+      },
     );
   }
 
-  private assertNoInternalClassroomOverlap(inputs: ClassInput[]) {
+  private assertNoInternalScheduleOverlap(inputs: ClassInput[]) {
     const slots = inputs
-      .map((input, index) => {
-        if (!input.classroomId) return null;
+      .map((input) => {
         const times = this.occupancyTimes(input.dayTime, input.timeZone);
         if (!times) return null;
         return {
-          index,
-          classroomId: input.classroomId,
-          subject: input.subject?.trim() || "another class",
+          subject: input.subject?.trim() || "another session",
+          teacherId: input.teacherId || null,
           startMs: times.startAt.getTime(),
           endMs: times.endAt.getTime(),
         };
@@ -167,15 +175,23 @@ export class AdminClassesService {
       for (let j = i + 1; j < slots.length; j++) {
         const left = slots[i];
         const right = slots[j];
-        if (left.classroomId !== right.classroomId) continue;
         if (left.startMs >= right.endMs || right.startMs >= left.endMs) {
           continue;
         }
-        throw new AppError(
-          409,
-          `Classroom is already assigned to ${right.subject} at this time`,
-          "CLASSROOM_OCCUPIED",
-        );
+
+        const field =
+          left.teacherId && left.teacherId === right.teacherId
+            ? "teacherId"
+            : "time";
+        const message =
+          field === "teacherId"
+            ? `Teacher has a time conflict with ${left.subject}`
+            : `${right.subject} overlaps ${left.subject} at this time`;
+
+        throw new AppError(409, message, "CLASS_SCHEDULE_OVERLAP", {
+          field,
+          subjects: [left.subject, right.subject],
+        });
       }
     }
   }
@@ -393,7 +409,7 @@ export class AdminClassesService {
       subject: resolved.subject?.trim() || null,
       lesson: resolved.lesson?.trim() || null,
       dayTime: resolved.dayTime?.trim() || null,
-      timeZone: resolveIanaTimeZone(resolved.timeZone),
+      timeZone: DEFAULT_CLASS_TIMEZONE,
       capacity: resolved.capacity ?? 20,
       contentGroup: resolved.contentGroup?.trim() || null,
       termName: resolved.term?.trim() || "Term 3 2026",
@@ -406,6 +422,8 @@ export class AdminClassesService {
         resolved.classroomId,
         cls.dayTime,
         cls.timeZone,
+        [],
+        resolved.subject,
       );
     }
 
@@ -483,7 +501,7 @@ export class AdminClassesService {
     if (input.dayTime !== undefined)
       cls.dayTime = input.dayTime?.trim() || null;
     if (input.timeZone !== undefined)
-      cls.timeZone = resolveIanaTimeZone(input.timeZone);
+      cls.timeZone = DEFAULT_CLASS_TIMEZONE;
     if (input.capacity !== undefined) cls.capacity = input.capacity;
     if (input.contentGroup !== undefined)
       cls.contentGroup = input.contentGroup?.trim() || null;
@@ -499,6 +517,7 @@ export class AdminClassesService {
         cls.dayTime,
         cls.timeZone,
         [cls.id],
+        cls.subject,
       );
     }
 
@@ -531,7 +550,7 @@ export class AdminClassesService {
         ),
       ),
     );
-    this.assertNoInternalClassroomOverlap(resolved);
+    this.assertNoInternalScheduleOverlap(resolved);
     const existingInTerm = (await this.repo.findAll()).classes.filter(
       (item) => item.term?.id === termId,
     );
@@ -543,6 +562,7 @@ export class AdminClassesService {
         item.dayTime,
         item.timeZone,
         excludeIds,
+        item.subject,
       );
     }
     const savedEntities = await this.repo.bulkReplace(
@@ -755,6 +775,15 @@ export class AdminClassesService {
       }
     }
 
+    await this.assertSessionScheduleAvailable(
+      session,
+      session.startAt,
+      session.endAt,
+      session.teacherId ?? session.class?.teacher?.id ?? null,
+      session.classroomId ?? session.class?.classroomId ?? null,
+      session.room ?? session.class?.room ?? null,
+    );
+
     await sessionRepo.save(session);
     const saved = await sessionRepo.findOne({
       where: { id: session.id },
@@ -772,6 +801,87 @@ export class AdminClassesService {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
     return this.toSessionRow(saved);
+  }
+
+  private async assertSessionScheduleAvailable(
+    session: Session,
+    startAt: Date,
+    endAt: Date,
+    teacherId: string | null,
+    classroomId: string | null,
+    room: string | null,
+  ) {
+    const overlap = (otherStart: Date, otherEnd: Date) =>
+      startAt.getTime() < otherEnd.getTime() &&
+      otherStart.getTime() < endAt.getTime();
+
+    const classSessions = await AppDataSource.getRepository(Session)
+      .createQueryBuilder("other")
+      .leftJoinAndSelect("other.class", "otherClass")
+      .leftJoinAndSelect("otherClass.teacher", "otherClassTeacher")
+      .where("other.id <> :sessionId", { sessionId: session.id })
+      .andWhere("other.assessmentId IS NULL")
+      .andWhere("other.startAt < :endAt", { endAt })
+      .andWhere("other.endAt > :startAt", { startAt })
+      .getMany();
+
+    for (const other of classSessions) {
+      const otherTeacherId =
+        other.teacherId ?? other.class?.teacher?.id ?? null;
+      const otherClassroomId =
+        other.classroomId ?? other.class?.classroomId ?? null;
+      const otherRoom = other.room ?? other.class?.room ?? null;
+      const resource =
+        teacherId && teacherId === otherTeacherId
+          ? "teacher"
+          : classroomId && classroomId === otherClassroomId
+            ? "classroom"
+            : room && otherRoom && room.trim() === otherRoom.trim()
+              ? "room"
+              : null;
+      if (!resource || !overlap(other.startAt, other.endAt)) continue;
+
+      const subject = other.class?.subject || other.class?.name || "another class";
+      const field = resource === "teacher" ? "teacherId" : "time";
+      throw new AppError(
+        409,
+        `${resource[0].toUpperCase()}${resource.slice(1)} is already assigned to ${subject} at this time`,
+        "CLASS_SESSION_CONFLICT",
+        { field, subject, resource },
+      );
+    }
+
+    const assessmentSessions = await AppDataSource.getRepository(Session)
+      .createQueryBuilder("other")
+      .innerJoinAndSelect("other.assessment", "assessment")
+      .where("other.id <> :sessionId", { sessionId: session.id })
+      .andWhere("other.assessmentId IS NOT NULL")
+      .andWhere("other.startAt < :endAt", { endAt })
+      .andWhere("other.endAt > :startAt", { startAt })
+      .getMany();
+
+    for (const other of assessmentSessions) {
+      const assessment = other.assessment;
+      const sameResource =
+        (teacherId && teacherId === assessment?.teacherId) ||
+        (classroomId && classroomId === assessment?.classroomId) ||
+        (room && other.room && room.trim() === other.room.trim()) ||
+        (assessment?.classId && assessment.classId === session.classId);
+      if (!sameResource) continue;
+
+      throw new AppError(
+        409,
+        `This session conflicts with assessment "${assessment?.name || "assessment"}"`,
+        "ASSESSMENT_SESSION_CONFLICT",
+        {
+          field:
+            teacherId && teacherId === assessment?.teacherId
+              ? "teacherId"
+              : "time",
+          resource: "assessment",
+        },
+      );
+    }
   }
 
   /**

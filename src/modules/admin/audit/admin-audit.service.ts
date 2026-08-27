@@ -1,6 +1,9 @@
 import { Between, ILike, type FindOptionsWhere } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
-import { zonedWallTimeToUtc } from "../../../common/utils/timezone.js";
+import {
+  DEFAULT_CLASS_TIMEZONE,
+  zonedWallTimeToUtc,
+} from "../../../common/utils/timezone.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import {
   AuditChange,
@@ -19,8 +22,6 @@ export type ListAuditFilters = {
   search?: string;
 };
 
-const SYDNEY = "Australia/Sydney";
-
 function parseDayBound(value: string, endOfDay: boolean): Date | null {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
@@ -33,7 +34,7 @@ function parseDayBound(value: string, endOfDay: boolean): Date | null {
       minute: endOfDay ? 59 : 0,
       second: endOfDay ? 59 : 0,
     },
-    SYDNEY,
+    DEFAULT_CLASS_TIMEZONE,
   );
 }
 
@@ -134,7 +135,7 @@ export class AdminAuditService {
     const lines = [header.join(",")];
     for (const entry of data.entries) {
       const when = new Date(entry.createdAt).toLocaleString("en-AU", {
-        timeZone: SYDNEY,
+    timeZone: DEFAULT_CLASS_TIMEZONE,
         day: "numeric",
         month: "short",
         year: "numeric",
