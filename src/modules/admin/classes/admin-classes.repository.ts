@@ -5,8 +5,8 @@ import {
   isHolidayForTerm,
 } from "../../../common/utils/holidays.js";
 import {
-  DEFAULT_CLASS_TIMEZONE,
   parseDayTime,
+  resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
 import { sessionHasStarted, sessionStatus } from "../../../common/utils/session-status.js";
 import {
@@ -355,7 +355,7 @@ export class AdminClassesRepository {
           existingClass.subject = input.subject?.trim() || null;
           existingClass.lesson = input.lesson?.trim() || null;
           existingClass.dayTime = input.dayTime?.trim() || null;
-          existingClass.timeZone = DEFAULT_CLASS_TIMEZONE;
+          existingClass.timeZone = resolveIanaTimeZone(input.timeZone);
           existingClass.capacity = input.capacity ?? 20;
           existingClass.contentGroup = input.contentGroup?.trim() || null;
           existingClass.termName = input.term?.trim() || "Term 3 2026";
@@ -373,7 +373,7 @@ export class AdminClassesRepository {
             subject: input.subject?.trim() || null,
             lesson: input.lesson?.trim() || null,
             dayTime: input.dayTime?.trim() || null,
-            timeZone: DEFAULT_CLASS_TIMEZONE,
+            timeZone: resolveIanaTimeZone(input.timeZone),
             capacity: input.capacity ?? 20,
             contentGroup: input.contentGroup?.trim() || null,
             termName: input.term?.trim() || "Term 3 2026",

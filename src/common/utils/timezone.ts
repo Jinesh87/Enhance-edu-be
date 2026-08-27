@@ -1,6 +1,4 @@
-import { env } from "../../config/env.js";
-
-export const DEFAULT_CLASS_TIMEZONE = env.APP_TIMEZONE;
+export const DEFAULT_CLASS_TIMEZONE = "Australia/Sydney";
 
 export type WallClock = {
   year: number;

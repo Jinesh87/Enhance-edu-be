@@ -4,7 +4,6 @@ import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
   DEFAULT_CLASS_TIMEZONE,
-  dayRangeInTimeZone,
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
@@ -223,9 +222,10 @@ export class StudentClassesService {
   async getTimetable(userId: string) {
     const lessons = await this.listLessons(userId);
     const now = new Date();
-    const todayRange = dayRangeInTimeZone(now, DEFAULT_CLASS_TIMEZONE);
-    const startOfToday = todayRange.start;
-    const endOfToday = todayRange.end;
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date(startOfToday);
+    endOfToday.setDate(endOfToday.getDate() + 1);
     const startOfWeek = new Date(startOfToday);
     const weekday = startOfWeek.getDay();
     const daysFromMonday = weekday === 0 ? 6 : weekday - 1;
