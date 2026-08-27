@@ -43,6 +43,8 @@ export type AssessmentInput = {
   classroomId?: string | null;
   room?: string | null;
   teacherId?: string | null;
+  totalMarks?: number | null;
+  cutOffMarks?: number | null;
   notes?: string | null;
   studentIds?: string[];
 };
@@ -60,6 +62,17 @@ function classLabel(cls: Class | null | undefined): string {
   if (!cls) return "";
   const subject = cls.subject?.trim() || cls.name || "Class";
   return cls.code ? `${subject} · ${cls.code}` : subject;
+}
+
+function marksNumber(value: string | number | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function marksColumn(value: number | null | undefined): string | null {
+  if (value == null) return null;
+  return String(value);
 }
 
 function autoStatusForTiming(
@@ -236,6 +249,8 @@ function toAssessmentDto(
     room: assessment.room || assessment.classroom?.name || "",
     teacherId: assessment.teacherId,
     teacherName: assessment.teacher?.fullName ?? null,
+    totalMarks: marksNumber(assessment.totalMarks),
+    cutOffMarks: marksNumber(assessment.cutOffMarks),
     notes: assessment.notes,
     status: assessment.status,
     studentCount: students.length,
@@ -306,6 +321,41 @@ export class AdminAssessmentsService {
       throw new AppError(404, "Teacher not found", "TEACHER_NOT_FOUND");
     }
     return teacher.id;
+  }
+
+  private assertEntranceRequirements(input: {
+    teacherId: string | null;
+    totalMarks: number | null;
+    cutOffMarks: number | null;
+  }) {
+    if (!input.teacherId) {
+      throw new AppError(
+        400,
+        "Teacher is required for entrance exams",
+        "TEACHER_REQUIRED",
+      );
+    }
+    if (input.totalMarks == null) {
+      throw new AppError(
+        400,
+        "Total marks are required for entrance exams",
+        "TOTAL_MARKS_REQUIRED",
+      );
+    }
+    if (input.cutOffMarks == null) {
+      throw new AppError(
+        400,
+        "Cut-off marks are required for entrance exams",
+        "CUT_OFF_MARKS_REQUIRED",
+      );
+    }
+    if (input.cutOffMarks > input.totalMarks) {
+      throw new AppError(
+        400,
+        "Cut-off marks cannot exceed total marks",
+        "CUT_OFF_EXCEEDS_TOTAL",
+      );
+    }
   }
 
   private yearGroupNumber(yearGroup: string): number | null {
@@ -707,6 +757,17 @@ export class AdminAssessmentsService {
     const teacherId = await this.resolveTeacher(
       input.teacherId ?? cls?.teacher?.id ?? null,
     );
+    const totalMarks =
+      kind === "ENTRANCE" ? marksNumber(input.totalMarks) : null;
+    const cutOffMarks =
+      kind === "ENTRANCE" ? marksNumber(input.cutOffMarks) : null;
+    if (kind === "ENTRANCE") {
+      this.assertEntranceRequirements({
+        teacherId,
+        totalMarks,
+        cutOffMarks,
+      });
+    }
     const yearGroup = input.yearGroup.trim() || term.yearLevel?.name || "";
     if (!yearGroup) {
       throw new AppError(400, "Year group is required", "YEAR_GROUP_REQUIRED");
@@ -752,6 +813,8 @@ export class AdminAssessmentsService {
       classroomId: classroom.classroomId,
       room: classroom.room,
       teacherId,
+      totalMarks: marksColumn(totalMarks),
+      cutOffMarks: marksColumn(cutOffMarks),
       notes: input.notes?.trim() || null,
       status: autoStatusForTiming(
         input.assessmentDate,
@@ -863,6 +926,26 @@ export class AdminAssessmentsService {
     assessment.classroomId = classroom.classroomId;
     assessment.room = classroom.room;
     assessment.teacherId = teacherId;
+    if (assessment.kind === "ENTRANCE") {
+      const totalMarks =
+        input.totalMarks === undefined
+          ? marksNumber(assessment.totalMarks)
+          : marksNumber(input.totalMarks);
+      const cutOffMarks =
+        input.cutOffMarks === undefined
+          ? marksNumber(assessment.cutOffMarks)
+          : marksNumber(input.cutOffMarks);
+      this.assertEntranceRequirements({
+        teacherId,
+        totalMarks,
+        cutOffMarks,
+      });
+      assessment.totalMarks = marksColumn(totalMarks);
+      assessment.cutOffMarks = marksColumn(cutOffMarks);
+    } else {
+      assessment.totalMarks = null;
+      assessment.cutOffMarks = null;
+    }
     if (input.notes !== undefined) {
       assessment.notes = input.notes?.trim() || null;
     }
@@ -913,6 +996,90 @@ export class AdminAssessmentsService {
     await this.repo.deleteById(id);
   }
 
+  /**
+   * Entrance exams assigned to this teacher that have at least one submitted
+   * attempt. Sorted with unfinished marking first.
+   */
+  async listMarkingQueue(teacherId: string) {
+    const assessments = await AppDataSource.getRepository(Assessment).find({
+      where: {
+        teacherId,
+        kind: "ENTRANCE",
+        status: In(["SCHEDULED", "COMPLETED"]),
+      },
+      relations: { term: { academicYear: true, yearLevel: true } },
+      order: { assessmentDate: "DESC", startTime: "ASC" },
+    });
+
+    if (assessments.length === 0) {
+      return { items: [], needsMarking: 0 };
+    }
+
+    const submissions = await AppDataSource.getRepository(
+      AssessmentSubmission,
+    ).find({
+      where: {
+        assessmentId: In(assessments.map((row) => row.id)),
+        status: In(["SUBMITTED", "PROCESSING", "READY", "FAILED"]),
+      },
+      select: {
+        id: true,
+        assessmentId: true,
+        mark: true,
+      },
+    });
+
+    const byAssessment = new Map<
+      string,
+      { submitted: number; unmarked: number }
+    >();
+    for (const row of submissions) {
+      const current = byAssessment.get(row.assessmentId) ?? {
+        submitted: 0,
+        unmarked: 0,
+      };
+      current.submitted += 1;
+      if (marksNumber(row.mark) == null) current.unmarked += 1;
+      byAssessment.set(row.assessmentId, current);
+    }
+
+    const items = assessments
+      .map((assessment) => {
+        const counts = byAssessment.get(assessment.id) ?? {
+          submitted: 0,
+          unmarked: 0,
+        };
+        return {
+          id: assessment.id,
+          name: assessment.name,
+          subject: assessment.subject,
+          yearGroup: assessment.yearGroup,
+          termLabel: termLabel(assessment.term),
+          assessmentDate: assessment.assessmentDate,
+          startTime: assessment.startTime,
+          status: assessment.status,
+          totalMarks: marksNumber(assessment.totalMarks),
+          cutOffMarks: marksNumber(assessment.cutOffMarks),
+          submittedCount: counts.submitted,
+          unmarkedCount: counts.unmarked,
+        };
+      })
+      .filter((item) => item.submittedCount > 0)
+      .sort((a, b) => {
+        if (a.unmarkedCount !== b.unmarkedCount) {
+          return b.unmarkedCount - a.unmarkedCount;
+        }
+        return b.assessmentDate.localeCompare(a.assessmentDate);
+      });
+
+    const needsMarking = items.reduce(
+      (sum, item) => sum + item.unmarkedCount,
+      0,
+    );
+
+    return { items, needsMarking };
+  }
+
   async listAttendees(assessmentId: string) {
     const assessment = await this.repo.findById(assessmentId);
     if (!assessment) {
@@ -942,6 +1109,8 @@ export class AdminAssessmentsService {
         fileCount: row.files?.length ?? 0,
         hasExtractedText: Boolean(row.extractedText?.trim()),
         ocrError: row.ocrError,
+        mark: marksNumber(row.mark),
+        markedAt: row.markedAt?.toISOString() ?? null,
       }))
       .sort((a, b) => a.fullName.localeCompare(b.fullName));
 
@@ -954,6 +1123,9 @@ export class AdminAssessmentsService {
         yearGroup: assessment.yearGroup,
         termLabel: termLabel(assessment.term),
         assessmentDate: assessment.assessmentDate,
+        totalMarks: marksNumber(assessment.totalMarks),
+        cutOffMarks: marksNumber(assessment.cutOffMarks),
+        teacherId: assessment.teacherId,
       },
       attendees,
     };
@@ -969,7 +1141,7 @@ export class AdminAssessmentsService {
       AssessmentSubmission,
     ).findOne({
       where: { assessmentId, studentId },
-      relations: { student: true, files: true },
+      relations: { student: true, files: true, markedBy: true },
     });
 
     if (!submission || submission.status === "DRAFT") {
@@ -997,11 +1169,19 @@ export class AdminAssessmentsService {
             : ("other" as const),
       }));
 
+    const totalMarks = marksNumber(assessment.totalMarks);
+    const cutOffMarks = marksNumber(assessment.cutOffMarks);
+    const mark = marksNumber(submission.mark);
+
     return {
       assessment: {
         id: assessment.id,
         name: assessment.name,
         subject: assessment.subject,
+        kind: assessment.kind ?? "SCHOOL",
+        totalMarks,
+        cutOffMarks,
+        teacherId: assessment.teacherId,
       },
       student: {
         id: submission.studentId,
@@ -1014,9 +1194,133 @@ export class AdminAssessmentsService {
         submittedAt: submission.submittedAt?.toISOString() ?? null,
         extractedText: submission.extractedText,
         ocrError: submission.ocrError,
+        mark,
+        markedAt: submission.markedAt?.toISOString() ?? null,
+        markedById: submission.markedById,
+        markedByName: submission.markedBy?.fullName ?? null,
+        markNotes: submission.markNotes,
+        outcome:
+          mark != null && cutOffMarks != null
+            ? mark >= cutOffMarks
+              ? ("PASS" as const)
+              : mark >= cutOffMarks * 0.9
+                ? ("BORDERLINE" as const)
+                : ("FAIL" as const)
+            : null,
         files,
       },
     };
+  }
+
+  async assertCanAccessAttendees(
+    assessmentId: string,
+    actor: { id: string; role: string },
+  ) {
+    const assessment = await this.repo.findById(assessmentId);
+    if (!assessment) {
+      throw new AppError(404, "Assessment not found", "ASSESSMENT_NOT_FOUND");
+    }
+    if (
+      actor.role === UserRole.SUPER_ADMIN ||
+      actor.role === UserRole.OFFICE_STAFF
+    ) {
+      return assessment;
+    }
+    if (
+      actor.role === UserRole.STAFF &&
+      assessment.teacherId &&
+      assessment.teacherId === actor.id
+    ) {
+      return assessment;
+    }
+    throw new AppError(
+      403,
+      "You can only mark assessments assigned to you",
+      "FORBIDDEN",
+    );
+  }
+
+  async markAttendeeSubmission(
+    assessmentId: string,
+    studentId: string,
+    input: { mark: number; markNotes?: string | null },
+    actor: { id: string; role: string; fullName?: string | null },
+  ) {
+    await this.assertCanAccessAttendees(assessmentId, actor);
+    const assessment = await this.repo.findById(assessmentId);
+    if (!assessment) {
+      throw new AppError(404, "Assessment not found", "ASSESSMENT_NOT_FOUND");
+    }
+
+    const submission = await AppDataSource.getRepository(
+      AssessmentSubmission,
+    ).findOne({
+      where: { assessmentId, studentId },
+      relations: { student: true },
+    });
+    if (!submission || submission.status === "DRAFT") {
+      throw new AppError(
+        404,
+        "No submitted answers found for this student",
+        "SUBMISSION_NOT_FOUND",
+      );
+    }
+
+    const mark = marksNumber(input.mark);
+    if (mark == null || mark < 0) {
+      throw new AppError(400, "Mark is required", "MARK_REQUIRED");
+    }
+    const totalMarks = marksNumber(assessment.totalMarks);
+    if (totalMarks != null && mark > totalMarks) {
+      throw new AppError(
+        400,
+        `Mark cannot exceed total marks (${totalMarks})`,
+        "MARK_EXCEEDS_TOTAL",
+      );
+    }
+
+    submission.mark = marksColumn(mark);
+    submission.markedAt = new Date();
+    submission.markedById = actor.id;
+    submission.markNotes = input.markNotes?.trim() || null;
+    await AppDataSource.getRepository(AssessmentSubmission).save(submission);
+
+    if (assessment.kind === "ENTRANCE") {
+      const cutOff = marksNumber(assessment.cutOffMarks);
+      if (cutOff != null) {
+        try {
+          const actorUser = await this.users.findOne({
+            where: { id: actor.id },
+          });
+          const { adminEnquiriesService } = await import(
+            "../enquiries/admin-enquiries.service.js"
+          );
+          await adminEnquiriesService.recordExamFromAssessmentMark(
+            studentId,
+            {
+              termId: assessment.termId,
+              examSession: assessment.name,
+              examMark: mark,
+              examThreshold: cutOff,
+              examMarkedBy:
+                actor.fullName?.trim() ||
+                actorUser?.fullName?.trim() ||
+                "Teacher",
+              examScriptReference: `assessment:${assessment.id}/student:${studentId}`,
+            },
+            actor.id,
+          );
+        } catch (error) {
+          const { logger } = await import("../../../config/logger.js");
+          logger.error(
+            { error, assessmentId, studentId },
+            "Failed to sync assessment mark onto enquiry",
+          );
+        }
+      }
+    }
+
+    return this.getAttendeeSubmission(assessmentId, studentId);
   }
 
   async getAttendeeFile(

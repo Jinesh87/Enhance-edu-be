@@ -99,6 +99,14 @@ export class Assessment {
   @JoinColumn({ name: "teacherId" })
   teacher!: Relation<User> | null;
 
+  /** Entrance exams only — maximum mark for the paper. */
+  @Column({ type: "numeric", precision: 8, scale: 2, nullable: true })
+  totalMarks!: string | null;
+
+  /** Entrance exams only — pass / offer cut-off mark. */
+  @Column({ type: "numeric", precision: 8, scale: 2, nullable: true })
+  cutOffMarks!: string | null;
+
   @Column({ type: "text", nullable: true })
   notes!: string | null;
 

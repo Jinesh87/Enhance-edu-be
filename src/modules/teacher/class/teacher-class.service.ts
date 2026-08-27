@@ -18,6 +18,7 @@ function mapSessionDto(session: Session) {
     scheduleType: isAssessment
       ? assessment?.scheduleType ?? "SESSION"
       : undefined,
+    assessmentId: session.assessmentId ?? null,
     classId: session.classId ?? "assessment",
     className: isAssessment
       ? assessment?.name || "Assessment"

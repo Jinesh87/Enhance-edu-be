@@ -775,6 +775,15 @@ export class AdminClassesService {
       }
     }
 
+    await this.assertSessionScheduleAvailable(
+      session,
+      session.startAt,
+      session.endAt,
+      session.teacherId ?? session.class?.teacher?.id ?? null,
+      session.classroomId ?? session.class?.classroomId ?? null,
+      session.room ?? session.class?.room ?? null,
+    );
+
     await sessionRepo.save(session);
     const saved = await sessionRepo.findOne({
       where: { id: session.id },
@@ -792,6 +801,87 @@ export class AdminClassesService {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
     return this.toSessionRow(saved);
+  }
+
+  private async assertSessionScheduleAvailable(
+    session: Session,
+    startAt: Date,
+    endAt: Date,
+    teacherId: string | null,
+    classroomId: string | null,
+    room: string | null,
+  ) {
+    const overlap = (otherStart: Date, otherEnd: Date) =>
+      startAt.getTime() < otherEnd.getTime() &&
+      otherStart.getTime() < endAt.getTime();
+
+    const classSessions = await AppDataSource.getRepository(Session)
+      .createQueryBuilder("other")
+      .leftJoinAndSelect("other.class", "otherClass")
+      .leftJoinAndSelect("otherClass.teacher", "otherClassTeacher")
+      .where("other.id <> :sessionId", { sessionId: session.id })
+      .andWhere("other.assessmentId IS NULL")
+      .andWhere("other.startAt < :endAt", { endAt })
+      .andWhere("other.endAt > :startAt", { startAt })
+      .getMany();
+
+    for (const other of classSessions) {
+      const otherTeacherId =
+        other.teacherId ?? other.class?.teacher?.id ?? null;
+      const otherClassroomId =
+        other.classroomId ?? other.class?.classroomId ?? null;
+      const otherRoom = other.room ?? other.class?.room ?? null;
+      const resource =
+        teacherId && teacherId === otherTeacherId
+          ? "teacher"
+          : classroomId && classroomId === otherClassroomId
+            ? "classroom"
+            : room && otherRoom && room.trim() === otherRoom.trim()
+              ? "room"
+              : null;
+      if (!resource || !overlap(other.startAt, other.endAt)) continue;
+
+      const subject = other.class?.subject || other.class?.name || "another class";
+      const field = resource === "teacher" ? "teacherId" : "time";
+      throw new AppError(
+        409,
+        `${resource[0].toUpperCase()}${resource.slice(1)} is already assigned to ${subject} at this time`,
+        "CLASS_SESSION_CONFLICT",
+        { field, subject, resource },
+      );
+    }
+
+    const assessmentSessions = await AppDataSource.getRepository(Session)
+      .createQueryBuilder("other")
+      .innerJoinAndSelect("other.assessment", "assessment")
+      .where("other.id <> :sessionId", { sessionId: session.id })
+      .andWhere("other.assessmentId IS NOT NULL")
+      .andWhere("other.startAt < :endAt", { endAt })
+      .andWhere("other.endAt > :startAt", { startAt })
+      .getMany();
+
+    for (const other of assessmentSessions) {
+      const assessment = other.assessment;
+      const sameResource =
+        (teacherId && teacherId === assessment?.teacherId) ||
+        (classroomId && classroomId === assessment?.classroomId) ||
+        (room && other.room && room.trim() === other.room.trim()) ||
+        (assessment?.classId && assessment.classId === session.classId);
+      if (!sameResource) continue;
+
+      throw new AppError(
+        409,
+        `This session conflicts with assessment "${assessment?.name || "assessment"}"`,
+        "ASSESSMENT_SESSION_CONFLICT",
+        {
+          field:
+            teacherId && teacherId === assessment?.teacherId
+              ? "teacherId"
+              : "time",
+          resource: "assessment",
+        },
+      );
+    }
   }
 
   /**
