@@ -181,6 +181,34 @@ class AdminAssessmentsController {
       next(error);
     }
   };
+
+  markAttendee = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await adminAssessmentsService.markAttendeeSubmission(
+        req.params.id as string,
+        req.params.studentId as string,
+        req.body,
+        {
+          id: req.user!.id,
+          role: req.user!.role,
+        },
+      );
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "EDITED",
+        recordType: "assessment_submission",
+        recordId: data.submission.id,
+        recordLabel: `${data.assessment.name} · ${data.student.fullName}`,
+        after: {
+          mark: data.submission.mark,
+          outcome: data.submission.outcome,
+        },
+      });
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const adminAssessmentsController = new AdminAssessmentsController();

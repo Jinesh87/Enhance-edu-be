@@ -13,6 +13,7 @@ import {
   assessmentIdParamsSchema,
   createAssessmentSchema,
   listAssessmentsQuerySchema,
+  markAttendeeSchema,
   updateAssessmentSchema,
 } from "./admin-assessments.validation.js";
 
@@ -43,6 +44,12 @@ adminAssessmentsRouter.get(
   "/:id/attendees/:studentId",
   validate(assessmentAttendeeParamsSchema, "params"),
   adminAssessmentsController.getAttendeeSubmission,
+);
+adminAssessmentsRouter.post(
+  "/:id/attendees/:studentId/mark",
+  validate(assessmentAttendeeParamsSchema, "params"),
+  validate(markAttendeeSchema),
+  adminAssessmentsController.markAttendee,
 );
 adminAssessmentsRouter.get(
   "/:id",

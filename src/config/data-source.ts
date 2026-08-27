@@ -110,6 +110,20 @@ export async function ensureAssessmentSessionSchema() {
       WHEN duplicate_object THEN NULL;
     END $$;
   `);
+  await bootstrap.query(`
+    ALTER TABLE assessments
+      ADD COLUMN IF NOT EXISTS "totalMarks" numeric(8,2);
+    ALTER TABLE assessments
+      ADD COLUMN IF NOT EXISTS "cutOffMarks" numeric(8,2);
+    ALTER TABLE assessment_submissions
+      ADD COLUMN IF NOT EXISTS mark numeric(8,2);
+    ALTER TABLE assessment_submissions
+      ADD COLUMN IF NOT EXISTS "markedAt" timestamptz;
+    ALTER TABLE assessment_submissions
+      ADD COLUMN IF NOT EXISTS "markedById" uuid;
+    ALTER TABLE assessment_submissions
+      ADD COLUMN IF NOT EXISTS "markNotes" text;
+  `);
   await bootstrap.destroy();
 }
 
