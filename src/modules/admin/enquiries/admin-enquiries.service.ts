@@ -886,6 +886,7 @@ export class AdminEnquiriesService {
     enquiry.examOutcome = outcome;
     enquiry.examMarkedBy = input.examMarkedBy.trim();
     enquiry.examScriptReference = input.examScriptReference?.trim() || null;
+    enquiry.examAttended = true;
     if (leavingWaiting) this.clearWaitingListMembership(enquiry);
     this.assignStage(enquiry, stage);
     await this.enquiries.save(enquiry);
@@ -898,6 +899,64 @@ export class AdminEnquiriesService {
       actorId,
     );
     return this.getById(id);
+  }
+
+  /**
+   * When a teacher marks an entrance-assessment submission, copy the result
+   * onto the matching open trial enquiry (same guardian + student + trial term).
+   */
+  async recordExamFromAssessmentMark(
+    studentUserId: string,
+    input: {
+      termId: string;
+      examSession?: string | null;
+      examMark: number;
+      examThreshold: number;
+      examMarkedBy: string;
+      examScriptReference?: string | null;
+    },
+    actorId: string,
+  ) {
+    if (!studentUserId || !input.termId) return;
+
+    const student = await AppDataSource.getRepository(Student).findOne({
+      where: { userId: studentUserId },
+    });
+    if (!student) return;
+
+    const enrollments = await AppDataSource.getRepository(Enrollment).find({
+      where: { studentId: student.id, termId: input.termId },
+      relations: { term: true, guardian: true },
+    });
+    const trialEnrollments = enrollments.filter((row) => row.term?.isTrial);
+    if (trialEnrollments.length === 0) return;
+
+    const emails = [
+      ...new Set(
+        trialEnrollments
+          .map((row) => row.guardian?.email?.trim().toLowerCase())
+          .filter((email): email is string => Boolean(email)),
+      ),
+    ];
+    if (emails.length === 0) return;
+
+    const studentName = student.fullName.trim().toLowerCase();
+    const rows = await this.enquiries
+      .createQueryBuilder("enquiry")
+      .leftJoinAndSelect("enquiry.currentStage", "stage")
+      .where("LOWER(enquiry.guardianEmail) IN (:...emails)", { emails })
+      .andWhere("enquiry.closedAt IS NULL")
+      .andWhere("enquiry.trialTermId = :termId", { termId: input.termId })
+      .andWhere("stage.code IN (:...codes)", {
+        codes: ["trial_attended", "entrance_exam"],
+      })
+      .getMany();
+
+    for (const enquiry of rows) {
+      const enquiryName = enquiry.studentFullName?.trim().toLowerCase() ?? "";
+      if (enquiryName && enquiryName !== studentName) continue;
+      await this.recordExam(enquiry.id, input, actorId);
+    }
   }
 
   async issueOffer(id: string, actorId: string) {

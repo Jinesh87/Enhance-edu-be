@@ -59,6 +59,23 @@ export class AssessmentSubmission {
   @Column({ type: "text", nullable: true })
   ocrError!: string | null;
 
+  @Column({ type: "numeric", precision: 8, scale: 2, nullable: true })
+  mark!: string | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  markedAt!: Date | null;
+
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  markedById!: string | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "markedById" })
+  markedBy!: Relation<User> | null;
+
+  @Column({ type: "text", nullable: true })
+  markNotes!: string | null;
+
   @OneToMany(() => AssessmentSubmissionFile, (row) => row.submission)
   files!: Relation<AssessmentSubmissionFile>[];
 

@@ -12,6 +12,7 @@ function mapSessionDto(session: Session) {
   return {
     id: session.id,
     kind: isAssessment ? ("assessment" as const) : ("class" as const),
+    assessmentId: session.assessmentId ?? null,
     classId: session.classId ?? "assessment",
     className: isAssessment
       ? assessment?.name || "Assessment"
