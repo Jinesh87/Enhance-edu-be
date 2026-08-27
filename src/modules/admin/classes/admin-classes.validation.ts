@@ -43,6 +43,12 @@ export const classIdParamsSchema = Joi.object({
 export const groupSessionsQuerySchema = Joi.object({
   subject: Joi.string().trim().min(1).max(120).required(),
   term: Joi.string().trim().min(1).max(200).required(),
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(500).default(10),
+  status: Joi.string()
+    .valid("ALL", "UPCOMING", "LIVE", "ENDED", "SCHEDULED")
+    .default("ALL"),
+  search: Joi.string().trim().max(120).allow("", null),
 });
 
 export const sessionIdParamsSchema = Joi.object({
