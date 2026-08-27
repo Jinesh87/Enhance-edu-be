@@ -1,5 +1,5 @@
+import { In, IsNull } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
-import { In, MoreThanOrEqual, LessThanOrEqual } from "typeorm";
 import { parseDayTime } from "../../../common/utils/timezone.js";
 import { Class, Session } from "../../../entities/index.js";
 
@@ -17,12 +17,16 @@ export class TeacherClassRepository {
     if (classIds.length === 0) return;
 
     const existingSessions = await this.sessions.find({
-      where: { classId: In(classIds) },
+      where: { classId: In(classIds), assessmentId: IsNull() },
       select: { classId: true },
     });
-    const classesWithSessions = new Set(existingSessions.map((s) => s.classId));
+    const classesWithSessions = new Set(
+      existingSessions.map((s) => s.classId).filter(Boolean),
+    );
 
-    const missingClassIds = classIds.filter((id) => !classesWithSessions.has(id));
+    const missingClassIds = classIds.filter(
+      (id) => !classesWithSessions.has(id),
+    );
     if (missingClassIds.length === 0) return;
 
     const missingClasses = await this.classes.find({
@@ -38,6 +42,7 @@ export class TeacherClassRepository {
         sessionsToCreate.push(
           this.sessions.create({
             classId: c.id,
+            assessmentId: null,
             startAt: times.startAt,
             endAt: times.endAt,
             room: c.room || null,
@@ -46,7 +51,11 @@ export class TeacherClassRepository {
           }),
         );
       } catch (err) {
-        console.error("Failed to parse dayTime during self-healing in repository:", c.dayTime, err);
+        console.error(
+          "Failed to parse dayTime during self-healing in repository:",
+          c.dayTime,
+          err,
+        );
       }
     }
 
@@ -62,24 +71,20 @@ export class TeacherClassRepository {
   ): Promise<Session[]> {
     await this.ensureSessionsExistForClassIds(classIds);
 
-    const where: any = {
-      classId: In(classIds),
-    };
+    const qb = this.sessions
+      .createQueryBuilder("session")
+      .leftJoinAndSelect("session.class", "class")
+      .where("session.classId IN (:...classIds)", { classIds })
+      .andWhere("session.assessmentId IS NULL");
+
     if (since) {
-      where.endAt = MoreThanOrEqual(since);
+      qb.andWhere("session.endAt >= :since", { since });
     }
     if (until) {
-      where.startAt = LessThanOrEqual(until);
+      qb.andWhere("session.startAt <= :until", { until });
     }
-    return this.sessions.find({
-      where,
-      relations: {
-        class: true,
-      },
-      order: {
-        startAt: "ASC",
-      },
-    });
+
+    return qb.orderBy("session.startAt", "ASC").getMany();
   }
 }
 

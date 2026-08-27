@@ -127,9 +127,9 @@ export class AdminTasksService {
   async syncFuturePendingRecords(): Promise<void> {
     const sessions = await this.attendance.findActiveOrFutureSessions();
     for (const session of sessions) {
-      const enrolments = await this.attendance.findEnrolmentsByClassId(
-        session.classId,
-      );
+      const enrolments = session.classId
+        ? await this.attendance.findEnrolmentsByClassId(session.classId)
+        : [];
       const records = await this.attendance.findAttendanceRecordsBySessionId(
         session.id,
       );
@@ -165,9 +165,9 @@ export class AdminTasksService {
       );
       if (closedAt.getTime() > now) continue;
 
-      const enrolments = await this.attendance.findEnrolmentsByClassId(
-        session.classId,
-      );
+      const enrolments = session.classId
+        ? await this.attendance.findEnrolmentsByClassId(session.classId)
+        : [];
       const records = await this.attendance.findAttendanceRecordsBySessionId(
         session.id,
       );

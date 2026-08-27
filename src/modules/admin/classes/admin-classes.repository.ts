@@ -1,4 +1,4 @@
-import { In } from "typeorm";
+import { In, IsNull } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   calendarDateFromDayTime,
@@ -98,11 +98,12 @@ export class AdminClassesRepository {
     }
 
     const sessions = await AppDataSource.getRepository(Session).find({
-      where: { classId: In(classIds) },
+      where: { classId: In(classIds), assessmentId: IsNull() },
       select: { classId: true, gracePeriodMinutes: true },
     });
 
     for (const session of sessions) {
+      if (!session.classId) continue;
       if (!graceByClassId.has(session.classId)) {
         graceByClassId.set(session.classId, session.gracePeriodMinutes);
       }
@@ -167,7 +168,7 @@ export class AdminClassesRepository {
   ): Promise<void> {
     const now = Date.now();
     const sessions = await AppDataSource.getRepository(Session).find({
-      where: { classId },
+      where: { classId, assessmentId: IsNull() },
     });
     for (const session of sessions) {
       const start = session.startAt.getTime();
@@ -230,7 +231,7 @@ export class AdminClassesRepository {
 
       if (existingClassIds.length > 0) {
         existingSessions = await sessionRepo.find({
-          where: { classId: In(existingClassIds) },
+          where: { classId: In(existingClassIds), assessmentId: IsNull() },
         });
 
         if (existingSessions.length > 0) {
@@ -487,6 +488,7 @@ export class AdminClassesRepository {
       if (sessionsToCreate.length > 0) {
         const savedSessions = await sessionRepo.save(sessionsToCreate);
         for (const s of savedSessions) {
+          if (!s.classId) continue;
           const enrolments = await classStudentRepo.find({
             where: { classId: s.classId },
           });

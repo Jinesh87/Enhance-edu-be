@@ -6,7 +6,7 @@ import {
 } from "../../../common/utils/session-status.js";
 import { Class, Classroom, Session } from "../../../entities/index.js";
 import { AppDataSource } from "../../../config/data-source.js";
-import { In } from "typeorm";
+import { In, IsNull } from "typeorm";
 import {
   adminClassesRepository,
   type ClassInput,
@@ -586,7 +586,7 @@ export class AdminClassesService {
 
     const classIds = matching.map((cls) => cls.id);
     const sessionRows = await AppDataSource.getRepository(Session).find({
-      where: { classId: In(classIds) },
+      where: { classId: In(classIds), assessmentId: IsNull() },
       relations: {
         class: {
           teacher: true,
@@ -794,7 +794,7 @@ export class AdminClassesService {
     }
 
     const existingSessions = await AppDataSource.getRepository(Session).find({
-      where: { classId },
+      where: { classId, assessmentId: IsNull() },
     });
     const hasLocked = existingSessions.some((row) => {
       const status = sessionStatus(row.startAt, row.endAt);
@@ -904,7 +904,7 @@ export class AdminClassesService {
     if (!previousTeacher) return;
     const sessionRepo = AppDataSource.getRepository(Session);
     const rows = await sessionRepo.find({
-      where: { classId },
+      where: { classId, assessmentId: IsNull() },
       relations: { teacher: true },
     });
     const now = Date.now();
@@ -921,7 +921,9 @@ export class AdminClassesService {
 
   private async clearTeacherOverridesOnUpcomingSessions(classId: string) {
     const sessionRepo = AppDataSource.getRepository(Session);
-    const rows = await sessionRepo.find({ where: { classId } });
+    const rows = await sessionRepo.find({
+      where: { classId, assessmentId: IsNull() },
+    });
     const now = Date.now();
     for (const row of rows) {
       const status = sessionStatus(row.startAt, row.endAt, now);
@@ -948,7 +950,7 @@ export class AdminClassesService {
     const applySet = new Set(applyToSessionIds);
     const sessionRepo = AppDataSource.getRepository(Session);
     const rows = await sessionRepo.find({
-      where: { classId },
+      where: { classId, assessmentId: IsNull() },
       relations: { teacher: true },
     });
     const now = Date.now();
@@ -985,7 +987,9 @@ export class AdminClassesService {
     room: string | null,
   ) {
     const sessionRepo = AppDataSource.getRepository(Session);
-    const rows = await sessionRepo.find({ where: { classId } });
+    const rows = await sessionRepo.find({
+      where: { classId, assessmentId: IsNull() },
+    });
     const now = Date.now();
     for (const row of rows) {
       if (sessionStatus(row.startAt, row.endAt, now) === "UPCOMING") {

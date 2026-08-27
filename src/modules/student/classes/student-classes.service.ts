@@ -1,13 +1,19 @@
-import { In } from "typeorm";
+import { Brackets, In, IsNull } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
-import { parseDayTime, resolveIanaTimeZone } from "../../../common/utils/timezone.js";
+import {
+  DEFAULT_CLASS_TIMEZONE,
+  parseDayTime,
+  resolveIanaTimeZone,
+} from "../../../common/utils/timezone.js";
 import {
   termYearLevelNumber,
   yearLevelsCompatible,
 } from "../../../common/utils/year-level.js";
 import {
+  Assessment,
+  AssessmentStudent,
   AttendanceRecord,
   AttendanceStatus,
   Class,
@@ -16,6 +22,12 @@ import {
   Session,
   Student,
 } from "../../../entities/index.js";
+import {
+  assessmentScheduleWindow,
+  assessmentSessionSyncService,
+} from "../../admin/assessments/assessment-session-sync.service.js";
+
+export type StudentLessonKind = "class" | "assessment";
 
 export type StudentLessonStatus =
   | "ATTENDED"
@@ -29,6 +41,7 @@ export type StudentLessonStatus =
 
 export type StudentLessonDto = {
   sessionId: string;
+  kind: StudentLessonKind;
   classId: string;
   subject: string;
   className: string;
@@ -60,6 +73,16 @@ export type StudentLessonDto = {
   }[];
 };
 
+const EXCLUDED_ASSESSMENT_STATUSES = ["ARCHIVED", "CANCELLED"] as const;
+
+type StudentTimetableContext = {
+  classIds: Set<string>;
+  subjectKeys: Set<string>;
+  yearGroupKeys: Set<string>;
+  academicYears: Set<number>;
+  linkedAssessmentIds: Set<string>;
+};
+
 function parseClassTimes(
   dayTime: string | null,
   timeZone?: string | null,
@@ -68,6 +91,17 @@ function parseClassTimes(
   endAt: Date;
 } | null {
   return parseDayTime(dayTime, timeZone, 90);
+}
+
+function yearGroupKey(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function yearGroupNumber(value: string | null | undefined): number | null {
+  const match = (value ?? "").trim().match(/(\d+)/);
+  if (!match) return null;
+  const num = Number(match[1]);
+  return Number.isFinite(num) ? num : null;
 }
 
 function isOnlineRoom(room: string | null | undefined) {
@@ -174,6 +208,9 @@ export class StudentClassesService {
   private readonly classStudents = AppDataSource.getRepository(ClassStudent);
   private readonly sessions = AppDataSource.getRepository(Session);
   private readonly attendance = AppDataSource.getRepository(AttendanceRecord);
+  private readonly assessments = AppDataSource.getRepository(Assessment);
+  private readonly assessmentStudents =
+    AppDataSource.getRepository(AssessmentStudent);
 
   async getTimetable(userId: string) {
     const lessons = await this.listLessons(userId);
@@ -207,7 +244,9 @@ export class StudentClassesService {
     });
 
     const ended = lessons.filter(
-      (lesson) => new Date(lesson.endAt).getTime() < now.getTime(),
+      (lesson) =>
+        lesson.kind === "class" &&
+        new Date(lesson.endAt).getTime() < now.getTime(),
     );
     const twoWeeksAgo = new Date(startOfToday);
     twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
@@ -278,6 +317,21 @@ export class StudentClassesService {
 
   private async listLessons(userId: string): Promise<StudentLessonDto[]> {
     const classes = await this.resolveStudentClasses(userId);
+    const classLessons = await this.buildClassLessons(userId, classes);
+    const context = await this.buildTimetableContext(userId, classes);
+    const assessmentLessons = await this.buildAssessmentLessons(
+      userId,
+      context,
+    );
+    return [...classLessons, ...assessmentLessons].sort(
+      (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+    );
+  }
+
+  private async buildClassLessons(
+    userId: string,
+    classes: Class[],
+  ): Promise<StudentLessonDto[]> {
     if (classes.length === 0) return [];
 
     const now = new Date();
@@ -286,11 +340,16 @@ export class StudentClassesService {
         const times = parseClassTimes(cls.dayTime, cls.timeZone);
         return times ? { cls, ...times } : null;
       })
-      .filter((row): row is { cls: Class; startAt: Date; endAt: Date } => Boolean(row));
+      .filter(
+        (row): row is { cls: Class; startAt: Date; endAt: Date } =>
+          Boolean(row),
+      );
 
     const classIds = timed.map((row) => row.cls.id);
     const existingSessions = classIds.length
-      ? await this.sessions.find({ where: { classId: In(classIds) } })
+      ? await this.sessions.find({
+          where: { classId: In(classIds), assessmentId: IsNull() },
+        })
       : [];
 
     const sessionByKey = new Map(
@@ -308,6 +367,7 @@ export class StudentClassesService {
         toCreate.map((row) =>
           this.sessions.create({
             classId: row.cls.id,
+            assessmentId: null,
             startAt: row.startAt,
             endAt: row.endAt,
             room: row.cls.room,
@@ -359,6 +419,7 @@ export class StudentClassesService {
       const homeworkDue = new Date(row.endAt.getTime() + 2 * 24 * 60 * 60_000);
       lessons.push({
         sessionId: session.id,
+        kind: "class",
         classId: row.cls.id,
         subject: row.cls.subject || row.cls.name,
         className: row.cls.subject || row.cls.name,
@@ -392,9 +453,225 @@ export class StudentClassesService {
       });
     }
 
-    return lessons.sort(
-      (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+    return lessons;
+  }
+
+  private async buildTimetableContext(
+    userId: string,
+    classes: Class[],
+  ): Promise<StudentTimetableContext> {
+    const classIds = new Set(classes.map((cls) => cls.id));
+    const subjectKeys = new Set<string>();
+    const yearGroupKeys = new Set<string>();
+    const academicYears = new Set<number>();
+
+    for (const cls of classes) {
+      const subject = (cls.subject || cls.name || "").trim().toLowerCase();
+      if (subject) subjectKeys.add(subject);
+      const yearLevel = yearGroupKey(cls.term?.yearLevel?.name);
+      if (yearLevel) yearGroupKeys.add(yearLevel);
+      const year = cls.term?.academicYear?.year;
+      if (typeof year === "number") academicYears.add(year);
+    }
+
+    const student = await this.students.findOne({ where: { userId } });
+    if (student) {
+      if (student.yearLevel != null) {
+        yearGroupKeys.add(`year ${student.yearLevel}`);
+      }
+      const enrollments = await this.enrollments.find({
+        where: {
+          studentId: student.id,
+          status: In([
+            EnrollmentStatus.ACTIVE,
+            EnrollmentStatus.PENDING,
+            EnrollmentStatus.AWAITING_GUARDIAN,
+          ]),
+        },
+        relations: {
+          subjects: { subject: true },
+          term: { academicYear: true, yearLevel: true },
+        },
+      });
+      for (const enrollment of enrollments) {
+        for (const row of enrollment.subjects ?? []) {
+          const name = row.subject?.name?.trim().toLowerCase();
+          if (name) subjectKeys.add(name);
+        }
+        const level = yearGroupKey(enrollment.term?.yearLevel?.name);
+        if (level) yearGroupKeys.add(level);
+        const year = enrollment.term?.academicYear?.year;
+        if (typeof year === "number") academicYears.add(year);
+      }
+    }
+
+    const linkedRows = await this.assessmentStudents.find({
+      where: { studentId: userId },
+      select: { assessmentId: true },
+    });
+    const linkedAssessmentIds = new Set(
+      linkedRows.map((row) => row.assessmentId),
     );
+
+    return {
+      classIds,
+      subjectKeys,
+      yearGroupKeys,
+      academicYears,
+      linkedAssessmentIds,
+    };
+  }
+
+  private assessmentVisibleToStudent(
+    assessment: Assessment,
+    context: StudentTimetableContext,
+  ): boolean {
+    if (context.linkedAssessmentIds.has(assessment.id)) return true;
+    if (assessment.classId && context.classIds.has(assessment.classId)) {
+      return true;
+    }
+
+    const subjectKey = assessment.subject.trim().toLowerCase();
+    if (!subjectKey || !context.subjectKeys.has(subjectKey)) return false;
+
+    const yearKey = yearGroupKey(assessment.yearGroup);
+    if (yearKey && context.yearGroupKeys.size > 0) {
+      const yearNum = yearGroupNumber(assessment.yearGroup);
+      const matchesYear =
+        context.yearGroupKeys.has(yearKey) ||
+        (yearNum != null && context.yearGroupKeys.has(`year ${yearNum}`));
+      if (!matchesYear) return false;
+    }
+
+    const assessmentYear = assessment.term?.academicYear?.year;
+    if (
+      typeof assessmentYear === "number" &&
+      context.academicYears.size > 0 &&
+      !context.academicYears.has(assessmentYear)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private async buildAssessmentLessons(
+    userId: string,
+    context: StudentTimetableContext,
+  ): Promise<StudentLessonDto[]> {
+    const linkedIds = [...context.linkedAssessmentIds];
+    const classIds = [...context.classIds];
+    const subjects = [...context.subjectKeys];
+    if (linkedIds.length === 0 && classIds.length === 0 && subjects.length === 0) {
+      return [];
+    }
+
+    const assessments = await this.assessments
+      .createQueryBuilder("assessment")
+      .leftJoinAndSelect("assessment.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("assessment.teacher", "teacher")
+      .leftJoinAndSelect("assessment.classroom", "classroom")
+      .where("assessment.status NOT IN (:...excluded)", {
+        excluded: [...EXCLUDED_ASSESSMENT_STATUSES],
+      })
+      .andWhere(
+        new Brackets((where) => {
+          if (linkedIds.length > 0) {
+            where.orWhere("assessment.id IN (:...linkedIds)", { linkedIds });
+          }
+          if (classIds.length > 0) {
+            where.orWhere("assessment.classId IN (:...classIds)", { classIds });
+          }
+          if (subjects.length > 0) {
+            where.orWhere("LOWER(assessment.subject) IN (:...subjects)", {
+              subjects,
+            });
+          }
+        }),
+      )
+      .orderBy("assessment.assessmentDate", "ASC")
+      .addOrderBy("assessment.startTime", "ASC")
+      .getMany();
+
+    const now = new Date();
+    const lessons: StudentLessonDto[] = [];
+
+    for (const assessment of assessments) {
+      if (!this.assessmentVisibleToStudent(assessment, context)) continue;
+
+      const session =
+        (await assessmentSessionSyncService.syncFromAssessment(
+          assessment.id,
+        )) ??
+        (await assessmentSessionSyncService.findByAssessmentId(assessment.id));
+      if (!session) continue;
+
+      const window =
+        assessmentScheduleWindow(
+          assessment.assessmentDate,
+          assessment.startTime,
+          assessment.durationMinutes,
+        ) ?? {
+          startAt: session.startAt,
+          endAt: session.endAt,
+        };
+
+      const attendance = await this.attendance.findOne({
+        where: { sessionId: session.id, studentId: userId },
+      });
+      const online = isOnlineRoom(session.room || assessment.room);
+      const { status, minutesUntilStart, canCheckIn } = lessonStatus({
+        startAt: window.startAt,
+        endAt: window.endAt,
+        attendanceStatus: attendance?.status ?? null,
+        scannedAt: attendance?.scannedAt ?? null,
+        online,
+        now,
+      });
+
+      const termLabel = assessment.term
+        ? assessment.term.academicYear && assessment.term.yearLevel
+          ? `${assessment.term.name} · ${assessment.term.academicYear.year} · ${assessment.term.yearLevel.name}`
+          : assessment.term.name
+        : null;
+      const room =
+        session.room?.trim() ||
+        assessment.room?.trim() ||
+        assessment.classroom?.name?.trim() ||
+        "—";
+
+      lessons.push({
+        sessionId: session.id,
+        kind: "assessment",
+        classId: session.classId ?? assessment.classId ?? "",
+        subject: assessment.subject,
+        className: assessment.name,
+        room,
+        teacher: assessment.teacher?.fullName ?? null,
+        startAt: window.startAt.toISOString(),
+        endAt: window.endAt.toISOString(),
+        term: termLabel,
+        termName: assessment.term?.name ?? null,
+        yearLevel:
+          assessment.yearGroup || assessment.term?.yearLevel?.name || null,
+        weekLabel: weekLabelFor(window.startAt, assessment.term?.startDate),
+        topic: assessment.name,
+        homework: null,
+        status,
+        minutesUntilStart,
+        checkedInAt: attendance?.scannedAt
+          ? attendance.scannedAt.toISOString()
+          : null,
+        isOnline: online,
+        canCheckIn,
+        timeZone: DEFAULT_CLASS_TIMEZONE,
+        resources: [],
+      });
+    }
+
+    return lessons;
   }
 
   private async resolveStudentClasses(userId: string): Promise<Class[]> {

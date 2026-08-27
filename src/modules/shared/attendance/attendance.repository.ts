@@ -38,6 +38,11 @@ export class AttendanceRepository {
           teacher: true,
           term: { academicYear: true, yearLevel: true },
         },
+        assessment: {
+          teacher: true,
+          term: { academicYear: true, yearLevel: true },
+          students: { student: true },
+        },
       },
     });
   }
@@ -75,10 +80,12 @@ export class AttendanceRepository {
     if (classIds.length === 0) return;
 
     const existingSessions = await this.sessions.find({
-      where: { classId: In(classIds) },
+      where: { classId: In(classIds), assessmentId: IsNull() },
       select: { classId: true },
     });
-    const classesWithSessions = new Set(existingSessions.map((s) => s.classId));
+    const classesWithSessions = new Set(
+      existingSessions.map((s) => s.classId).filter(Boolean),
+    );
 
     const missingClassIds = classIds.filter(
       (id) => !classesWithSessions.has(id),
@@ -98,6 +105,7 @@ export class AttendanceRepository {
         sessionsToCreate.push(
           this.sessions.create({
             classId: c.id,
+            assessmentId: null,
             startAt: times.startAt,
             endAt: times.endAt,
             room: c.room || null,
@@ -117,6 +125,7 @@ export class AttendanceRepository {
     if (sessionsToCreate.length > 0) {
       const savedSessions = await this.sessions.save(sessionsToCreate);
       for (const s of savedSessions) {
+        if (!s.classId) continue;
         const enrolments = await this.findEnrolmentsByClassId(s.classId);
         for (const enrol of enrolments) {
           const existing = await this.findAttendanceRecord(s.id, enrol.studentId);
@@ -142,6 +151,7 @@ export class AttendanceRepository {
 
     const where: any = {
       classId: In(classIds),
+      assessmentId: IsNull(),
     };
     if (since) {
       where.endAt = MoreThanOrEqual(since);

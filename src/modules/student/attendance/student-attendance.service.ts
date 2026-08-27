@@ -5,6 +5,7 @@ import {
   ScanStatus,
   ScanFlagReason,
   InstitutionSetting,
+  AssessmentStudent,
 } from "../../../entities/index.js";
 
 type ScanOutcomeStatus =
@@ -126,9 +127,9 @@ export class StudentAttendanceService {
         return {
           id: session.id,
           classId: session.classId,
-          className: session.class.name,
-          classCode: session.class.code,
-          room: session.room ?? session.class.room,
+          className: session.class?.name ?? session.assessment?.name ?? "Class",
+          classCode: session.class?.code ?? (session.assessmentId ? "EXAM" : ""),
+          room: session.room ?? session.class?.room ?? null,
           startAt: session.startAt,
           endAt: session.endAt,
           status,
@@ -171,15 +172,25 @@ export class StudentAttendanceService {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
 
-    const isEnrolled = await this.repo.isStudentEnrolled(
-      session.classId,
-      studentId,
-    );
+    const isEnrolled = session.assessmentId
+      ? Boolean(
+          await AppDataSource.getRepository(AssessmentStudent).findOne({
+            where: {
+              assessmentId: session.assessmentId,
+              studentId,
+            },
+          }),
+        )
+      : session.classId
+        ? await this.repo.isStudentEnrolled(session.classId, studentId)
+        : false;
 
     if (!isEnrolled) {
       throw new AppError(
         403,
-        "You are not enrolled in this class",
+        session.assessmentId
+          ? "You are not on this assessment roll"
+          : "You are not enrolled in this class",
         "NOT_ENROLLED",
       );
     }
@@ -260,7 +271,8 @@ export class StudentAttendanceService {
           targetLat = instSetting.latitude;
           targetLon = instSetting.longitude;
         } else {
-          const roomName = session.room ?? session.class.room ?? "Default";
+          const roomName =
+            session.room ?? session.class?.room ?? "Default";
           const roomCoordinates =
             ROOM_COORDINATES[roomName] ?? ROOM_COORDINATES["Default"];
           if (roomCoordinates) {
@@ -425,8 +437,9 @@ export class StudentAttendanceService {
 
     return {
       status: isAfterGracePeriod ? "GRACE_CLOSED" : "CONFIRMED",
-      sessionName: session.class.name,
-      room: session.room ?? session.class.room,
+      sessionName:
+        session.class?.name ?? session.assessment?.name ?? "Session",
+      room: session.room ?? session.class?.room ?? null,
       scannedAt,
     };
   }

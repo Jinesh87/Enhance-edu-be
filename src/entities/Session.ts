@@ -9,6 +9,7 @@ import {
   Relation,
   UpdateDateColumn,
 } from "typeorm";
+import { Assessment } from "./Assessment.js";
 import { Class } from "./Class.js";
 import { Classroom } from "./Classroom.js";
 import { User } from "./User.js";
@@ -18,12 +19,23 @@ export class Session {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  @Column({ type: "uuid" })
+  /** Class lesson sessions require this; assessment-only sessions may be null. */
+  @Column({ type: "uuid", nullable: true })
   @Index()
-  classId!: string;
+  classId!: string | null;
 
-  @ManyToOne(() => Class, { onDelete: "CASCADE" })
-  class!: Relation<Class>;
+  @ManyToOne(() => Class, { nullable: true, onDelete: "CASCADE" })
+  @JoinColumn({ name: "classId" })
+  class!: Relation<Class> | null;
+
+  /** When set, this session is the roll/check-in window for an assessment. */
+  @Column({ type: "uuid", nullable: true, unique: true })
+  @Index()
+  assessmentId!: string | null;
+
+  @ManyToOne(() => Assessment, { nullable: true, onDelete: "CASCADE" })
+  @JoinColumn({ name: "assessmentId" })
+  assessment!: Relation<Assessment> | null;
 
   @Column({ type: "timestamptz" })
   @Index()
