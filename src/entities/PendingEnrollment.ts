@@ -86,6 +86,11 @@ export class PendingEnrollment {
   @Index()
   replacesEnrollmentId!: string | null;
 
+  /** When set, acceptance adds a term to this student instead of creating a new account. */
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  existingStudentId!: string | null;
+
   @ManyToOne(() => Enrollment, { nullable: true, onDelete: "CASCADE" })
   replacesEnrollment!: Relation<Enrollment> | null;
 

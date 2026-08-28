@@ -16,6 +16,7 @@ import {
 import {
   Enrollment,
   EnrollmentSubject,
+  EnrollmentVersion,
   GuardianStudent,
   PendingEnrollment,
   PendingEnrollmentSubject,
@@ -117,6 +118,11 @@ function toEnrollmentDto(
     previous: null as EnrollmentSnapshot | null,
     hasPendingModification: false,
     pendingModification: null as ReturnType<typeof toPendingEnrollmentDto> | null,
+    previousVersions: [] as Array<{
+      versionNumber: number;
+      snapshot: EnrollmentSnapshot;
+      archivedAt: string;
+    }>,
   };
 }
 
@@ -196,6 +202,8 @@ export class AdminEnrollmentsService {
   private readonly enrollments = AppDataSource.getRepository(Enrollment);
   private readonly enrollmentSubjects =
     AppDataSource.getRepository(EnrollmentSubject);
+  private readonly enrollmentVersions =
+    AppDataSource.getRepository(EnrollmentVersion);
   private readonly pendingEnrollments =
     AppDataSource.getRepository(PendingEnrollment);
   private readonly pendingEnrollmentSubjects = AppDataSource.getRepository(
@@ -234,6 +242,42 @@ export class AdminEnrollmentsService {
         order: { createdAt: "DESC" },
       }),
     ]);
+
+    const studentPairs = new Set<string>();
+    for (const row of rows) {
+      studentPairs.add(`${row.guardianId}:${row.studentId}`);
+    }
+    for (const key of studentPairs) {
+      const [guardianId, studentId] = key.split(":");
+      await this.reconcileTrialEnrollmentsForStudent(guardianId, studentId);
+    }
+
+    if (studentPairs.size > 0) {
+      rows.length = 0;
+      rows.push(
+        ...(await this.enrollments.find({
+          relations: {
+            student: true,
+            guardian: true,
+            term: { academicYear: true, yearLevel: true },
+            subjects: { subject: true },
+          },
+          order: { createdAt: "DESC" },
+        })),
+      );
+      pendingRows.length = 0;
+      pendingRows.push(
+        ...(await this.pendingEnrollments.find({
+          where: { status: PendingEnrollmentStatus.PENDING },
+          relations: {
+            guardian: true,
+            term: { academicYear: true, yearLevel: true },
+            subjects: { subject: true },
+          },
+          order: { createdAt: "DESC" },
+        })),
+      );
+    }
 
     const fulfilled = rows.map((row) => {
       const dto = toEnrollmentDto(
@@ -378,6 +422,7 @@ export class AdminEnrollmentsService {
           modification.previousSnapshot ??
           snapshotFromEnrollment(enrollment, subjects);
       }
+      dto.previousVersions = await this.loadPreviousVersions(enrollment.id);
       return dto;
     }
 
@@ -532,14 +577,6 @@ export class AdminEnrollmentsService {
       return this.applyModification(pending);
     }
 
-    if (!studentLogin?.username?.trim() || !studentLogin?.password) {
-      throw new AppError(
-        400,
-        "Set a username and password for this student to accept the enrolment",
-        "STUDENT_LOGIN_REQUIRED",
-      );
-    }
-
     const guardian =
       pending.guardian ??
       (await this.users.findOne({ where: { id: guardianId } }));
@@ -551,6 +588,59 @@ export class AdminEnrollmentsService {
       pending.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
     if (!pending.term) {
       throw new AppError(404, "Term not found", "TERM_NOT_FOUND");
+    }
+
+    const existingStudentId =
+      pending.existingStudentId ??
+      (await this.resolveExistingStudentWithLogin(
+        guardian.id,
+        pending.studentFullName,
+      ));
+
+    if (existingStudentId) {
+      const link = await this.guardianStudents.findOne({
+        where: { guardianId: guardian.id, studentId: existingStudentId },
+        relations: { student: true },
+      });
+      if (!link?.student) {
+        throw new AppError(
+          404,
+          "Linked student not found",
+          "STUDENT_NOT_FOUND",
+        );
+      }
+
+      const result = await this.enrollExistingStudent(
+        guardian,
+        link.student,
+        pending,
+        pending.term,
+        subjectRows,
+        pending.createdByUserId ?? guardianId,
+      );
+
+      pending.status = PendingEnrollmentStatus.FULFILLED;
+      pending.fulfilledStudentId = result.student.id;
+      pending.fulfilledEnrollmentId = result.enrollment.id;
+      pending.existingStudentId = existingStudentId;
+      await this.pendingEnrollments.save(pending);
+
+      if (!pending.term?.isTrial) {
+        await this.reconcileTrialEnrollmentsForStudent(
+          guardian.id,
+          existingStudentId,
+        );
+      }
+
+      return result;
+    }
+
+    if (!studentLogin?.username?.trim() || !studentLogin?.password) {
+      throw new AppError(
+        400,
+        "Set a username and password for this student to accept the enrolment",
+        "STUDENT_LOGIN_REQUIRED",
+      );
     }
 
     const result = await this.materializeEnrollment(
@@ -805,6 +895,28 @@ export class AdminEnrollmentsService {
       );
     }
 
+    const existingStudentId = await this.resolveExistingStudentWithLogin(
+      guardian.id,
+      input.student.fullName,
+    );
+
+    if (existingStudentId) {
+      const alreadyEnrolled = await this.enrollments.findOne({
+        where: {
+          studentId: existingStudentId,
+          guardianId: guardian.id,
+          termId: term.id,
+        },
+      });
+      if (alreadyEnrolled) {
+        throw new AppError(
+          409,
+          "This student is already enrolled in the selected term",
+          "ENROLLMENT_ALREADY_EXISTS",
+        );
+      }
+    }
+
     const pending = await this.queuePendingEnrollment(
       guardian.id,
       input.student,
@@ -812,6 +924,7 @@ export class AdminEnrollmentsService {
       term,
       subjectRows,
       actorId,
+      { existingStudentId },
     );
 
     pending.guardian = guardian;
@@ -1188,6 +1301,145 @@ export class AdminEnrollmentsService {
     };
   }
 
+  private normalizeStudentName(value: string) {
+    return value.trim().toLowerCase();
+  }
+
+  async resolveExistingStudentWithLogin(
+    guardianId: string,
+    studentFullName: string,
+  ): Promise<string | null> {
+    const name = this.normalizeStudentName(studentFullName);
+    if (!name) return null;
+
+    const links = await this.guardianStudents.find({
+      where: { guardianId },
+      relations: { student: true },
+    });
+
+    const match = links.find(
+      (link) =>
+        this.normalizeStudentName(link.student.fullName) === name &&
+        Boolean(link.student.userId),
+    );
+    return match?.studentId ?? null;
+  }
+
+  private async enrollExistingStudent(
+    guardian: User,
+    student: Student,
+    pending: PendingEnrollment,
+    term: Term,
+    subjectRows: Subject[],
+    actorId: string,
+  ) {
+    student.fullName = pending.studentFullName.trim();
+    student.preferredName = pending.studentPreferredName?.trim() || null;
+    student.dateOfBirth = pending.studentDateOfBirth?.trim() || null;
+    student.yearLevel = pending.studentYearLevel;
+    await this.students.save(student);
+
+    const duplicate = await this.enrollments.findOne({
+      where: {
+        studentId: student.id,
+        guardianId: guardian.id,
+        termId: term.id,
+      },
+      relations: {
+        term: true,
+        subjects: { subject: true },
+      },
+    });
+    if (duplicate) {
+      const duplicateSubjects =
+        duplicate.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
+      return {
+        student: toStudentDto(student),
+        enrollment: toEnrollmentDto(duplicate, duplicateSubjects),
+      };
+    }
+
+    const enrollment = this.enrollments.create({
+      studentId: student.id,
+      guardianId: guardian.id,
+      termId: term.id,
+      fee: pending.fee,
+      status: EnrollmentStatus.ACTIVE,
+      createdByUserId: actorId,
+    });
+    await this.enrollments.save(enrollment);
+
+    for (const subject of subjectRows) {
+      await this.enrollmentSubjects.save(
+        this.enrollmentSubjects.create({
+          enrollmentId: enrollment.id,
+          subjectId: subject.id,
+        }),
+      );
+    }
+
+    enrollment.student = student;
+    enrollment.guardian = guardian;
+    enrollment.term = term;
+
+    return {
+      student: toStudentDto(student),
+      enrollment: toEnrollmentDto(enrollment, subjectRows),
+    };
+  }
+
+  async reconcileTrialEnrollmentsForStudent(
+    guardianId: string,
+    studentId: string,
+  ) {
+    const enrollments = await this.enrollments.find({
+      where: { guardianId, studentId },
+      relations: { term: true },
+    });
+
+    const hasNonTrialEnrollment = enrollments.some(
+      (row) => !row.term?.isTrial,
+    );
+    if (!hasNonTrialEnrollment) return;
+
+    for (const enrollment of enrollments) {
+      if (!enrollment.term?.isTrial) continue;
+      await this.enrollmentSubjects.delete({ enrollmentId: enrollment.id });
+      await this.enrollments.delete(enrollment.id);
+    }
+
+    const student = await this.students.findOne({ where: { id: studentId } });
+    if (!student) return;
+
+    const activeTermIds = new Set(
+      enrollments
+        .filter((row) => !row.term?.isTrial)
+        .map((row) => row.termId),
+    );
+
+    const pendingRows = await this.pendingEnrollments.find({
+      where: {
+        guardianId,
+        status: PendingEnrollmentStatus.PENDING,
+        replacesEnrollmentId: IsNull(),
+      },
+      relations: { term: true },
+    });
+
+    for (const pending of pendingRows) {
+      const matchesStudent =
+        pending.existingStudentId === studentId ||
+        this.normalizeStudentName(pending.studentFullName) ===
+          this.normalizeStudentName(student.fullName);
+      if (!matchesStudent) continue;
+
+      if (pending.term?.isTrial || activeTermIds.has(pending.termId)) {
+        pending.status = PendingEnrollmentStatus.CANCELLED;
+        await this.pendingEnrollments.save(pending);
+      }
+    }
+  }
+
   private async queuePendingEnrollment(
     guardianId: string,
     studentInput: StudentInput,
@@ -1198,6 +1450,7 @@ export class AdminEnrollmentsService {
     options?: {
       replacesEnrollmentId?: string | null;
       previousSnapshot?: EnrollmentSnapshot | null;
+      existingStudentId?: string | null;
     },
   ) {
     const pending = this.pendingEnrollments.create({
@@ -1212,6 +1465,7 @@ export class AdminEnrollmentsService {
       createdByUserId: actorId,
       replacesEnrollmentId: options?.replacesEnrollmentId ?? null,
       previousSnapshot: options?.previousSnapshot ?? null,
+      existingStudentId: options?.existingStudentId ?? null,
     });
     await this.pendingEnrollments.save(pending);
 
@@ -1281,11 +1535,37 @@ export class AdminEnrollmentsService {
 
     const enrollment = await this.enrollments.findOne({
       where: { id: pending.replacesEnrollmentId },
-      relations: { student: true, subjects: true },
+      relations: {
+        student: true,
+        term: true,
+        subjects: { subject: true },
+      },
     });
     if (!enrollment) {
       throw new AppError(404, "Enrolment not found", "ENROLLMENT_NOT_FOUND");
     }
+
+    const currentSubjects =
+      enrollment.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
+    const oldSnapshot =
+      pending.previousSnapshot ??
+      snapshotFromEnrollment(enrollment, currentSubjects);
+
+    const latestVersion = await this.enrollmentVersions.findOne({
+      where: { enrollmentId: enrollment.id },
+      order: { versionNumber: "DESC" },
+    });
+    const versionNumber = (latestVersion?.versionNumber ?? 0) + 1;
+
+    await this.enrollmentVersions.save(
+      this.enrollmentVersions.create({
+        enrollmentId: enrollment.id,
+        versionNumber,
+        snapshot: oldSnapshot,
+        pendingEnrollmentId: pending.id,
+        archivedAt: new Date(),
+      }),
+    );
 
     const subjectRows =
       pending.subjects?.map((link) => link.subject).filter(Boolean) ?? [];
@@ -1318,6 +1598,18 @@ export class AdminEnrollmentsService {
     await this.pendingEnrollments.save(pending);
 
     return { enrollment, student: enrollment.student };
+  }
+
+  private async loadPreviousVersions(enrollmentId: string) {
+    const rows = await this.enrollmentVersions.find({
+      where: { enrollmentId },
+      order: { versionNumber: "DESC" },
+    });
+    return rows.map((row) => ({
+      versionNumber: row.versionNumber,
+      snapshot: row.snapshot,
+      archivedAt: row.archivedAt.toISOString(),
+    }));
   }
 
   private async notifyGuardianOfChange(

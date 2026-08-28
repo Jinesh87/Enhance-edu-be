@@ -133,30 +133,110 @@ export class GuardianStudentsService {
       }),
     ]);
 
-    const pendingEnrollments = freshPendingRows.map(toPendingEnrollmentDto);
-
     if (links.length === 0) {
+      const pendingEnrollments = await Promise.all(
+        freshPendingRows.map(async (row) => {
+          const existingStudentId =
+            row.existingStudentId ??
+            (await adminEnrollmentsService.resolveExistingStudentWithLogin(
+              guardianId,
+              row.studentFullName,
+            ));
+          return {
+            ...toPendingEnrollmentDto(row),
+            existingStudentId,
+            requiresLogin: !existingStudentId,
+          };
+        }),
+      );
       return { students: [], pendingEnrollments };
     }
 
     const studentIds = links.map((link) => link.studentId);
+    for (const studentId of studentIds) {
+      await adminEnrollmentsService.reconcileTrialEnrollmentsForStudent(
+        guardianId,
+        studentId,
+      );
+    }
+
     const userIds = links
       .map((link) => link.student.userId)
       .filter((id): id is string => Boolean(id));
 
-    const [enrollmentRows, accounts] = await Promise.all([
-      this.enrollments.find({
-        where: { guardianId, studentId: In(studentIds) },
-        relations: {
-          term: true,
-          subjects: { subject: true },
-        },
-        order: { createdAt: "DESC" },
+    const [enrollmentRows, accounts, pendingRowsAfterReconcile] =
+      await Promise.all([
+        this.enrollments.find({
+          where: { guardianId, studentId: In(studentIds) },
+          relations: {
+            term: true,
+            subjects: { subject: true },
+          },
+          order: { createdAt: "DESC" },
+        }),
+        userIds.length
+          ? this.users.find({ where: { id: In(userIds) } })
+          : Promise.resolve([] as User[]),
+        this.pendingEnrollments.find({
+          where: {
+            guardianId,
+            status: PendingEnrollmentStatus.PENDING,
+            replacesEnrollmentId: IsNull(),
+          },
+          relations: {
+            term: true,
+            subjects: { subject: true },
+          },
+          order: { createdAt: "DESC" },
+        }),
+      ]);
+
+    const activePendingRows: PendingEnrollment[] = [];
+    for (const row of pendingRowsAfterReconcile) {
+      const existingStudentId =
+        row.existingStudentId ??
+        (await adminEnrollmentsService.resolveExistingStudentWithLogin(
+          guardianId,
+          row.studentFullName,
+        ));
+      const alreadyEnrolled =
+        existingStudentId &&
+        enrollmentRows.some(
+          (enrollment) =>
+            enrollment.studentId === existingStudentId &&
+            enrollment.termId === row.termId,
+        );
+      if (alreadyEnrolled && existingStudentId) {
+        const existingEnrollment = enrollmentRows.find(
+          (enrollment) =>
+            enrollment.studentId === existingStudentId &&
+            enrollment.termId === row.termId,
+        );
+        row.status = PendingEnrollmentStatus.FULFILLED;
+        row.fulfilledStudentId = existingStudentId;
+        row.fulfilledEnrollmentId = existingEnrollment?.id ?? null;
+        row.existingStudentId = existingStudentId;
+        await this.pendingEnrollments.save(row);
+        continue;
+      }
+      activePendingRows.push(row);
+    }
+
+    const pendingEnrollments = await Promise.all(
+      activePendingRows.map(async (row) => {
+        const existingStudentId =
+          row.existingStudentId ??
+          (await adminEnrollmentsService.resolveExistingStudentWithLogin(
+            guardianId,
+            row.studentFullName,
+          ));
+        return {
+          ...toPendingEnrollmentDto(row),
+          existingStudentId,
+          requiresLogin: !existingStudentId,
+        };
       }),
-      userIds.length
-        ? this.users.find({ where: { id: In(userIds) } })
-        : Promise.resolve([] as User[]),
-    ]);
+    );
 
     const pendingMods =
       enrollmentRows.length === 0
