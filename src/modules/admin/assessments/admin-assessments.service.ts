@@ -197,18 +197,10 @@ function scheduleConflictError(
   );
 }
 
-function assertAssessmentDateWithinTerm(
-  assessmentDate: string,
-  term: Term,
-): void {
-  if (assessmentDate < term.startDate || assessmentDate > term.endDate) {
-    throw new AppError(
-      400,
-      "Assessment date is outside the selected term",
-      "ASSESSMENT_DATE_OUTSIDE_TERM",
-      { field: "assessmentDate" },
-    );
-  }
+function addDaysToIsoDate(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 function toAssessmentDto(
@@ -296,6 +288,54 @@ export class AdminAssessmentsService {
       throw new AppError(404, "Term not found", "TERM_NOT_FOUND");
     }
     return term;
+  }
+
+  private async assertAssessmentDateWithinTerm(
+    assessmentDate: string,
+    term: Term,
+  ): Promise<void> {
+    if (assessmentDate < term.startDate) {
+      throw new AppError(
+        400,
+        "Assessment date cannot be earlier than term start date",
+        "ASSESSMENT_DATE_OUTSIDE_TERM",
+        { field: "assessmentDate" },
+      );
+    }
+
+    const allTerms = await this.terms.find({
+      relations: { academicYear: true, yearLevel: true },
+    });
+
+    const termYear = term.academicYear?.year;
+    const termLevel = (term.yearLevel?.name ?? "").trim().toLowerCase();
+
+    const futureTerms = allTerms
+      .filter((other) => {
+        if (other.id === term.id || other.isTrial) return false;
+        const otherYear = other.academicYear?.year;
+        const otherLevel = (other.yearLevel?.name ?? "").trim().toLowerCase();
+        if (termYear && otherYear && otherYear !== termYear) return false;
+        if (termLevel && otherLevel && otherLevel !== termLevel) return false;
+        return other.startDate > term.startDate;
+      })
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+    const maxDate =
+      futureTerms.length > 0
+        ? addDaysToIsoDate(futureTerms[0].startDate, -1)
+        : termYear
+          ? `${termYear}-12-31`
+          : term.endDate;
+
+    if (assessmentDate > maxDate) {
+      throw new AppError(
+        400,
+        "Assessment date is outside the term assessment period",
+        "ASSESSMENT_DATE_OUTSIDE_TERM",
+        { field: "assessmentDate" },
+      );
+    }
   }
 
   private async resolveClassroom(
@@ -730,7 +770,7 @@ export class AdminAssessmentsService {
   async create(input: AssessmentInput) {
     const cls = await this.loadClass(input.classId ?? null);
     const term = await this.loadTerm(input.termId);
-    assertAssessmentDateWithinTerm(input.assessmentDate, term);
+    await this.assertAssessmentDateWithinTerm(input.assessmentDate, term);
     const kind = input.kind === "ENTRANCE" ? "ENTRANCE" : "SCHOOL";
     const scheduleType = input.scheduleType ?? "SESSION";
     if (scheduleType === "FULL_DAY" && kind !== "SCHOOL") {
@@ -894,7 +934,7 @@ export class AdminAssessmentsService {
           (assessment.scheduleType === "FULL_DAY"
             ? 60
             : assessment.durationMinutes);
-    assertAssessmentDateWithinTerm(nextAssessmentDate, term);
+    await this.assertAssessmentDateWithinTerm(nextAssessmentDate, term);
     await this.assertScheduleAvailable(
       {
         termId: term.id,
