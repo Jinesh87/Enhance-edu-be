@@ -27,6 +27,10 @@ adminClassesRouter.use(
 
 adminClassesRouter.get("/", adminClassesController.list);
 adminClassesRouter.get(
+  "/calendar-sessions",
+  adminClassesController.listCalendarSessions,
+);
+adminClassesRouter.get(
   "/group-sessions",
   validate(groupSessionsQuerySchema, "query"),
   adminClassesController.listGroupSessions,

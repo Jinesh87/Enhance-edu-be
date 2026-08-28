@@ -76,6 +76,17 @@ class AdminClassesController {
     }
   };
 
+  listCalendarSessions = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      const term = req.query.term ? String(req.query.term) : undefined;
+      const data = await adminClassesService.listCalendarSessions({ year, term });
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   updateSession = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const session = await adminClassesService.updateSession(
