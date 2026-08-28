@@ -1,4 +1,4 @@
-import { In, IsNull } from "typeorm";
+import { In, IsNull, Not } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   calendarDateFromDayTime,
@@ -237,7 +237,10 @@ export class AdminClassesRepository {
         if (existingSessions.length > 0) {
           const sessionIds = existingSessions.map((s) => s.id);
           const attendanceRecords = await attendanceRepo.find({
-            where: { sessionId: In(sessionIds) },
+            where: {
+              sessionId: In(sessionIds),
+              status: Not(AttendanceStatus.PENDING),
+            },
             select: { sessionId: true },
           });
           const scanEvents = await scanRepo.find({
@@ -256,7 +259,7 @@ export class AdminClassesRepository {
           const nowMs = now.getTime();
           const sessionsToRemove: Session[] = [];
           for (const s of existingSessions) {
-            // Keep live/ended (already started) and any session with activity.
+            // Keep live/ended (already started) and any session with real activity.
             if (
               sessionHasStarted(s.startAt, nowMs) ||
               lockedSessionIds.has(s.id)
@@ -267,6 +270,8 @@ export class AdminClassesRepository {
           }
 
           if (sessionsToRemove.length > 0) {
+            const removeIds = sessionsToRemove.map((s) => s.id);
+            await attendanceRepo.delete({ sessionId: In(removeIds) });
             await sessionRepo.remove(sessionsToRemove);
           }
         }
