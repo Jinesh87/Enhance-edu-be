@@ -69,7 +69,22 @@ export class TeacherClassService {
       teacherId,
       tomorrow,
     );
-    const activeSessions = [...classSessions, ...assessmentSessions]
+    const fullDayAssessmentSessions =
+      await this.findFullDayAssessmentSessions(since, until);
+    const fullDayWeekAssessmentSessions =
+      await this.findFullDayAssessmentSessions(tomorrow);
+    const visibleClassSessions = classSessions.filter(
+      (session) => !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions),
+    );
+    const visibleClassWeekSessions = classWeekSessions.filter(
+      (session) =>
+        !this.isSupersededByFullDayExam(
+          session,
+          fullDayWeekAssessmentSessions,
+        ),
+    );
+
+    const activeSessions = [...visibleClassSessions, ...assessmentSessions]
       .filter((session, index, all) => {
         const first = all.findIndex((row) => row.id === session.id);
         return first === index;
@@ -79,7 +94,7 @@ export class TeacherClassService {
           new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
       );
 
-    const weekSessions = [...classWeekSessions, ...assessmentWeekSessions]
+    const weekSessions = [...visibleClassWeekSessions, ...assessmentWeekSessions]
       .filter((session, index, all) => {
         const first = all.findIndex((row) => row.id === session.id);
         return first === index && !activeSessions.some((a) => a.id === session.id);
@@ -126,6 +141,41 @@ export class TeacherClassService {
     return qb.orderBy("session.startAt", "ASC").getMany();
   }
 
+  private async findFullDayAssessmentSessions(
+    since?: Date,
+    until?: Date,
+  ): Promise<Session[]> {
+    const qb = this.sessions
+      .createQueryBuilder("session")
+      .innerJoinAndSelect("session.assessment", "assessment")
+      .where("assessment.scheduleType = :scheduleType", {
+        scheduleType: "FULL_DAY",
+      })
+      .andWhere("assessment.status NOT IN (:...excluded)", {
+        excluded: ["ARCHIVED", "CANCELLED"],
+      })
+      .andWhere("session.assessmentId IS NOT NULL");
+
+    if (since) {
+      qb.andWhere("session.endAt >= :since", { since });
+    }
+    if (until) {
+      qb.andWhere("session.startAt <= :until", { until });
+    }
+
+    return qb.getMany();
+  }
+
+  private isSupersededByFullDayExam(
+    session: Session,
+    fullDayAssessmentSessions: Session[],
+  ): boolean {
+    return fullDayAssessmentSessions.some(
+      (exam) =>
+        session.startAt.getTime() < exam.endAt.getTime() &&
+        exam.startAt.getTime() < session.endAt.getTime(),
+    );
+  }
 }
 
 export const teacherClassService = new TeacherClassService();

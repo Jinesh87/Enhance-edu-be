@@ -231,7 +231,7 @@ export class AdminClassesService {
     if (filters?.term) {
       const termNeedle = filters.term.trim().toLowerCase();
       filteredClasses = filteredClasses.filter((c) => {
-        const tName = (c.term?.name || c.termName || "").toLowerCase();
+        const tName = c.term?.name?.toLowerCase() || "";
         return tName.includes(termNeedle);
       });
     }
@@ -347,11 +347,11 @@ export class AdminClassesService {
     }
 
     const graceByClassId = await this.repo.findGraceMinutesByClassIds(
-      filteredClasses.map((item) => item.id),
+      classes.map((item) => item.id),
     );
 
     return {
-      classes: filteredClasses.map((item) =>
+      classes: classes.map((item) =>
         toClassDto(item, graceByClassId.get(item.id) ?? null),
       ),
       summaries: paginated,

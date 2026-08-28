@@ -330,8 +330,23 @@ export class StudentClassesService {
       userId,
       context,
     );
+    const fullDayExamWindows = assessmentLessons
+      .filter((lesson) => lesson.scheduleType === "FULL_DAY")
+      .map((lesson) => ({
+        startAt: new Date(lesson.startAt).getTime(),
+        endAt: new Date(lesson.endAt).getTime(),
+      }));
+    const visibleClassLessons = classLessons.filter((lesson) => {
+      const startAt = new Date(lesson.startAt).getTime();
+      const endAt = new Date(lesson.endAt).getTime();
+      return !fullDayExamWindows.some(
+        (exam) =>
+          startAt < exam.endAt &&
+          exam.startAt < endAt,
+      );
+    });
 
-    return [...classLessons, ...assessmentLessons].sort(
+    return [...visibleClassLessons, ...assessmentLessons].sort(
       (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
     );
   }
