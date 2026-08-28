@@ -134,6 +134,8 @@ export async function ensureAssessmentSessionSchema() {
       ADD COLUMN IF NOT EXISTS "totalMarks" numeric(8,2);
     ALTER TABLE assessments
       ADD COLUMN IF NOT EXISTS "cutOffMarks" numeric(8,2);
+    ALTER TABLE assessments
+      ADD COLUMN IF NOT EXISTS "autoMarking" boolean NOT NULL DEFAULT false;
     ALTER TABLE assessment_submissions
       ADD COLUMN IF NOT EXISTS mark numeric(8,2);
     ALTER TABLE assessment_submissions

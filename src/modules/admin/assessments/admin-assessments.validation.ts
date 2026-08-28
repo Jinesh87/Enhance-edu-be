@@ -64,6 +64,7 @@ export const createAssessmentSchema = Joi.object({
   teacherId: uuid.allow(null, ""),
   totalMarks: marksField.allow(null),
   cutOffMarks: marksField.allow(null),
+  autoMarking: Joi.boolean().default(false),
   notes: Joi.string().trim().max(2000).allow("", null),
   studentIds: Joi.array().items(uuid).max(200),
 })
@@ -85,7 +86,6 @@ export const createAssessmentSchema = Joi.object({
     }),
   })
   .custom((value, helpers) => {
-    if (value.kind !== "ENTRANCE") return value;
     if (
       value.totalMarks != null &&
       value.cutOffMarks != null &&
@@ -96,7 +96,7 @@ export const createAssessmentSchema = Joi.object({
       });
     }
     return value;
-  }, "entrance marks bounds")
+  }, "marks bounds")
   .messages({
     "any.custom": "{{#message}}",
   });
@@ -125,6 +125,7 @@ export const updateAssessmentSchema = Joi.object({
   teacherId: uuid.allow(null, ""),
   totalMarks: marksField.allow(null),
   cutOffMarks: marksField.allow(null),
+  autoMarking: Joi.boolean(),
   notes: Joi.string().trim().max(2000).allow("", null),
   studentIds: Joi.array().items(uuid).max(200),
 })

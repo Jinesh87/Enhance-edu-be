@@ -107,6 +107,9 @@ export class Assessment {
   @Column({ type: "numeric", precision: 8, scale: 2, nullable: true })
   cutOffMarks!: string | null;
 
+  @Column({ type: "boolean", default: false })
+  autoMarking!: boolean;
+
   @Column({ type: "text", nullable: true })
   notes!: string | null;
 

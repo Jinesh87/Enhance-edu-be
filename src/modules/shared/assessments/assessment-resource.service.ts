@@ -61,7 +61,11 @@ export class AssessmentResourceService {
     role: UserRole,
   ) {
     const assessment = await this.requireAssessment(assessmentId);
-    if (role !== UserRole.SUPER_ADMIN && assessment.teacherId !== userId) {
+    if (
+      role !== UserRole.SUPER_ADMIN &&
+      role !== UserRole.OFFICE_STAFF &&
+      assessment.teacherId !== userId
+    ) {
       throw new AppError(
         403,
         "You are not authorized to manage this assessment",

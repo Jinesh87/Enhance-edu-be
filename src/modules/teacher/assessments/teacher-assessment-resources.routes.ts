@@ -10,7 +10,7 @@ const upload = multer({
 });
 
 const router = Router();
-const staffOnly = authorize(UserRole.SUPER_ADMIN, UserRole.STAFF);
+const staffOnly = authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF, UserRole.STAFF);
 
 router.get(
   "/tutor/assessments/:assessmentId/resources",
