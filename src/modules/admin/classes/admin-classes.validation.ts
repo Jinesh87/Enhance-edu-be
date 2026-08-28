@@ -83,7 +83,7 @@ export const bulkReplaceClassSchema = Joi.object({
   gracePeriodMinutes: Joi.number().integer().min(0).max(480).default(25),
   classes: Joi.array()
     .items(createClassSchema)
-    .min(1)
+    .min(0)
     .max(500)
     .required(),
 });

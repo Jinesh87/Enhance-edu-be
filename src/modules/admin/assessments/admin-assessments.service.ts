@@ -45,6 +45,7 @@ export type AssessmentInput = {
   teacherId?: string | null;
   totalMarks?: number | null;
   cutOffMarks?: number | null;
+  autoMarking?: boolean;
   notes?: string | null;
   studentIds?: string[];
 };
@@ -243,6 +244,7 @@ function toAssessmentDto(
     teacherName: assessment.teacher?.fullName ?? null,
     totalMarks: marksNumber(assessment.totalMarks),
     cutOffMarks: marksNumber(assessment.cutOffMarks),
+    autoMarking: Boolean(assessment.autoMarking),
     notes: assessment.notes,
     status: assessment.status,
     studentCount: students.length,
@@ -797,16 +799,23 @@ export class AdminAssessmentsService {
     const teacherId = await this.resolveTeacher(
       input.teacherId ?? cls?.teacher?.id ?? null,
     );
-    const totalMarks =
-      kind === "ENTRANCE" ? marksNumber(input.totalMarks) : null;
-    const cutOffMarks =
-      kind === "ENTRANCE" ? marksNumber(input.cutOffMarks) : null;
+    const totalMarks = marksNumber(input.totalMarks);
+    const cutOffMarks = marksNumber(input.cutOffMarks);
+    const autoMarking = Boolean(input.autoMarking);
+
     if (kind === "ENTRANCE") {
       this.assertEntranceRequirements({
         teacherId,
         totalMarks,
         cutOffMarks,
       });
+    } else if (totalMarks != null && cutOffMarks != null && cutOffMarks > totalMarks) {
+      throw new AppError(
+        400,
+        "Pass mark cannot exceed total marks",
+        "PASS_MARK_EXCEEDS_TOTAL",
+        { field: "cutOffMarks" },
+      );
     }
     const yearGroup = input.yearGroup.trim() || term.yearLevel?.name || "";
     if (!yearGroup) {
@@ -855,6 +864,7 @@ export class AdminAssessmentsService {
       teacherId,
       totalMarks: marksColumn(totalMarks),
       cutOffMarks: marksColumn(cutOffMarks),
+      autoMarking,
       notes: input.notes?.trim() || null,
       status: autoStatusForTiming(
         input.assessmentDate,
@@ -966,26 +976,36 @@ export class AdminAssessmentsService {
     assessment.classroomId = classroom.classroomId;
     assessment.room = classroom.room;
     assessment.teacherId = teacherId;
+    const totalMarks =
+      input.totalMarks === undefined
+        ? marksNumber(assessment.totalMarks)
+        : marksNumber(input.totalMarks);
+    const cutOffMarks =
+      input.cutOffMarks === undefined
+        ? marksNumber(assessment.cutOffMarks)
+        : marksNumber(input.cutOffMarks);
+
     if (assessment.kind === "ENTRANCE") {
-      const totalMarks =
-        input.totalMarks === undefined
-          ? marksNumber(assessment.totalMarks)
-          : marksNumber(input.totalMarks);
-      const cutOffMarks =
-        input.cutOffMarks === undefined
-          ? marksNumber(assessment.cutOffMarks)
-          : marksNumber(input.cutOffMarks);
       this.assertEntranceRequirements({
         teacherId,
         totalMarks,
         cutOffMarks,
       });
-      assessment.totalMarks = marksColumn(totalMarks);
-      assessment.cutOffMarks = marksColumn(cutOffMarks);
-    } else {
-      assessment.totalMarks = null;
-      assessment.cutOffMarks = null;
+    } else if (totalMarks != null && cutOffMarks != null && cutOffMarks > totalMarks) {
+      throw new AppError(
+        400,
+        "Pass mark cannot exceed total marks",
+        "PASS_MARK_EXCEEDS_TOTAL",
+        { field: "cutOffMarks" },
+      );
     }
+    assessment.totalMarks = marksColumn(totalMarks);
+    assessment.cutOffMarks = marksColumn(cutOffMarks);
+
+    if (input.autoMarking !== undefined) {
+      assessment.autoMarking = Boolean(input.autoMarking);
+    }
+
     if (input.notes !== undefined) {
       assessment.notes = input.notes?.trim() || null;
     }

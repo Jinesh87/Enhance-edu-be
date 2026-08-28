@@ -256,14 +256,9 @@ export class AdminClassesRepository {
           scanEvents.forEach((r) => lockedSessionIds.add(r.sessionId));
           tasks.forEach((r) => lockedSessionIds.add(r.sessionId));
 
-          const nowMs = now.getTime();
           const sessionsToRemove: Session[] = [];
           for (const s of existingSessions) {
-            // Keep live/ended (already started) and any session with real activity.
-            if (
-              sessionHasStarted(s.startAt, nowMs) ||
-              lockedSessionIds.has(s.id)
-            ) {
+            if (lockedSessionIds.has(s.id)) {
               continue;
             }
             sessionsToRemove.push(s);
@@ -447,10 +442,7 @@ export class AdminClassesRepository {
       const nowMs = now.getTime();
       const remainingSessionKeys = new Set<string>();
       for (const s of existingSessions) {
-        if (
-          sessionHasStarted(s.startAt, nowMs) ||
-          lockedSessionIds.has(s.id)
-        ) {
+        if (lockedSessionIds.has(s.id)) {
           remainingSessionKeys.add(`${s.classId}|${s.startAt.getTime()}`);
         }
       }
