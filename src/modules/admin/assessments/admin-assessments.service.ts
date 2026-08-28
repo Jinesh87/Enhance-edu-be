@@ -694,7 +694,6 @@ export class AdminAssessmentsService {
         subject: existingClass?.subject ?? null,
         yearGroup: existingClass?.term?.yearLevel?.name ?? null,
       };
-      if (input.scheduleType === "FULL_DAY") continue;
       const resource = sharedScheduleResource(proposed, existing);
       if (resource) throw scheduleConflictError(proposed, existing, resource);
     }
