@@ -7,7 +7,7 @@ import {
   sessionStatus,
   type SessionStatus,
 } from "../../../common/utils/session-status.js";
-import { Class, Classroom, Session } from "../../../entities/index.js";
+import { Class, Classroom, Session, AttendanceRecord, AttendanceStatus, ClassStudent } from "../../../entities/index.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import { In, IsNull } from "typeorm";
 import {
@@ -15,6 +15,9 @@ import {
   type ClassInput,
 } from "./admin-classes.repository.js";
 import { syncClassRosterFromEnrollments } from "../../shared/classes/sync-class-roster.js";
+import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
+
+const attendanceRepository = new AttendanceRepository();
 
 function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Date | null {
   return parseDayTime(dayTime, timeZone)?.startAt ?? null;
@@ -151,6 +154,94 @@ export class AdminClassesService {
       {
         field: "time",
         subject,
+        proposedSubject: proposedSubject?.trim() || null,
+      },
+    );
+  }
+
+  private async assertTeacherAvailable(
+    teacherId: string,
+    dayTime: string | null | undefined,
+    timeZone: string | null | undefined,
+    excludeClassIds: string[] = [],
+    proposedSubject?: string | null,
+  ) {
+    const proposed = this.occupancyTimes(dayTime, timeZone);
+    if (!proposed) return;
+
+    const { classes } = await this.repo.findAll();
+    const exclude = new Set(excludeClassIds);
+    const conflict = classes.find((cls) => {
+      if (exclude.has(cls.id)) return false;
+      if (cls.teacher?.id !== teacherId) return false;
+      const existing = this.occupancyTimes(cls.dayTime, cls.timeZone);
+      if (!existing) return false;
+      return (
+        proposed.startAt.getTime() < existing.endAt.getTime() &&
+        existing.startAt.getTime() < proposed.endAt.getTime()
+      );
+    });
+
+    if (!conflict) return;
+
+    const subject = conflict.subject?.trim() || "another class";
+    const termLabel = this.classTermLabel(conflict);
+    throw new AppError(
+      409,
+      termLabel
+        ? `Teacher is already assigned to ${subject} (${termLabel}) at this time`
+        : `Teacher is already assigned to ${subject} at this time`,
+      "TEACHER_OCCUPIED",
+      {
+        field: "teacherId",
+        conflictSubject: subject,
+        proposedSubject: proposedSubject?.trim() || null,
+      },
+    );
+  }
+
+  private async assertTermScheduleAvailable(
+    termId: string | null | undefined,
+    termName: string | null | undefined,
+    dayTime: string | null | undefined,
+    timeZone: string | null | undefined,
+    excludeClassIds: string[] = [],
+    proposedSubject?: string | null,
+  ) {
+    const proposed = this.occupancyTimes(dayTime, timeZone);
+    if (!proposed) return;
+
+    const { classes } = await this.repo.findAll();
+    const exclude = new Set(excludeClassIds);
+    const termNeedle = (termName ?? "").trim().toLowerCase();
+
+    const conflict = classes.find((cls) => {
+      if (exclude.has(cls.id)) return false;
+      const sameTerm =
+        (termId && cls.term?.id && cls.term.id === termId) ||
+        (termNeedle &&
+          (cls.term?.name || cls.termName || "").trim().toLowerCase() ===
+            termNeedle);
+      if (!sameTerm) return false;
+
+      const existing = this.occupancyTimes(cls.dayTime, cls.timeZone);
+      if (!existing) return false;
+      return (
+        proposed.startAt.getTime() < existing.endAt.getTime() &&
+        existing.startAt.getTime() < proposed.endAt.getTime()
+      );
+    });
+
+    if (!conflict) return;
+
+    const subject = conflict.subject?.trim() || "another class";
+    throw new AppError(
+      409,
+      `Time overlaps ${subject} at this time`,
+      "CLASS_SCHEDULE_OVERLAP",
+      {
+        field: "startTime",
+        conflictSubject: subject,
         proposedSubject: proposedSubject?.trim() || null,
       },
     );
@@ -387,11 +478,11 @@ export class AdminClassesService {
     const resolved = await this.applyClassroomToInput(
       {
         ...input,
-        classroomId: termObj?.classroomId ?? null,
+        classroomId: input.classroomId ?? termObj?.classroomId ?? null,
       },
       {
         required: false,
-        requireActive: Boolean(termObj?.classroomId),
+        requireActive: Boolean(input.classroomId ?? termObj?.classroomId),
       },
     );
 
@@ -400,9 +491,13 @@ export class AdminClassesService {
       teacher = await this.repo.findTeacherById(resolved.teacherId);
     }
 
+    const code =
+      resolved.code?.trim() ||
+      `${(resolved.subject ?? "CLS").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 4) || "CLS"}-${Date.now().toString(36).toUpperCase()}`;
+
     const cls = await this.repo.create({
       name: resolved.name?.trim() || `${resolved.subject ?? "Subject"} Class`,
-      code: resolved.code.trim(),
+      code,
       room: (resolved.room ?? "").trim(),
       classroomId: resolved.classroomId ?? null,
       subject: resolved.subject?.trim() || null,
@@ -411,7 +506,7 @@ export class AdminClassesService {
       timeZone: resolveIanaTimeZone(resolved.timeZone),
       capacity: resolved.capacity ?? 20,
       contentGroup: resolved.contentGroup?.trim() || null,
-      termName: resolved.term?.trim() || "Term 3 2026",
+      termName: resolved.term?.trim() || (termObj ? termObj.name : "Term 3 2026"),
       term: termObj,
       teacher,
     });
@@ -426,8 +521,67 @@ export class AdminClassesService {
       );
     }
 
-    await this.repo.save(cls);
-    return toClassDto(cls);
+    if (resolved.teacherId) {
+      await this.assertTeacherAvailable(
+        resolved.teacherId,
+        cls.dayTime,
+        cls.timeZone,
+        [],
+        resolved.subject,
+      );
+    }
+
+    await this.assertTermScheduleAvailable(
+      cls.term?.id,
+      cls.term?.name ?? cls.termName,
+      cls.dayTime,
+      cls.timeZone,
+      [],
+      resolved.subject,
+    );
+
+    const saved = await this.repo.save(cls);
+
+    // Sync roster from enrollments
+    await syncClassRosterFromEnrollments(saved);
+
+    // Generate Session entity in sessions table for calendar and timetable
+    if (saved.dayTime) {
+      const times = parseDayTime(saved.dayTime, saved.timeZone);
+      if (times) {
+        const sessionRepo = AppDataSource.getRepository(Session);
+        const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
+        const classStudentRepo = AppDataSource.getRepository(ClassStudent);
+
+        const newSession = await sessionRepo.save(
+          sessionRepo.create({
+            classId: saved.id,
+            startAt: times.startAt,
+            endAt: times.endAt,
+            room: saved.room || null,
+            classroomId: saved.classroomId || null,
+            teacherId: saved.teacher?.id || null,
+            gracePeriodMinutes: 25,
+          }),
+        );
+
+        const enrolments = await classStudentRepo.find({
+          where: { classId: saved.id },
+        });
+        for (const enrol of enrolments) {
+          await attendanceRepo.save(
+            attendanceRepo.create({
+              sessionId: newSession.id,
+              studentId: enrol.studentId,
+              status: AttendanceStatus.PENDING,
+              scannedAt: null,
+            }),
+          );
+        }
+      }
+    }
+
+    return toClassDto(saved);
   }
 
   async update(
@@ -578,6 +732,48 @@ export class AdminClassesService {
       throw new AppError(404, "Class not found", "CLASS_NOT_FOUND");
     }
     await this.repo.remove(cls);
+  }
+
+  async listCalendarSessions(filters?: { year?: number; term?: string }) {
+    const { classes } = await this.repo.findAll();
+    let filteredClasses = classes;
+    if (filters?.year) {
+      filteredClasses = filteredClasses.filter(
+        (c) => c.term?.academicYear?.year === filters.year,
+      );
+    }
+    if (filters?.term) {
+      const termNeedle = filters.term.trim().toLowerCase();
+      filteredClasses = filteredClasses.filter((c) => {
+        const tName = (c.term?.name || c.termName || "").toLowerCase();
+        return tName.includes(termNeedle);
+      });
+    }
+
+    const classIds = filteredClasses.map((c) => c.id);
+    if (classIds.length === 0) {
+      return { sessions: [] };
+    }
+
+    await attendanceRepository.ensureSessionsExistForClassIds(classIds);
+
+    const sessionRows = await AppDataSource.getRepository(Session).find({
+      where: { classId: In(classIds), assessmentId: IsNull() },
+      relations: {
+        class: {
+          teacher: true,
+          term: { academicYear: true, yearLevel: true },
+          classroom: true,
+        },
+        classroom: true,
+        teacher: true,
+      },
+      order: { startAt: "ASC" },
+    });
+
+    return {
+      sessions: sessionRows.map((row) => this.toSessionRow(row)),
+    };
   }
 
   async listGroupSessions(
@@ -876,16 +1072,29 @@ export class AdminClassesService {
             : room && otherRoom && room.trim() === otherRoom.trim()
               ? "room"
               : null;
-      if (!resource || !overlap(other.startAt, other.endAt)) continue;
 
-      const subject = other.class?.subject || other.class?.name || "another class";
-      const field = resource === "teacher" ? "teacherId" : "time";
-      throw new AppError(
-        409,
-        `${resource[0].toUpperCase()}${resource.slice(1)} is already assigned to ${subject} at this time`,
-        "CLASS_SESSION_CONFLICT",
-        { field, subject, resource },
-      );
+      const sameCohort =
+        (session.classId &&
+          other.classId &&
+          session.classId === other.classId) ||
+        (session.class?.term?.id &&
+          other.class?.term?.id &&
+          session.class.term.id === other.class.term.id);
+
+      const isConflict = resource !== null || sameCohort;
+      if (!isConflict || !overlap(other.startAt, other.endAt)) continue;
+
+      const subject =
+        other.class?.subject || other.class?.name || "another class";
+      const field = resource === "teacher" ? "teacherId" : "startTime";
+      const message = resource
+        ? `${resource[0].toUpperCase()}${resource.slice(1)} is already assigned to ${subject} at this time`
+        : `Time overlaps ${subject} at this time`;
+      throw new AppError(409, message, "CLASS_SESSION_CONFLICT", {
+        field,
+        conflictSubject: subject,
+        resource: resource ?? "time",
+      });
     }
 
     const assessmentSessions = await AppDataSource.getRepository(Session)
