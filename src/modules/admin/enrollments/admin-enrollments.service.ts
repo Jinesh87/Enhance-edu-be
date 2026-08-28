@@ -204,7 +204,16 @@ export class AdminEnrollmentsService {
   private readonly terms = AppDataSource.getRepository(Term);
   private readonly subjects = AppDataSource.getRepository(Subject);
 
-  async list(filters?: { page?: number; limit?: number; search?: string }) {
+  async list(filters?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    termId?: string;
+    term?: string;
+    year?: number;
+    yearLevel?: string;
+    status?: string;
+  }) {
     const [rows, pendingRows] = await Promise.all([
       this.enrollments.find({
         relations: {
@@ -262,16 +271,53 @@ export class AdminEnrollmentsService {
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
 
+    if (filters?.termId) {
+      all = all.filter((item) => item.term?.id === filters.termId);
+    }
+
+    if (filters?.year) {
+      const yearStr = String(filters.year);
+      all = all.filter((item) => item.term?.name?.includes(yearStr));
+    }
+
+    if (filters?.yearLevel) {
+      const levelNeedle = filters.yearLevel.trim().toLowerCase();
+      all = all.filter((item) =>
+        item.term?.name?.toLowerCase().includes(levelNeedle),
+      );
+    }
+
+    if (filters?.term) {
+      const termNeedle = filters.term.trim().toLowerCase();
+      all = all.filter((item) => {
+        const termName = item.term?.name?.toLowerCase() || "";
+        const baseName = termName.split(" · ")[0] || termName;
+        return baseName === termNeedle || termName.includes(termNeedle);
+      });
+    }
+
+    if (filters?.status) {
+      all = all.filter((item) => item.status === filters.status);
+    }
+
     if (filters?.search) {
       const needle = filters.search.trim().toLowerCase();
-      all = all.filter((item: any) => {
-        const studentName = (item.student?.fullName || item.studentName || "").toLowerCase();
-        const guardianName = (item.guardian?.fullName || item.guardianName || "").toLowerCase();
-        const guardianEmail = (item.guardian?.email || item.guardianEmail || "").toLowerCase();
+      all = all.filter((item) => {
+        const studentName = (item.student?.fullName || "").toLowerCase();
+        const studentPreferred = (item.student?.preferredName || "").toLowerCase();
+        const guardianName = (item.guardian?.fullName || "").toLowerCase();
+        const guardianEmail = (item.guardian?.email || "").toLowerCase();
+        const termName = (item.term?.name || "").toLowerCase();
+        const subjects = (item.subjects || [])
+          .map((subject) => subject.name.toLowerCase())
+          .join(" ");
         return (
           studentName.includes(needle) ||
+          studentPreferred.includes(needle) ||
           guardianName.includes(needle) ||
-          guardianEmail.includes(needle)
+          guardianEmail.includes(needle) ||
+          termName.includes(needle) ||
+          subjects.includes(needle)
         );
       });
     }
