@@ -44,7 +44,7 @@ export class Enrollment {
   @Column({ type: "numeric", precision: 10, scale: 2 })
   fee!: string;
 
-  @Column({ type: "enum", enum: EnrollmentStatus, default: EnrollmentStatus.PENDING })
+  @Column({ type: "enum", enum: EnrollmentStatus, default: EnrollmentStatus.ACTIVE })
   @Index()
   status!: EnrollmentStatus;
 

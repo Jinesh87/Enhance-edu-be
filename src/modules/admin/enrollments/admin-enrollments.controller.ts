@@ -8,11 +8,21 @@ class AdminEnrollmentsController {
       const page = req.query.page ? Number(req.query.page) : undefined;
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
       const search = req.query.search ? String(req.query.search) : undefined;
+      const termId = req.query.termId ? String(req.query.termId) : undefined;
+      const term = req.query.term ? String(req.query.term) : undefined;
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      const yearLevel = req.query.yearLevel ? String(req.query.yearLevel) : undefined;
+      const status = req.query.status ? String(req.query.status) : undefined;
 
       const { enrollments, total, pendingGuardiansCount } = await adminEnrollmentsService.list({
         page,
         limit,
         search,
+        termId,
+        term,
+        year: Number.isFinite(year) ? year : undefined,
+        yearLevel,
+        status,
       });
       res.status(200).json({ enrollments, total, pendingGuardiansCount });
     } catch (error) {

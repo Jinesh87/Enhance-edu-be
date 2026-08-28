@@ -145,6 +145,57 @@ export async function ensureAssessmentSessionSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureEnrollmentStatusSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  const [{ enrollmentsTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.enrollments') IS NOT NULL AS "enrollmentsTable"
+  `);
+  if (!enrollmentsTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    UPDATE enrollments
+    SET status = 'ACTIVE'
+    WHERE status::text IN ('PENDING', 'WITHDRAWN');
+  `);
+
+  await bootstrap.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_type t
+        JOIN pg_enum e ON e.enumtypid = t.oid
+        WHERE t.typname = 'enrollments_status_enum'
+          AND e.enumlabel IN ('PENDING', 'WITHDRAWN')
+      ) THEN
+        ALTER TYPE enrollments_status_enum RENAME TO enrollments_status_enum_old;
+        CREATE TYPE enrollments_status_enum AS ENUM ('ACTIVE', 'AWAITING_GUARDIAN');
+        ALTER TABLE enrollments ALTER COLUMN status DROP DEFAULT;
+        ALTER TABLE enrollments
+          ALTER COLUMN status TYPE enrollments_status_enum
+          USING (
+            CASE status::text
+              WHEN 'ACTIVE' THEN 'ACTIVE'::enrollments_status_enum
+              WHEN 'AWAITING_GUARDIAN' THEN 'AWAITING_GUARDIAN'::enrollments_status_enum
+              ELSE 'ACTIVE'::enrollments_status_enum
+            END
+          );
+        ALTER TABLE enrollments ALTER COLUMN status SET DEFAULT 'ACTIVE';
+        DROP TYPE enrollments_status_enum_old;
+      END IF;
+    END $$;
+  `);
+  await bootstrap.destroy();
+}
+
 export async function ensureEnquiryConstraints() {
   if (!AppDataSource.isInitialized) return;
   await AppDataSource.query(`
