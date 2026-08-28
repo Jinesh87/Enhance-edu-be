@@ -69,7 +69,7 @@ export const changeStageSchema = Joi.object({
   stageId: uuid.required(),
   lostReasonId: uuid.allow(null, ""),
   competitorId: uuid.allow(null, ""),
-  flagForReengagement: Joi.boolean(),
+  competitorName: Joi.string().trim().max(120).allow(null, ""),
   note: Joi.string().trim().max(500).allow(null, ""),
 });
 
@@ -120,4 +120,5 @@ export const bulkEnquiriesSchema = Joi.object({
   stageId: uuid,
   lostReasonId: uuid.allow(null, ""),
   competitorId: uuid.allow(null, ""),
+  competitorName: Joi.string().trim().max(120).allow(null, ""),
 }).or("ownerUserId", "lastSourceId", "stageId");

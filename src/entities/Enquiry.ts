@@ -149,9 +149,6 @@ export class Enquiry {
   @ManyToOne(() => EnquiryCompetitor, { onDelete: "SET NULL", nullable: true })
   competitor!: Relation<EnquiryCompetitor> | null;
 
-  @Column({ type: "boolean", default: false })
-  flagForReengagement!: boolean;
-
   @Column({ type: "uuid", nullable: true })
   linkedFromEnquiryId!: string | null;
 
