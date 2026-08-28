@@ -6,6 +6,7 @@ import {
 } from "../../../common/constants/enquiry.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { AppError } from "../../../common/errors/AppError.js";
+import { canMoveEnquiryToStage } from "../../../common/utils/enquiry-stage-transitions.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   Enquiry,
@@ -140,7 +141,6 @@ function toEnquiryDto(
     examScriptReference: enquiry.examScriptReference,
     lostReason: named(enquiry.lostReason),
     competitor: named(enquiry.competitor),
-    flagForReengagement: enquiry.flagForReengagement,
     linkedFromEnquiryId: enquiry.linkedFromEnquiryId,
     convertedEnrollmentId: enquiry.convertedEnrollmentId,
     closedAt: enquiry.closedAt,
@@ -488,7 +488,7 @@ export class AdminEnquiriesService {
       stageId: string;
       lostReasonId?: string | null;
       competitorId?: string | null;
-      flagForReengagement?: boolean;
+      competitorName?: string | null;
       note?: string | null;
     },
     actorId: string,
@@ -504,6 +504,19 @@ export class AdminEnquiriesService {
         "Use convert to enrolment to close this enquiry",
         "CONVERT_REQUIRED",
       );
+    }
+
+    if (stage.id !== enquiry.currentStageId) {
+      const allStages = await this.stages.find({ order: { sortOrder: "ASC" } });
+      if (
+        !canMoveEnquiryToStage(enquiry.currentStage, stage, allStages)
+      ) {
+        throw new AppError(
+          400,
+          "Enquiries can only move to the next stage or lost",
+          "INVALID_STAGE_TRANSITION",
+        );
+      }
     }
 
     if (stage.kind === EnquiryStageKind.LOST) {
@@ -1090,6 +1103,7 @@ export class AdminEnquiriesService {
       stageId?: string;
       lostReasonId?: string | null;
       competitorId?: string | null;
+      competitorName?: string | null;
     },
     actorId: string,
   ) {
@@ -1109,6 +1123,7 @@ export class AdminEnquiriesService {
             stageId: input.stageId,
             lostReasonId: input.lostReasonId,
             competitorId: input.competitorId,
+            competitorName: input.competitorName,
           },
           actorId,
         );
@@ -1176,7 +1191,7 @@ export class AdminEnquiriesService {
     input: {
       lostReasonId?: string | null;
       competitorId?: string | null;
-      flagForReengagement?: boolean;
+      competitorName?: string | null;
       note?: string | null;
     },
     actorId: string,
@@ -1200,10 +1215,13 @@ export class AdminEnquiriesService {
         );
       }
     }
-    if (reason.requiresCompetitor && !input.competitorId) {
+    const competitorId = reason.requiresCompetitor
+      ? await this.resolveCompetitorId(input)
+      : null;
+    if (reason.requiresCompetitor && !competitorId) {
       throw new AppError(
         400,
-        "Choose which centre they went to",
+        "Enter which centre they went to",
         "COMPETITOR_REQUIRED",
       );
     }
@@ -1213,8 +1231,7 @@ export class AdminEnquiriesService {
     if (leavingWaiting) this.clearWaitingListMembership(enquiry);
     this.assignStage(enquiry, stage);
     enquiry.lostReasonId = reason.id;
-    enquiry.competitorId = input.competitorId || null;
-    enquiry.flagForReengagement = Boolean(input.flagForReengagement);
+    enquiry.competitorId = competitorId;
     enquiry.closedAt = new Date();
     enquiry.lastStageChangedAt = enquiry.closedAt;
     await this.enquiries.save(enquiry);
@@ -1225,7 +1242,7 @@ export class AdminEnquiriesService {
       stage.id,
       actorId,
       reason.id,
-      input.competitorId || null,
+      competitorId,
       input.note ?? null,
     );
     await this.writeEvent(enquiry.id, "LOST", `Lost: ${reason.name}`, actorId);
@@ -1329,6 +1346,33 @@ export class AdminEnquiriesService {
     const stage = await this.stages.findOne({ where: { code } });
     if (!stage) throw new AppError(500, `Stage ${code} is missing`, "STAGES_MISSING");
     return stage;
+  }
+
+  private async resolveCompetitorId(input: {
+    competitorId?: string | null;
+    competitorName?: string | null;
+  }) {
+    if (input.competitorId) {
+      const existing = await this.competitors.findOne({
+        where: { id: input.competitorId },
+      });
+      if (!existing || existing.retiredAt) {
+        throw new AppError(400, "Competitor not found", "COMPETITOR_NOT_FOUND");
+      }
+      return existing.id;
+    }
+
+    const name = input.competitorName?.trim();
+    if (!name) return null;
+
+    const existing = await this.competitors
+      .createQueryBuilder("competitor")
+      .where("LOWER(competitor.name) = LOWER(:name)", { name })
+      .getOne();
+    if (existing) return existing.id;
+
+    const created = await this.competitors.save(this.competitors.create({ name }));
+    return created.id;
   }
 
   private assignStage(enquiry: Enquiry, stage: EnquiryStage, at = new Date()) {

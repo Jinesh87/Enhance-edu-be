@@ -32,7 +32,7 @@ export async function syncClassRosterFromEnrollments(
   const enrollments = await AppDataSource.getRepository(Enrollment).find({
     where: {
       termId,
-      status: In([EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING]),
+      status: In([EnrollmentStatus.ACTIVE]),
     },
     relations: {
       student: true,

@@ -507,7 +507,6 @@ export class StudentClassesService {
           studentId: student.id,
           status: In([
             EnrollmentStatus.ACTIVE,
-            EnrollmentStatus.PENDING,
             EnrollmentStatus.AWAITING_GUARDIAN,
           ]),
         },
@@ -747,7 +746,7 @@ export class StudentClassesService {
       const enrollments = await this.enrollments.find({
         where: {
           studentId: student.id,
-          status: In([EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING]),
+          status: In([EnrollmentStatus.ACTIVE]),
         },
         relations: {
           subjects: { subject: true },

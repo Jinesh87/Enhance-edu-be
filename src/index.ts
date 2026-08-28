@@ -5,6 +5,7 @@ import {
   AppDataSource,
   ensureAssessmentSessionSchema,
   ensureAuditSchema,
+  ensureEnrollmentStatusSchema,
   ensureEnquiryConstraints,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
@@ -19,6 +20,7 @@ const ABSENCE_CHASE_SYNC_MS = 60_000;
 async function bootstrap() {
   await ensureAuditSchema();
   await ensureAssessmentSessionSchema();
+  await ensureEnrollmentStatusSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");
   await seedEnquiryCatalogue();
