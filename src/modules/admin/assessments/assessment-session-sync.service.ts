@@ -1,67 +1,19 @@
 import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
-  DEFAULT_CLASS_TIMEZONE,
-  zonedWallTimeToUtc,
-} from "../../../common/utils/timezone.js";
-import {
   Assessment,
   AttendanceRecord,
   AttendanceStatus,
   Session,
-  type AssessmentScheduleType,
 } from "../../../entities/index.js";
 import { adminAssessmentsRepository } from "../assessments/admin-assessments.repository.js";
+import { assessmentScheduleWindow } from "./assessment-schedule.utils.js";
 
-function normalizeDateKey(value: string | Date): string | null {
-  if (typeof value === "string") {
-    const match = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim());
-    return match?.[1] ?? null;
-  }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const year = value.getUTCFullYear();
-    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(value.getUTCDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
-  return null;
-}
-
-export function assessmentScheduleWindow(
-  assessmentDate: string | Date,
-  startTime: string,
-  durationMinutes: number,
-  scheduleType: AssessmentScheduleType = "SESSION",
-): { startAt: Date; endAt: Date } | null {
-  const dateKey = normalizeDateKey(assessmentDate);
-  if (!dateKey) return null;
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const [hour, minute] = (scheduleType === "FULL_DAY" ? "00:00" : startTime)
-    .split(":")
-    .map(Number);
-  if (
-    !Number.isFinite(year) ||
-    !Number.isFinite(month) ||
-    !Number.isFinite(day) ||
-    !Number.isFinite(hour) ||
-    !Number.isFinite(minute)
-  ) {
-    return null;
-  }
-  const startAt = zonedWallTimeToUtc(
-    { year, month, day, hour, minute, second: 0 },
-    DEFAULT_CLASS_TIMEZONE,
-  );
-  if (Number.isNaN(startAt.getTime())) return null;
-  const duration =
-    scheduleType === "FULL_DAY"
-      ? 1440
-      : Math.max(durationMinutes || 60, 15);
-  return {
-    startAt,
-    endAt: new Date(startAt.getTime() + duration * 60_000),
-  };
-}
+export { assessmentScheduleWindow } from "./assessment-schedule.utils.js";
+export {
+  assertStudentAssessmentWindowOpen,
+  resolveAssessmentTimeZone,
+} from "./assessment-schedule.utils.js";
 
 /**
  * Keeps a Session row in sync with an Assessment so roll / check-in can reuse
@@ -89,6 +41,7 @@ export class AssessmentSessionSyncService {
       assessment.startTime,
       assessment.durationMinutes,
       assessment.scheduleType,
+      assessment.timeZone,
     );
     if (!window) return null;
 

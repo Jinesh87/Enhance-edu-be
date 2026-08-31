@@ -18,15 +18,17 @@ export class AdminAssessmentsRepository {
     subject?: string;
     yearGroup?: string;
     kind?: "SCHOOL" | "ENTRANCE" | "ALL";
-    status?: AssessmentStatus | "ACTIVE";
+    status?: AssessmentStatus | "ACTIVE" | "OPEN";
   }): Promise<{ assessments: Assessment[]; total: number }> {
     const where: Record<string, unknown> = {};
     if (filters.termId) where.termId = filters.termId;
     if (filters.subject) where.subject = filters.subject;
     if (filters.yearGroup) where.yearGroup = filters.yearGroup;
     if (filters.kind && filters.kind !== "ALL") where.kind = filters.kind;
-    if (filters.status === "ACTIVE" || !filters.status) {
+    if (filters.status === "ACTIVE") {
       where.status = In(["SCHEDULED", "LIVE"]);
+    } else if (filters.status === "OPEN" || !filters.status) {
+      where.status = In(["SCHEDULED", "LIVE", "COMPLETED"]);
     } else {
       where.status = filters.status;
     }

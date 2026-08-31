@@ -29,4 +29,19 @@ export const env = {
   LINODE_OBJECT_STORAGE_ACCESS_KEY: process.env.LINODE_OBJECT_STORAGE_ACCESS_KEY ?? "",
   LINODE_OBJECT_STORAGE_SECRET_KEY: process.env.LINODE_OBJECT_STORAGE_SECRET_KEY ?? "",
   UPLOAD_LOCAL_DIR: process.env.UPLOAD_LOCAL_DIR ?? "uploads",
+  /** Azure AI Document Intelligence (OCR / handwriting). Required for entrance-exam OCR. */
+  AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT:
+    process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT ?? "",
+  AZURE_DOCUMENT_INTELLIGENCE_KEY:
+    process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY ?? "",
+  /** Max files OCR'd in parallel within one submission. */
+  OCR_FILE_CONCURRENCY: Math.max(
+    1,
+    Number(process.env.OCR_FILE_CONCURRENCY ?? 4) || 4,
+  ),
+  /** Max entrance-exam OCR jobs processed in parallel by the worker. */
+  OCR_WORKER_CONCURRENCY: Math.max(
+    1,
+    Number(process.env.OCR_WORKER_CONCURRENCY ?? 3) || 3,
+  ),
 };

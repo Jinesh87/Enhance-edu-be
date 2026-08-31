@@ -6,6 +6,7 @@ import { AppError } from "../../../common/errors/AppError.js";
 import {
   DEFAULT_CLASS_TIMEZONE,
   parseDayTime,
+  resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
 import { getObjectBuffer } from "../../../common/storage/object-storage.js";
 import {
@@ -48,6 +49,7 @@ export type AssessmentInput = {
   autoMarking?: boolean;
   notes?: string | null;
   studentIds?: string[];
+  timeZone?: string | null;
 };
 
 export type AssessmentStudentDto = {
@@ -81,12 +83,14 @@ function autoStatusForTiming(
   startTime: string,
   durationMinutes: number,
   scheduleType: AssessmentScheduleType = "SESSION",
+  timeZone?: string | null,
 ): Extract<AssessmentStatus, "SCHEDULED" | "LIVE" | "COMPLETED"> {
   const window = assessmentScheduleWindow(
     assessmentDate,
     startTime,
     durationMinutes,
     scheduleType,
+    timeZone,
   );
   if (!window) return "SCHEDULED";
   const now = Date.now();
@@ -238,6 +242,7 @@ function toAssessmentDto(
     assessmentDate: assessment.assessmentDate,
     startTime: assessment.startTime,
     durationMinutes: assessment.durationMinutes,
+    timeZone: assessment.timeZone ?? DEFAULT_CLASS_TIMEZONE,
     classroomId: assessment.classroomId,
     room: assessment.room || assessment.classroom?.name || "",
     teacherId: assessment.teacherId,
@@ -595,8 +600,8 @@ export class AdminAssessmentsService {
 
   private async ensureAutoStatus(assessment: Assessment): Promise<Assessment> {
     if (
-      assessment.status !== "SCHEDULED" &&
-      assessment.status !== "LIVE"
+      assessment.status === "ARCHIVED" ||
+      assessment.status === "CANCELLED"
     ) {
       return assessment;
     }
@@ -605,17 +610,42 @@ export class AdminAssessmentsService {
       assessment.startTime,
       assessment.durationMinutes,
       assessment.scheduleType,
+      assessment.timeZone,
     );
     if (assessment.status === nextStatus) return assessment;
     assessment.status = nextStatus;
     return this.repo.save(assessment);
   }
 
-  private async syncPastScheduled(): Promise<void> {
-    const scheduled = await this.repo.listScheduledForSync();
-    for (const assessment of scheduled) {
-      await this.ensureAutoStatus(assessment);
+  async syncAssessmentStatuses(): Promise<void> {
+    const rows = await AppDataSource.getRepository(Assessment).find({
+      where: { status: In(["SCHEDULED", "LIVE", "COMPLETED"]) },
+      select: {
+        id: true,
+        assessmentDate: true,
+        startTime: true,
+        durationMinutes: true,
+        scheduleType: true,
+        timeZone: true,
+        status: true,
+      },
+    });
+    for (const assessment of rows) {
+      const nextStatus = autoStatusForTiming(
+        assessment.assessmentDate,
+        assessment.startTime,
+        assessment.durationMinutes,
+        assessment.scheduleType,
+        assessment.timeZone,
+      );
+      if (assessment.status === nextStatus) continue;
+      assessment.status = nextStatus;
+      await this.repo.save(assessment);
     }
+  }
+
+  private async syncPastScheduled(): Promise<void> {
+    await this.syncAssessmentStatuses();
   }
 
   private async assertScheduleAvailable(
@@ -631,6 +661,7 @@ export class AdminAssessmentsService {
       room: string | null;
       subject: string;
       yearGroup: string;
+      timeZone?: string | null;
     },
     excludeAssessmentId?: string,
   ): Promise<void> {
@@ -639,6 +670,7 @@ export class AdminAssessmentsService {
       input.startTime,
       input.durationMinutes,
       input.scheduleType,
+      input.timeZone,
     );
     if (!window) {
       throw new AppError(
@@ -672,6 +704,7 @@ export class AdminAssessmentsService {
         assessment.startTime,
         assessment.durationMinutes,
         assessment.scheduleType,
+        assessment.timeZone,
       );
       if (
         !existingWindow ||
@@ -750,7 +783,7 @@ export class AdminAssessmentsService {
     subject?: string;
     yearGroup?: string;
     kind?: "SCHOOL" | "ENTRANCE" | "ALL";
-    status?: AssessmentStatus | "ACTIVE";
+    status?: AssessmentStatus | "ACTIVE" | "OPEN";
   }) {
     await this.syncPastScheduled();
     const { assessments, total } = await this.repo.list(filters);
@@ -821,6 +854,9 @@ export class AdminAssessmentsService {
     if (!yearGroup) {
       throw new AppError(400, "Year group is required", "YEAR_GROUP_REQUIRED");
     }
+    const timeZone = resolveIanaTimeZone(
+      input.timeZone ?? DEFAULT_CLASS_TIMEZONE,
+    );
     await this.assertScheduleAvailable({
       termId: term.id,
       scheduleType,
@@ -833,6 +869,7 @@ export class AdminAssessmentsService {
       room: classroom.room,
       subject: input.subject.trim(),
       yearGroup,
+      timeZone,
     });
     const studentIds =
       kind === "ENTRANCE"
@@ -859,6 +896,7 @@ export class AdminAssessmentsService {
       assessmentDate: input.assessmentDate,
       startTime,
       durationMinutes,
+      timeZone,
       classroomId: classroom.classroomId,
       room: classroom.room,
       teacherId,
@@ -871,6 +909,7 @@ export class AdminAssessmentsService {
         startTime,
         durationMinutes,
         scheduleType,
+        timeZone,
       ),
     });
     const saved = await this.repo.save(created);
@@ -945,6 +984,10 @@ export class AdminAssessmentsService {
             ? 60
             : assessment.durationMinutes);
     await this.assertAssessmentDateWithinTerm(nextAssessmentDate, term);
+    const nextTimeZone =
+      input.timeZone === undefined
+        ? assessment.timeZone
+        : resolveIanaTimeZone(input.timeZone);
     await this.assertScheduleAvailable(
       {
         termId: term.id,
@@ -958,6 +1001,7 @@ export class AdminAssessmentsService {
         room: classroom.room,
         subject: nextSubject,
         yearGroup: nextYearGroup,
+        timeZone: nextTimeZone,
       },
       id,
     );
@@ -973,6 +1017,7 @@ export class AdminAssessmentsService {
     assessment.assessmentDate = nextAssessmentDate;
     assessment.startTime = nextStartTime;
     assessment.durationMinutes = nextDurationMinutes;
+    assessment.timeZone = nextTimeZone;
     assessment.classroomId = classroom.classroomId;
     assessment.room = classroom.room;
     assessment.teacherId = teacherId;
@@ -1014,6 +1059,7 @@ export class AdminAssessmentsService {
       assessment.startTime,
       assessment.durationMinutes,
       assessment.scheduleType,
+      assessment.timeZone,
     );
 
     const studentIds =

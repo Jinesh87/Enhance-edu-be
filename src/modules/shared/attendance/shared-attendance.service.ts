@@ -7,6 +7,7 @@ import {
 import { AppError } from "../../../common/errors/AppError.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import { DEFAULT_CLASS_TIMEZONE } from "../../../common/utils/timezone.js";
+import { resolveAssessmentTimeZone } from "../../admin/assessments/assessment-schedule.utils.js";
 import { syncClassRosterFromEnrollments } from "../classes/sync-class-roster.js";
 
 export class SharedAttendanceService {
@@ -97,7 +98,7 @@ export class SharedAttendanceService {
         startAt: session.startAt,
         endAt: session.endAt,
         gracePeriodMinutes: session.gracePeriodMinutes,
-        timeZone: DEFAULT_CLASS_TIMEZONE,
+        timeZone: resolveAssessmentTimeZone(assessment.timeZone),
         contentGroup: assessment.subject,
       },
       roll,

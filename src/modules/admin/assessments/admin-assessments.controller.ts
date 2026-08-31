@@ -20,7 +20,8 @@ class AdminAssessmentsController {
             | "COMPLETED"
             | "CANCELLED"
             | "ARCHIVED"
-            | "ACTIVE")
+            | "ACTIVE"
+            | "OPEN")
         : undefined;
       const kind = req.query.kind
         ? (String(req.query.kind) as "SCHOOL" | "ENTRANCE" | "ALL")
