@@ -599,12 +599,18 @@ export class EmailService {
   private buildInvitationEmailHtml(params: SendInvitationEmailParams): string {
     const enrollmentsHtml = this.buildEnrollmentDetailsHtml(params.enrollments);
     const greetingName = escapeHtml(params.fullName);
+    const enrollmentCount = params.enrollments?.length ?? 0;
     const trial = Boolean(params.enrollments?.some((row) => row.isTrial));
-    const intro = params.enrollments?.length
-      ? trial
-        ? "A trial place has been booked. Review the details below, then create your guardian account and a trial login for your student."
-        : "You've been invited as a guardian. Please review the enrolment details below, then accept the invitation to set up your account and your student's login."
-      : "You've been invited to join Enhance Education. Click the button below to accept your invitation and set up your account.";
+    const intro =
+      enrollmentCount === 0
+        ? "You've been invited to join Enhance Education. Click the button below to accept your invitation and set up your account."
+        : enrollmentCount === 1
+          ? trial
+            ? "A trial place has been booked. Review the details below, then create your guardian account and a trial login for your student."
+            : "You've been invited as a guardian. Please review the enrolment details below, then accept the invitation to set up your account and your student's login."
+          : trial
+            ? `${enrollmentCount} trial places have been booked. Review each student's details below, then create your guardian account and a trial login for each student.`
+            : `You've been invited as a guardian. Please review the enrolment details for each of the ${enrollmentCount} students below, then accept the invitation to set up your account and their logins.`;
 
     return `
 <!DOCTYPE html>

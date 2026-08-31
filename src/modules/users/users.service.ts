@@ -209,6 +209,16 @@ export class UsersService {
     }
     assertActorCanManagePerson(actor, input.role, input.modulePermissions);
 
+    const guardianStudentEnrollments =
+      input.role === UserRole.GUARDIAN ? (input.students ?? []) : [];
+    if (input.role === UserRole.GUARDIAN && guardianStudentEnrollments.length === 0) {
+      throw new AppError(
+        400,
+        "At least one student and enrolment is required for guardians",
+        "GUARDIAN_STUDENTS_REQUIRED",
+      );
+    }
+
     const sandboxMode = await settingsService.isSandboxModeEnabled();
     if (sandboxMode && !input.password) {
       throw new AppError(
@@ -316,19 +326,23 @@ export class UsersService {
 
     if (
       input.role === UserRole.GUARDIAN &&
-      input.student &&
-      input.enrollment
+      guardianStudentEnrollments.length > 0
     ) {
-      await adminEnrollmentsService.queuePendingEnrollmentForGuardian(
-        user.id,
-        input.student,
-        input.enrollment,
-        actorId,
-      );
-      result.pendingEnrollment = {
-        studentFullName: input.student.fullName.trim(),
-        status: "AWAITING_GUARDIAN",
-      };
+      const pendingEnrollments: InvitePersonResult["pendingEnrollments"] = [];
+      for (const row of guardianStudentEnrollments) {
+        await adminEnrollmentsService.queuePendingEnrollmentForGuardian(
+          user.id,
+          row.student,
+          row.enrollment,
+          actorId,
+        );
+        pendingEnrollments.push({
+          studentFullName: row.student.fullName.trim(),
+          status: "AWAITING_GUARDIAN",
+        });
+      }
+      result.pendingEnrollments = pendingEnrollments;
+      result.pendingEnrollment = pendingEnrollments[0];
     }
 
     if (sandboxMode) {

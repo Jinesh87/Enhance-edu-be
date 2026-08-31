@@ -7,11 +7,22 @@ import {
 } from "../../../common/middleware/authenticate.js";
 import { validate } from "../../../common/middleware/validate.js";
 import { guardianStudentsController } from "./guardian-students.controller.js";
+import { guardianAcademicsController } from "../academics/guardian-academics.controller.js";
 
 const guardianStudentsRouter = Router();
 
 const studentIdParamsSchema = Joi.object({
   studentId: Joi.string().uuid().required(),
+});
+
+const sessionIdParamsSchema = Joi.object({
+  studentId: Joi.string().uuid().required(),
+  sessionId: Joi.string().uuid().required(),
+});
+
+const assessmentIdParamsSchema = Joi.object({
+  studentId: Joi.string().uuid().required(),
+  assessmentId: Joi.string().uuid().required(),
 });
 
 const updateStudentPasswordSchema = Joi.object({
@@ -39,6 +50,36 @@ guardianStudentsRouter.post(
   validate(acceptPendingParamsSchema, "params"),
   validate(acceptPendingBodySchema),
   guardianStudentsController.acceptPending,
+);
+guardianStudentsRouter.get(
+  "/:studentId/timetable",
+  validate(studentIdParamsSchema, "params"),
+  guardianAcademicsController.getTimetable,
+);
+guardianStudentsRouter.get(
+  "/:studentId/lessons/:sessionId",
+  validate(sessionIdParamsSchema, "params"),
+  guardianAcademicsController.getLesson,
+);
+guardianStudentsRouter.get(
+  "/:studentId/assessments/:assessmentId/submission",
+  validate(assessmentIdParamsSchema, "params"),
+  guardianAcademicsController.getAssessmentSubmission,
+);
+guardianStudentsRouter.get(
+  "/:studentId/entrance-exams",
+  validate(studentIdParamsSchema, "params"),
+  guardianAcademicsController.listEntranceExams,
+);
+guardianStudentsRouter.get(
+  "/:studentId/entrance-exams/:assessmentId/submission",
+  validate(assessmentIdParamsSchema, "params"),
+  guardianAcademicsController.getEntranceExamSubmission,
+);
+guardianStudentsRouter.get(
+  "/:studentId/attendance",
+  validate(studentIdParamsSchema, "params"),
+  guardianAcademicsController.getAttendance,
 );
 guardianStudentsRouter.patch(
   "/:studentId/password",

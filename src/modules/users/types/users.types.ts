@@ -63,6 +63,11 @@ export type EnrollmentDetailsInput = {
   fee: number;
 };
 
+export type GuardianStudentEnrollmentInput = {
+  student: EnrollmentStudentInput;
+  enrollment: EnrollmentDetailsInput;
+};
+
 export type InvitePersonInput = {
   fullName: string;
   preferredName?: string | null;
@@ -72,8 +77,7 @@ export type InvitePersonInput = {
   employmentType?: EmploymentType | null;
   /** Required when institution sandbox mode is enabled. */
   password?: string;
-  student?: EnrollmentStudentInput;
-  enrollment?: EnrollmentDetailsInput;
+  students?: GuardianStudentEnrollmentInput[];
   subjectIds?: string[];
   modulePermissions?: string[];
 };
@@ -104,4 +108,8 @@ export type InvitePersonResult = {
     studentFullName: string;
     status: "AWAITING_GUARDIAN";
   };
+  pendingEnrollments?: {
+    studentFullName: string;
+    status: "AWAITING_GUARDIAN";
+  }[];
 };

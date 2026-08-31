@@ -11,6 +11,7 @@ import { validate } from "../../common/middleware/validate.js";
 import {
   updateInstitutionSettingSchema,
   updateSecuritySettingSchema,
+  updateGuardianPortalSettingSchema,
 } from "./settings.validation.js";
 import {
   createHolidaySchema,
@@ -77,6 +78,17 @@ router.put(
   authorize(UserRole.SUPER_ADMIN),
   validate(updateSecuritySettingSchema, "body"),
   (req, res) => void settingsController.updateSecuritySettings(req, res),
+);
+
+router.get(
+  "/guardian-portal",
+  (req, res) => void settingsController.getGuardianPortalSettings(req, res),
+);
+
+router.put(
+  "/guardian-portal",
+  validate(updateGuardianPortalSettingSchema, "body"),
+  (req, res) => void settingsController.updateGuardianPortalSettings(req, res),
 );
 
 router.post(
