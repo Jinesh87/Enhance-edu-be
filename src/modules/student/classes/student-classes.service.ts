@@ -3,7 +3,6 @@ import { AppDataSource } from "../../../config/data-source.js";
 import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
-  DEFAULT_CLASS_TIMEZONE,
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
@@ -27,6 +26,7 @@ import {
 import {
   assessmentScheduleWindow,
   assessmentSessionSyncService,
+  resolveAssessmentTimeZone,
 } from "../../admin/assessments/assessment-session-sync.service.js";
 
 export type StudentLessonKind = "class" | "assessment";
@@ -649,6 +649,7 @@ export class StudentClassesService {
           assessment.startTime,
           assessment.durationMinutes,
           assessment.scheduleType,
+          assessment.timeZone,
         ) ?? {
           startAt: session.startAt,
           endAt: session.endAt,
@@ -704,7 +705,7 @@ export class StudentClassesService {
           : null,
         isOnline: online,
         canCheckIn,
-        timeZone: DEFAULT_CLASS_TIMEZONE,
+        timeZone: resolveAssessmentTimeZone(assessment.timeZone),
         resources: [
           ...resourcesByAssessment.get(assessment.id)?.map((resource) => ({
             id: resource.id,
