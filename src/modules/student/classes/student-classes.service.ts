@@ -8,6 +8,12 @@ import {
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
 import {
+  buildHomeworkSubmissionKey,
+  deleteObject,
+  getObjectBuffer,
+  putObject,
+} from "../../../common/storage/object-storage.js";
+import {
   termYearLevelNumber,
   yearLevelsCompatible,
 } from "../../../common/utils/year-level.js";
@@ -20,6 +26,11 @@ import {
   Class,
   ClassStudent,
   Enrollment,
+  Homework,
+  HomeworkAttachment,
+  HomeworkStudent,
+  HomeworkSubmission,
+  HomeworkSubmissionFile,
   Session,
   Student,
   type AssessmentScheduleType,
@@ -76,6 +87,37 @@ export type StudentLessonDto = {
     released: boolean;
     downloadable?: boolean;
   }[];
+};
+
+export type UploadedHomeworkAnswerFile = {
+  buffer: Buffer;
+  originalName: string;
+  mimeType: string;
+  size: number;
+};
+
+export type StudentHomeworkSubmissionSummaryDto = {
+  id: string;
+  status: "DRAFT" | "SUBMITTED";
+  submittedAt: string | null;
+  filesCount: number;
+};
+
+export type StudentHomeworkDto = {
+  id: string;
+  title: string;
+  description: string | null;
+  dueDate: string;
+  subject: string | null;
+  term: string | null;
+  yearGroup: string;
+  attachments: {
+    id: string;
+    originalName: string;
+    mimeType: string;
+    byteSize: number;
+  }[];
+  submission: StudentHomeworkSubmissionSummaryDto | null;
 };
 
 const EXCLUDED_ASSESSMENT_STATUSES = ["ARCHIVED", "CANCELLED"] as const;
@@ -218,6 +260,15 @@ export class StudentClassesService {
     AppDataSource.getRepository(AssessmentResource);
   private readonly assessmentStudents =
     AppDataSource.getRepository(AssessmentStudent);
+  private readonly homework = AppDataSource.getRepository(Homework);
+  private readonly homeworkAttachments =
+    AppDataSource.getRepository(HomeworkAttachment);
+  private readonly homeworkStudents =
+    AppDataSource.getRepository(HomeworkStudent);
+  private readonly homeworkSubmissions =
+    AppDataSource.getRepository(HomeworkSubmission);
+  private readonly homeworkSubmissionFiles =
+    AppDataSource.getRepository(HomeworkSubmissionFile);
 
   async getTimetable(userId: string) {
     const lessons = await this.listLessons(userId);
@@ -320,6 +371,351 @@ export class StudentClassesService {
       throw new AppError(404, "Lesson not found", "LESSON_NOT_FOUND");
     }
     return lesson;
+  }
+
+  async listHomework(userId: string): Promise<{ homework: StudentHomeworkDto[] }> {
+    const rows = await this.homework
+      .createQueryBuilder("homework")
+      .innerJoin("homework.students", "student", "student.studentId = :userId", {
+        userId,
+      })
+      .leftJoinAndSelect("homework.attachments", "attachments")
+      .leftJoinAndSelect("homework.subject", "subject")
+      .leftJoinAndSelect("homework.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect(
+        "homework.submissions",
+        "submissions",
+        "submissions.studentId = :userId",
+        { userId },
+      )
+      .leftJoinAndSelect("submissions.files", "submissionFiles")
+      .orderBy("homework.dueDate", "ASC")
+      .addOrderBy("homework.createdAt", "DESC")
+      .getMany();
+
+    return { homework: rows.map((row) => this.toStudentHomeworkDto(row, userId)) };
+  }
+
+  async getHomeworkAttachment(
+    userId: string,
+    homeworkId: string,
+    attachmentId: string,
+  ) {
+    const allowed = await this.homeworkStudents.findOne({
+      where: { homeworkId, studentId: userId },
+    });
+    if (!allowed) {
+      throw new AppError(403, "Homework is not assigned to you", "FORBIDDEN");
+    }
+
+    const attachment = await this.homeworkAttachments.findOne({
+      where: { id: attachmentId, homeworkId },
+    });
+    if (!attachment) {
+      throw new AppError(404, "Attachment not found", "ATTACHMENT_NOT_FOUND");
+    }
+
+    return {
+      ...attachment,
+      buffer: await getObjectBuffer(attachment.storageKey),
+    };
+  }
+
+  async getHomeworkSubmission(userId: string, homeworkId: string) {
+    const allowed = await this.homeworkStudents.findOne({
+      where: { homeworkId, studentId: userId },
+    });
+    if (!allowed) {
+      throw new AppError(403, "Homework is not assigned to you", "FORBIDDEN");
+    }
+
+    const homework = await this.homework.findOne({
+      where: { id: homeworkId },
+      relations: {
+        attachments: true,
+        subject: true,
+        term: {
+          academicYear: true,
+          yearLevel: true,
+        },
+        createdBy: true,
+      },
+    });
+    if (!homework) {
+      throw new AppError(404, "Homework not found", "NOT_FOUND");
+    }
+
+    let submission = await this.homeworkSubmissions.findOne({
+      where: { homeworkId, studentId: userId },
+      relations: {
+        files: true,
+      },
+    });
+
+    if (!submission) {
+      submission = await this.homeworkSubmissions.save(
+        this.homeworkSubmissions.create({
+          homeworkId,
+          studentId: userId,
+          status: "DRAFT",
+          submittedAt: null,
+        }),
+      );
+      submission.files = [];
+    }
+
+    const termLabel = homework.term
+      ? homework.term.academicYear && homework.term.yearLevel
+        ? `${homework.term.name} · ${homework.term.academicYear.year} · ${homework.term.yearLevel.name}`
+        : homework.term.name
+      : null;
+
+    const teacherName = homework.createdBy
+      ? homework.createdBy.preferredName ||
+        homework.createdBy.fullName ||
+        homework.createdBy.email
+      : null;
+
+    return {
+      submission: {
+        id: submission.id,
+        homeworkId: submission.homeworkId,
+        studentId: submission.studentId,
+        status: submission.status,
+        submittedAt: submission.submittedAt?.toISOString() ?? null,
+        studentNotes: submission.studentNotes ?? null,
+        marks: submission.marks != null ? Number(submission.marks) : null,
+        maxMarks:
+          submission.maxMarks != null
+            ? Number(submission.maxMarks)
+            : homework.maxMarks != null
+              ? Number(homework.maxMarks)
+              : 100,
+        feedback: submission.feedback ?? null,
+        isCompleted: Boolean(submission.isCompleted),
+        files: (submission.files ?? [])
+          .slice()
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((file) => ({
+            id: file.id,
+            originalName: file.originalName,
+            mimeType: file.mimeType,
+            byteSize: file.byteSize,
+            sortOrder: file.sortOrder,
+          })),
+        homework: {
+          id: homework.id,
+          title: homework.title,
+          description: homework.description,
+          dueDate: homework.dueDate,
+          subject: homework.subject?.name ?? null,
+          term: termLabel,
+          yearGroup: homework.yearGroup,
+          teacherName,
+          attachments: (homework.attachments ?? []).map((attachment) => ({
+            id: attachment.id,
+            originalName: attachment.originalName,
+            mimeType: attachment.mimeType,
+            byteSize: attachment.byteSize,
+          })),
+        },
+      },
+    };
+  }
+
+  async uploadHomeworkFiles(
+    userId: string,
+    homeworkId: string,
+    files: UploadedHomeworkAnswerFile[],
+  ) {
+    if (files.length === 0) {
+      throw new AppError(400, "No files uploaded", "NO_FILES");
+    }
+
+    const allowed = await this.homeworkStudents.findOne({
+      where: { homeworkId, studentId: userId },
+    });
+    if (!allowed) {
+      throw new AppError(403, "Homework is not assigned to you", "FORBIDDEN");
+    }
+
+    let submission = await this.homeworkSubmissions.findOne({
+      where: { homeworkId, studentId: userId },
+      relations: { files: true },
+    });
+
+    if (!submission) {
+      submission = await this.homeworkSubmissions.save(
+        this.homeworkSubmissions.create({
+          homeworkId,
+          studentId: userId,
+          status: "DRAFT",
+          submittedAt: null,
+        }),
+      );
+      submission.files = [];
+    }
+
+    if (submission.status === "SUBMITTED") {
+      throw new AppError(
+        400,
+        "Homework is already submitted and cannot be modified",
+        "ALREADY_SUBMITTED",
+      );
+    }
+
+    const existingCount = submission.files?.length ?? 0;
+    const entitiesToSave: HomeworkSubmissionFile[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const storageKey = buildHomeworkSubmissionKey({
+        homeworkId,
+        studentId: userId,
+        submissionId: submission.id,
+        fileName: file.originalName,
+      });
+
+      await putObject({
+        key: storageKey,
+        body: file.buffer,
+        contentType: file.mimeType,
+      });
+
+      entitiesToSave.push(
+        this.homeworkSubmissionFiles.create({
+          submissionId: submission.id,
+          storageKey,
+          originalName: file.originalName,
+          mimeType: file.mimeType,
+          byteSize: file.size,
+          sortOrder: existingCount + i,
+        }),
+      );
+    }
+
+    await this.homeworkSubmissionFiles.save(entitiesToSave);
+
+    return this.getHomeworkSubmission(userId, homeworkId);
+  }
+
+  async removeHomeworkFile(
+    userId: string,
+    homeworkId: string,
+    fileId: string,
+  ) {
+    const submission = await this.homeworkSubmissions.findOne({
+      where: { homeworkId, studentId: userId },
+      relations: { files: true },
+    });
+
+    if (!submission) {
+      throw new AppError(404, "Submission not found", "NOT_FOUND");
+    }
+
+    if (submission.status === "SUBMITTED") {
+      throw new AppError(
+        400,
+        "Homework is already submitted and cannot be modified",
+        "ALREADY_SUBMITTED",
+      );
+    }
+
+    const file = await this.homeworkSubmissionFiles.findOne({
+      where: { id: fileId, submissionId: submission.id },
+    });
+    if (!file) {
+      throw new AppError(404, "File not found", "FILE_NOT_FOUND");
+    }
+
+    await deleteObject(file.storageKey);
+    await this.homeworkSubmissionFiles.remove(file);
+
+    return this.getHomeworkSubmission(userId, homeworkId);
+  }
+
+  async submitHomework(
+    userId: string,
+    homeworkId: string,
+    input?: { studentNotes?: string | null },
+  ) {
+    const allowed = await this.homeworkStudents.findOne({
+      where: { homeworkId, studentId: userId },
+    });
+    if (!allowed) {
+      throw new AppError(403, "Homework is not assigned to you", "FORBIDDEN");
+    }
+
+    let submission = await this.homeworkSubmissions.findOne({
+      where: { homeworkId, studentId: userId },
+      relations: { files: true },
+    });
+
+    if (!submission) {
+      submission = await this.homeworkSubmissions.save(
+        this.homeworkSubmissions.create({
+          homeworkId,
+          studentId: userId,
+          status: "DRAFT",
+          submittedAt: null,
+        }),
+      );
+      submission.files = [];
+    }
+
+    if ((submission.files ?? []).length === 0) {
+      throw new AppError(
+        400,
+        "Please upload at least one answer file before submitting",
+        "NO_FILES",
+      );
+    }
+
+    if (input?.studentNotes !== undefined) {
+      submission.studentNotes = input.studentNotes
+        ? input.studentNotes.trim()
+        : null;
+    }
+
+    submission.status = "SUBMITTED";
+    submission.submittedAt = new Date();
+    await this.homeworkSubmissions.save(submission);
+
+    return this.getHomeworkSubmission(userId, homeworkId);
+  }
+
+  async getHomeworkSubmissionFile(
+    userId: string,
+    homeworkId: string,
+    fileId: string,
+  ) {
+    const allowed = await this.homeworkStudents.findOne({
+      where: { homeworkId, studentId: userId },
+    });
+    if (!allowed) {
+      throw new AppError(403, "Homework is not assigned to you", "FORBIDDEN");
+    }
+
+    const submission = await this.homeworkSubmissions.findOne({
+      where: { homeworkId, studentId: userId },
+    });
+    if (!submission) {
+      throw new AppError(404, "Submission not found", "NOT_FOUND");
+    }
+
+    const file = await this.homeworkSubmissionFiles.findOne({
+      where: { id: fileId, submissionId: submission.id },
+    });
+    if (!file) {
+      throw new AppError(404, "File not found", "FILE_NOT_FOUND");
+    }
+
+    return {
+      ...file,
+      buffer: await getObjectBuffer(file.storageKey),
+    };
   }
 
   private async listLessons(userId: string): Promise<StudentLessonDto[]> {
@@ -828,6 +1224,48 @@ export class StudentClassesService {
         );
       }
     }
+  }
+
+  private toStudentHomeworkDto(
+    homework: Homework,
+    studentId?: string,
+  ): StudentHomeworkDto {
+    const term = homework.term
+      ? homework.term.academicYear && homework.term.yearLevel
+        ? `${homework.term.name} · ${homework.term.academicYear.year} · ${homework.term.yearLevel.name}`
+        : homework.term.name
+      : null;
+
+    const studentSubmission = studentId
+      ? homework.submissions?.find((s) => s.studentId === studentId)
+      : homework.submissions?.[0];
+
+    const submissionSummary: StudentHomeworkSubmissionSummaryDto | null =
+      studentSubmission
+        ? {
+            id: studentSubmission.id,
+            status: studentSubmission.status,
+            submittedAt: studentSubmission.submittedAt?.toISOString() ?? null,
+            filesCount: (studentSubmission.files ?? []).length,
+          }
+        : null;
+
+    return {
+      id: homework.id,
+      title: homework.title,
+      description: homework.description,
+      dueDate: homework.dueDate,
+      subject: homework.subject?.name ?? null,
+      term,
+      yearGroup: homework.yearGroup,
+      attachments: (homework.attachments ?? []).map((attachment) => ({
+        id: attachment.id,
+        originalName: attachment.originalName,
+        mimeType: attachment.mimeType,
+        byteSize: attachment.byteSize,
+      })),
+      submission: submissionSummary,
+    };
   }
 }
 

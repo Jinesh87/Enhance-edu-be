@@ -1,5 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
-import { studentClassesService } from "./student-classes.service.js";
+import {
+  studentClassesService,
+  type UploadedHomeworkAnswerFile,
+} from "./student-classes.service.js";
 import {
   studentEntranceExamsService,
   type UploadedExamFile,
@@ -23,6 +26,138 @@ class StudentClassesController {
         req.params.sessionId as string,
       );
       res.status(200).json({ lesson });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listHomework = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await studentClassesService.listHomework(req.user!.id);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getHomeworkAttachment = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const attachment = await studentClassesService.getHomeworkAttachment(
+        req.user!.id,
+        req.params.homeworkId as string,
+        req.params.attachmentId as string,
+      );
+      res.setHeader("Content-Type", attachment.mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${encodeURIComponent(attachment.originalName)}"`,
+      );
+      res.status(200).send(attachment.buffer);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getHomeworkSubmission = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await studentClassesService.getHomeworkSubmission(
+        req.user!.id,
+        req.params.homeworkId as string,
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  uploadHomeworkFiles = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const files = Array.isArray(req.files) ? req.files : [];
+      const result = await studentClassesService.uploadHomeworkFiles(
+        req.user!.id,
+        req.params.homeworkId as string,
+        files.map(
+          (file): UploadedHomeworkAnswerFile => ({
+            buffer: file.buffer,
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            size: file.size,
+          }),
+        ),
+      );
+      res.status(201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  removeHomeworkFile = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await studentClassesService.removeHomeworkFile(
+        req.user!.id,
+        req.params.homeworkId as string,
+        req.params.fileId as string,
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  submitHomework = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const studentNotes =
+        typeof req.body?.studentNotes === "string"
+          ? req.body.studentNotes
+          : undefined;
+      const result = await studentClassesService.submitHomework(
+        req.user!.id,
+        req.params.homeworkId as string,
+        { studentNotes },
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getHomeworkSubmissionFile = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const file = await studentClassesService.getHomeworkSubmissionFile(
+        req.user!.id,
+        req.params.homeworkId as string,
+        req.params.fileId as string,
+      );
+      res.setHeader("Content-Type", file.mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${encodeURIComponent(file.originalName)}"`,
+      );
+      res.status(200).send(file.buffer);
     } catch (error) {
       next(error);
     }

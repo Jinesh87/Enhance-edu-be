@@ -139,3 +139,22 @@ export function buildAssessmentResourceKey(parts: {
   const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
   return `assessment-resources/${parts.assessmentId}/${parts.resourceId}/${Date.now()}-${safe}`;
 }
+
+export function buildHomeworkAttachmentKey(parts: {
+  homeworkId: string;
+  attachmentId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `homework/${parts.homeworkId}/${parts.attachmentId}/${Date.now()}-${safe}`;
+}
+
+export function buildHomeworkSubmissionKey(parts: {
+  homeworkId: string;
+  studentId: string;
+  submissionId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `homework-submissions/${parts.homeworkId}/${parts.studentId}/${parts.submissionId}/${Date.now()}-${safe}`;
+}

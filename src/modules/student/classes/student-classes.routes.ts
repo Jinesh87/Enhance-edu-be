@@ -16,6 +16,32 @@ const upload = multer({
 router.use(authenticate, authorize(UserRole.STUDENT));
 
 router.get("/timetable", studentClassesController.getTimetable);
+router.get("/homework", studentClassesController.listHomework);
+router.get(
+  "/homework/:homeworkId/attachments/:attachmentId",
+  studentClassesController.getHomeworkAttachment,
+);
+router.get(
+  "/homework/:homeworkId/submission",
+  studentClassesController.getHomeworkSubmission,
+);
+router.post(
+  "/homework/:homeworkId/files",
+  upload.array("files", 20),
+  studentClassesController.uploadHomeworkFiles,
+);
+router.delete(
+  "/homework/:homeworkId/files/:fileId",
+  studentClassesController.removeHomeworkFile,
+);
+router.post(
+  "/homework/:homeworkId/submit",
+  studentClassesController.submitHomework,
+);
+router.get(
+  "/homework/:homeworkId/submission-files/:fileId",
+  studentClassesController.getHomeworkSubmissionFile,
+);
 router.get("/lessons/:sessionId", studentClassesController.getLesson);
 router.get(
   "/assessments/:assessmentId/submission",

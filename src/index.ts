@@ -6,6 +6,7 @@ import {
   ensureAssessmentSessionSchema,
   ensureAuditSchema,
   ensureEnrollmentStatusSchema,
+  ensureHomeworkSchema,
   ensureInstitutionSettingSchema,
   ensureEnquiryConstraints,
 } from "./config/data-source.js";
@@ -23,6 +24,7 @@ async function bootstrap() {
   await ensureAssessmentSessionSchema();
   await ensureEnrollmentStatusSchema();
   await ensureInstitutionSettingSchema();
+  await ensureHomeworkSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");
   await seedEnquiryCatalogue();

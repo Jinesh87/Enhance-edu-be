@@ -55,3 +55,8 @@ export * from "./EnquiryEvent.js";
 export * from "./AssessmentSubmission.js";
 export * from "./AssessmentSubmissionFile.js";
 export * from "./AssessmentResource.js";
+export * from "./Homework.js";
+export * from "./HomeworkAttachment.js";
+export * from "./HomeworkStudent.js";
+export * from "./HomeworkSubmission.js";
+export * from "./HomeworkSubmissionFile.js";
