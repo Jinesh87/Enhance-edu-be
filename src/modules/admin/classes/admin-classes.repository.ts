@@ -36,6 +36,7 @@ export type ClassInput = {
   term?: string | null;
   termId?: string | null;
   teacherId?: string | null;
+  gracePeriodMinutes?: number;
 };
 
 export class AdminClassesRepository {

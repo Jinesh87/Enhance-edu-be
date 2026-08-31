@@ -43,12 +43,25 @@ export class AdminAttendanceService {
   private readonly repo = new AttendanceRepository();
 
   async getExceptionsAndAbsences(filters?: {
+    year: number;
+    yearLevel: string;
     pageExceptions?: number;
     limitExceptions?: number;
     pageAbsences?: number;
     limitAbsences?: number;
   }) {
-    const exceptions = await this.repo.findFlaggedScans();
+    if (!filters) {
+      throw new AppError(
+        400,
+        "Academic year and year level are required",
+        "ATTENDANCE_SCOPE_REQUIRED",
+      );
+    }
+    const cohort = {
+      year: filters.year,
+      yearLevel: filters.yearLevel,
+    };
+    const exceptions = await this.repo.findFlaggedScans(cohort);
 
     // Group and unique by student and session to prevent duplicate exception rows
     const seen = new Set<string>();
@@ -64,9 +77,9 @@ export class AdminAttendanceService {
     const since = new Date();
     since.setHours(0, 0, 0, 0);
     const [totalScans, inGraceWindow, unresolvedAbsences] = await Promise.all([
-      this.repo.countTotalScans(since),
-      this.repo.countStudentsInGraceWindow(),
-      this.repo.findUnresolvedAbsences(),
+      this.repo.countTotalScans(since, cohort),
+      this.repo.countStudentsInGraceWindow(new Date(), cohort),
+      this.repo.findUnresolvedAbsences(cohort),
     ]);
     const pendingCount = uniqueExceptions.length;
 
@@ -625,8 +638,8 @@ export class AdminAttendanceService {
   }
 
   async listRecordsForCorrection(filters: {
-    year?: number;
-    yearLevel?: string;
+    year: number;
+    yearLevel: string;
     term?: string;
     search?: string;
     page?: number;
@@ -762,7 +775,7 @@ export class AdminAttendanceService {
   ) {
     const cls = row.session.class;
     const assessment = row.session.assessment;
-    const term = cls?.term;
+    const term = cls?.term ?? assessment?.term;
     return {
       id: row.id,
       sessionId: row.sessionId,

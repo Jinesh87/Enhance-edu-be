@@ -438,11 +438,11 @@ export class AdminClassesService {
     }
 
     const graceByClassId = await this.repo.findGraceMinutesByClassIds(
-      classes.map((item) => item.id),
+      filteredClasses.map((item) => item.id),
     );
 
     return {
-      classes: classes.map((item) =>
+      classes: filteredClasses.map((item) =>
         toClassDto(item, graceByClassId.get(item.id) ?? null),
       ),
       summaries: paginated,
@@ -561,7 +561,7 @@ export class AdminClassesService {
             room: saved.room || null,
             classroomId: saved.classroomId || null,
             teacherId: saved.teacher?.id || null,
-            gracePeriodMinutes: 25,
+            gracePeriodMinutes: resolved.gracePeriodMinutes ?? 25,
           }),
         );
 
@@ -937,6 +937,7 @@ export class AdminClassesService {
       room?: string | null;
       classroomId?: string | null;
       teacherId?: string | null;
+      gracePeriodMinutes?: number;
       classId?: string;
       isWeeklySlot?: boolean;
     },
@@ -980,6 +981,10 @@ export class AdminClassesService {
         "Session end time must be after start time",
         "INVALID_SESSION_TIMES",
       );
+    }
+
+    if (input.gracePeriodMinutes !== undefined) {
+      session.gracePeriodMinutes = input.gracePeriodMinutes;
     }
 
     if (input.classroomId !== undefined) {
@@ -1034,6 +1039,33 @@ export class AdminClassesService {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
     return this.toSessionRow(saved);
+  }
+
+  /**
+   * Deletes a single upcoming/scheduled session.
+   * Cleans up attendance records for this session.
+   */
+  async removeSession(sessionId: string) {
+    const sessionRepo = AppDataSource.getRepository(Session);
+    const session = await sessionRepo.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
+    }
+
+    const status = sessionStatus(session.startAt, session.endAt);
+    if (status === "LIVE" || status === "ENDED") {
+      throw new AppError(
+        400,
+        "Live and ended sessions cannot be deleted",
+        "SESSION_NOT_DELETABLE",
+      );
+    }
+
+    const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
+    await attendanceRepo.delete({ sessionId });
+    await sessionRepo.remove(session);
   }
 
   private async assertSessionScheduleAvailable(
@@ -1293,10 +1325,6 @@ export class AdminClassesService {
     }
   }
 
-  /**
-   * Apply a class teacher change only to selected upcoming sessions.
-   * Unselected upcoming sessions keep their current effective teacher via override.
-   */
   private async applySelectiveTeacherToUpcomingSessions(
     classId: string,
     previousTeacher: { id: string; fullName: string } | null,

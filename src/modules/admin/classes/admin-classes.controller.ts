@@ -20,6 +20,7 @@ class AdminClassesController {
         yearLevel,
         term,
       });
+      res.setHeader("Cache-Control", "no-store");
       res.status(200).json({ classes, summaries, total });
     } catch (error) {
       next(error);
@@ -104,9 +105,26 @@ class AdminClassesController {
           endAt: session.endAt,
           room: session.room,
           teacherId: session.class?.teacher?.id ?? null,
+          gracePeriodMinutes: session.gracePeriodMinutes,
         },
       });
       res.status(200).json({ session });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  removeSession = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await adminClassesService.removeSession(req.params.id as string);
+      await writeAuditLog({
+        actorUserId: req.user!.id,
+        action: "DELETED",
+        recordType: "session",
+        recordId: req.params.id as string,
+        recordLabel: "Session",
+      });
+      res.status(204).send();
     } catch (error) {
       next(error);
     }
