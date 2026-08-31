@@ -14,7 +14,7 @@ export const listAssessmentsQuerySchema = Joi.object({
   yearGroup: Joi.string().trim().max(80).allow(""),
   kind: Joi.string().valid("SCHOOL", "ENTRANCE", "ALL").allow(""),
   status: Joi.string()
-    .valid(...ASSESSMENT_STATUSES, "ACTIVE")
+    .valid(...ASSESSMENT_STATUSES, "ACTIVE", "OPEN")
     .allow(""),
 });
 
@@ -67,6 +67,7 @@ export const createAssessmentSchema = Joi.object({
   autoMarking: Joi.boolean().default(false),
   notes: Joi.string().trim().max(2000).allow("", null),
   studentIds: Joi.array().items(uuid).max(200),
+  timeZone: Joi.string().trim().max(80).allow(null, ""),
 })
   .when(Joi.object({ kind: Joi.valid("ENTRANCE") }).unknown(), {
     then: Joi.object({
@@ -128,6 +129,7 @@ export const updateAssessmentSchema = Joi.object({
   autoMarking: Joi.boolean(),
   notes: Joi.string().trim().max(2000).allow("", null),
   studentIds: Joi.array().items(uuid).max(200),
+  timeZone: Joi.string().trim().max(80).allow(null, ""),
 })
   .min(1)
   .custom((value, helpers) => {

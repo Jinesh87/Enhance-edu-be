@@ -15,9 +15,11 @@ import { connectRedis } from "./config/redis.js";
 import { seedSuperAdmin } from "./seeder/seed-super-admin.js";
 import { seedEnquiryCatalogue } from "./seeder/seed-enquiry-catalogue.js";
 import { adminTasksService } from "./modules/admin/tasks/admin-tasks.service.js";
+import { adminAssessmentsService } from "./modules/admin/assessments/admin-assessments.service.js";
 import { startOcrWorker } from "./common/queues/ocr-queue.js";
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
+const ASSESSMENT_STATUS_SYNC_MS = 60_000;
 
 async function bootstrap() {
   await ensureAuditSchema();
@@ -47,6 +49,19 @@ async function bootstrap() {
   syncAbsenceChases();
   const syncTimer = setInterval(syncAbsenceChases, ABSENCE_CHASE_SYNC_MS);
   syncTimer.unref();
+
+  const syncAssessmentStatuses = () => {
+    void adminAssessmentsService.syncAssessmentStatuses().catch((error) => {
+      logger.warn({ err: error }, "Assessment status sync failed");
+    });
+  };
+
+  syncAssessmentStatuses();
+  const assessmentStatusTimer = setInterval(
+    syncAssessmentStatuses,
+    ASSESSMENT_STATUS_SYNC_MS,
+  );
+  assessmentStatusTimer.unref();
 }
 
 bootstrap().catch((error) => {

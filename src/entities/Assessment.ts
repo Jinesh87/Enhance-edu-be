@@ -77,6 +77,9 @@ export class Assessment {
   @Column({ type: "varchar", length: 5 })
   startTime!: string;
 
+  @Column({ type: "varchar", length: 80, nullable: true })
+  timeZone!: string | null;
+
   @Column({ type: "integer" })
   durationMinutes!: number;
 

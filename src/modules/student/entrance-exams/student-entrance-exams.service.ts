@@ -21,6 +21,9 @@ import {
   putObject,
 } from "../../../common/storage/object-storage.js";
 import { enqueueOcrJob } from "../../../common/queues/ocr-queue.js";
+import {
+  assertStudentAssessmentWindowOpen,
+} from "../../admin/assessments/assessment-session-sync.service.js";
 
 export type UploadedExamFile = {
   buffer: Buffer;
@@ -488,6 +491,7 @@ class StudentEntranceExamsService {
     studentUserId: string,
     uploads: UploadedExamFile[],
   ) {
+    assertStudentAssessmentWindowOpen(assessment, "submission");
     if (uploads.length === 0) {
       throw new AppError(400, "Choose at least one file", "NO_FILES");
     }
@@ -566,7 +570,8 @@ class StudentEntranceExamsService {
     assessmentId: string,
     fileId: string,
   ) {
-    await this.assertCanAccessExam(studentUserId, assessmentId);
+    const assessment = await this.assertCanAccessExam(studentUserId, assessmentId);
+    assertStudentAssessmentWindowOpen(assessment, "submission");
     const submission = await this.submissions.findOne({
       where: { assessmentId, studentId: studentUserId },
     });
@@ -589,7 +594,11 @@ class StudentEntranceExamsService {
     assessmentId: string,
     fileId: string,
   ) {
-    await this.assertCanAccessAssessment(studentUserId, assessmentId);
+    const assessment = await this.assertCanAccessAssessment(
+      studentUserId,
+      assessmentId,
+    );
+    assertStudentAssessmentWindowOpen(assessment, "submission");
     const submission = await this.submissions.findOne({
       where: { assessmentId, studentId: studentUserId },
     });
@@ -612,6 +621,7 @@ class StudentEntranceExamsService {
       studentUserId,
       assessmentId,
     );
+    assertStudentAssessmentWindowOpen(assessment, "submission");
     const submission = await this.submissions.findOne({
       where: { assessmentId, studentId: studentUserId },
       relations: { files: true },
@@ -646,6 +656,7 @@ class StudentEntranceExamsService {
       studentUserId,
       assessmentId,
     );
+    assertStudentAssessmentWindowOpen(assessment, "submission");
     const submission = await this.submissions.findOne({
       where: { assessmentId, studentId: studentUserId },
       relations: { files: true },

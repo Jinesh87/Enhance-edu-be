@@ -7,12 +7,41 @@ import {
   AssessmentSubmissionFile,
 } from "../../entities/index.js";
 import { getObjectBuffer } from "../storage/object-storage.js";
+import {
+  extractTextWithAzureRead,
+  isAzureDocumentIntelligenceConfigured,
+} from "../ocr/azure-document-intelligence.js";
 
 export type OcrJobPayload = {
   submissionId: string;
 };
 
 const QUEUE_NAME = "entrance-exam-ocr";
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index], index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () =>
+      runWorker(),
+    ),
+  );
+  return results;
+}
 
 function redisConnection() {
   const url = new URL(env.REDIS_URL);
@@ -41,30 +70,37 @@ export function getOcrQueue(): Queue<OcrJobPayload> {
   return queue;
 }
 
-/**
- * Stub OCR: stores a readable placeholder from file metadata.
- * Swap getObjectBuffer + this function for a real handwriting model later.
- */
-async function runStubOcr(submissionId: string): Promise<string> {
+async function runAzureOcr(submissionId: string): Promise<string> {
+  if (!isAzureDocumentIntelligenceConfigured()) {
+    throw new Error(
+      "Azure Document Intelligence is not configured. Set AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY.",
+    );
+  }
+
   const fileRepo = AppDataSource.getRepository(AssessmentSubmissionFile);
   const files = await fileRepo.find({
     where: { submissionId },
     order: { sortOrder: "ASC" },
   });
 
-  const parts: string[] = [];
-  for (const file of files) {
-    // Touch storage so misconfigured buckets fail the job.
-    await getObjectBuffer(file.storageKey);
-    const pageText =
-      `[OCR pending — handwriting conversion stub]\n` +
-      `File: ${file.originalName} (${file.mimeType}, ${file.byteSize} bytes)\n` +
-      `Replace this worker with a real OCR/HTR provider.`;
-    file.extractedText = pageText;
-    await fileRepo.save(file);
-    parts.push(pageText);
+  if (files.length === 0) {
+    throw new Error("No submission files found for OCR");
   }
-  return parts.join("\n\n---\n\n");
+
+  const pageTexts = await mapWithConcurrency(
+    files,
+    env.OCR_FILE_CONCURRENCY,
+    async (file) => {
+      const buffer = await getObjectBuffer(file.storageKey);
+      const pageText = await extractTextWithAzureRead(buffer);
+      file.extractedText = pageText || null;
+      return pageText;
+    },
+  );
+
+  await fileRepo.save(files);
+
+  return pageTexts.filter((text): text is string => Boolean(text)).join("\n\n---\n\n");
 }
 
 async function processJob(job: Job<OcrJobPayload>) {
@@ -82,11 +118,11 @@ async function processJob(job: Job<OcrJobPayload>) {
   await submissionRepo.save(submission);
 
   try {
-    const text = await runStubOcr(submission.id);
-    submission.extractedText = text;
+    const text = await runAzureOcr(submission.id);
+    submission.extractedText = text || null;
     submission.status = "READY";
     await submissionRepo.save(submission);
-    logger.info({ submissionId: submission.id }, "OCR job completed (stub)");
+    logger.info({ submissionId: submission.id }, "OCR job completed");
   } catch (error) {
     submission.status = "FAILED";
     submission.ocrError =
@@ -100,7 +136,7 @@ export function startOcrWorker() {
   if (worker) return worker;
   worker = new Worker<OcrJobPayload>(QUEUE_NAME, processJob, {
     connection: redisConnection(),
-    concurrency: 2,
+    concurrency: env.OCR_WORKER_CONCURRENCY,
   });
   worker.on("failed", (job, error) => {
     logger.error(
@@ -108,7 +144,13 @@ export function startOcrWorker() {
       "OCR job failed",
     );
   });
-  logger.info("Entrance-exam OCR worker started");
+  if (isAzureDocumentIntelligenceConfigured()) {
+    logger.info("Entrance-exam OCR worker started (Azure Document Intelligence)");
+  } else {
+    logger.warn(
+      "Entrance-exam OCR worker started, but Azure Document Intelligence env is missing — jobs will fail until configured",
+    );
+  }
   return worker;
 }
 
