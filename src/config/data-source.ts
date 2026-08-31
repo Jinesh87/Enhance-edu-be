@@ -148,6 +148,34 @@ export async function ensureAssessmentSessionSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureInstitutionSettingSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  const [{ institutionSettingTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.institution_setting') IS NOT NULL AS "institutionSettingTable"
+  `);
+  if (!institutionSettingTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "guardianPortalClassDetailsEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "guardianPortalAssessmentsEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "guardianPortalEntranceExamsEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "guardianPortalAttendanceEnabled" boolean NOT NULL DEFAULT false;
+  `);
+  await bootstrap.destroy();
+}
+
 export async function ensureEnrollmentStatusSchema() {
   const bootstrap = new DataSource({
     ...postgresOptions(),

@@ -26,6 +26,11 @@ const enrollmentDetailsSchema = Joi.object({
   fee: Joi.number().min(0).precision(2).required(),
 });
 
+const guardianStudentEnrollmentSchema = Joi.object({
+  student: enrollmentStudentSchema.required(),
+  enrollment: enrollmentDetailsSchema.required(),
+});
+
 export const createUserSchema = Joi.object({
   fullName: Joi.string().trim().min(2).max(120).required(),
   preferredName: Joi.string().trim().max(80).allow(null, ""),
@@ -42,16 +47,15 @@ export const createUserSchema = Joi.object({
       then: Joi.required(),
       otherwise: Joi.optional(),
     }),
-  student: enrollmentStudentSchema.when("role", {
-    is: UserRole.GUARDIAN,
-    then: Joi.required(),
-    otherwise: Joi.forbidden(),
-  }),
-  enrollment: enrollmentDetailsSchema.when("role", {
-    is: UserRole.GUARDIAN,
-    then: Joi.required(),
-    otherwise: Joi.forbidden(),
-  }),
+  students: Joi.array()
+    .items(guardianStudentEnrollmentSchema)
+    .min(1)
+    .max(20)
+    .when("role", {
+      is: UserRole.GUARDIAN,
+      then: Joi.required(),
+      otherwise: Joi.forbidden(),
+    }),
   subjectIds: Joi.array().items(Joi.string().uuid()).when("role", {
     is: UserRole.STAFF,
     then: Joi.optional(),

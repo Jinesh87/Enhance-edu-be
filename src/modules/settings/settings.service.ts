@@ -11,6 +11,20 @@ export interface UpdateSecuritySettingInput {
   sandboxModeEnabled: boolean;
 }
 
+export interface GuardianPortalSettings {
+  classDetailsEnabled: boolean;
+  assessmentsEnabled: boolean;
+  entranceExamsEnabled: boolean;
+  attendanceEnabled: boolean;
+}
+
+export interface UpdateGuardianPortalSettingInput {
+  classDetailsEnabled: boolean;
+  assessmentsEnabled: boolean;
+  entranceExamsEnabled: boolean;
+  attendanceEnabled: boolean;
+}
+
 export class SettingsService {
   private readonly settingRepo = AppDataSource.getRepository(InstitutionSetting);
 
@@ -23,6 +37,10 @@ export class SettingsService {
         longitude: null,
         login2faEnabled: false,
         sandboxModeEnabled: false,
+        guardianPortalClassDetailsEnabled: false,
+        guardianPortalAssessmentsEnabled: false,
+        guardianPortalEntranceExamsEnabled: false,
+        guardianPortalAttendanceEnabled: false,
       });
       setting = await this.settingRepo.save(setting);
     }
@@ -72,6 +90,54 @@ export class SettingsService {
   async isSandboxModeEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.sandboxModeEnabled ?? false;
+  }
+
+  private mapGuardianPortalSettings(
+    setting: InstitutionSetting,
+  ): GuardianPortalSettings {
+    return {
+      classDetailsEnabled: setting.guardianPortalClassDetailsEnabled ?? false,
+      assessmentsEnabled: setting.guardianPortalAssessmentsEnabled ?? false,
+      entranceExamsEnabled: setting.guardianPortalEntranceExamsEnabled ?? false,
+      attendanceEnabled: setting.guardianPortalAttendanceEnabled ?? false,
+    };
+  }
+
+  async getGuardianPortalSettings(): Promise<GuardianPortalSettings> {
+    const setting = await this.getOrCreateDefault();
+    return this.mapGuardianPortalSettings(setting);
+  }
+
+  async updateGuardianPortalSettings(
+    input: UpdateGuardianPortalSettingInput,
+  ): Promise<GuardianPortalSettings> {
+    const setting = await this.getOrCreateDefault();
+    setting.guardianPortalClassDetailsEnabled = input.classDetailsEnabled;
+    setting.guardianPortalAssessmentsEnabled = input.assessmentsEnabled;
+    setting.guardianPortalEntranceExamsEnabled = input.entranceExamsEnabled;
+    setting.guardianPortalAttendanceEnabled = input.attendanceEnabled;
+    await this.settingRepo.save(setting);
+    return this.mapGuardianPortalSettings(setting);
+  }
+
+  async isGuardianPortalClassDetailsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.guardianPortalClassDetailsEnabled ?? false;
+  }
+
+  async isGuardianPortalAssessmentsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.guardianPortalAssessmentsEnabled ?? false;
+  }
+
+  async isGuardianPortalEntranceExamsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.guardianPortalEntranceExamsEnabled ?? false;
+  }
+
+  async isGuardianPortalAttendanceEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.guardianPortalAttendanceEnabled ?? false;
   }
 }
 

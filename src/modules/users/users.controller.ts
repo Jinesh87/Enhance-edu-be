@@ -44,8 +44,7 @@ export class UsersController {
           role: req.body.role as UserRole,
           employmentType: req.body.employmentType as EmploymentType | null,
           password: req.body.password,
-          student: req.body.student,
-          enrollment: req.body.enrollment,
+          students: req.body.students,
           subjectIds: req.body.subjectIds,
           modulePermissions: req.body.modulePermissions,
         },
@@ -55,6 +54,7 @@ export class UsersController {
       res.status(201).json({
         person: result.person,
         pendingEnrollment: result.pendingEnrollment ?? null,
+        pendingEnrollments: result.pendingEnrollments ?? null,
         // Temporary until email delivery exists
         invitationToken: result.invitationToken,
       });
