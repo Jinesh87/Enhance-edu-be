@@ -37,6 +37,11 @@ import {
   EnquirySource,
   EnquiryStage,
   EnquiryStageHistory,
+  Homework,
+  HomeworkAttachment,
+  HomeworkStudent,
+  HomeworkSubmission,
+  HomeworkSubmissionFile,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -229,6 +234,121 @@ export async function ensureEnrollmentStatusSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureHomeworkSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  const [{ usersTable, termsTable, subjectsTable }] = await bootstrap.query(`
+    SELECT
+      to_regclass('public.users') IS NOT NULL AS "usersTable",
+      to_regclass('public.terms') IS NOT NULL AS "termsTable",
+      to_regclass('public.subjects') IS NOT NULL AS "subjectsTable"
+  `);
+  if (!usersTable || !termsTable || !subjectsTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS homework (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "title" varchar(160) NOT NULL,
+      "description" text,
+      "dueDate" date NOT NULL,
+      "maxMarks" numeric(5, 2) DEFAULT 100,
+      "termId" uuid NOT NULL REFERENCES terms(id) ON DELETE RESTRICT,
+      "subjectId" uuid NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+      "yearGroup" varchar(80) NOT NULL,
+      "createdById" uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE homework ADD COLUMN IF NOT EXISTS "maxMarks" numeric(5, 2) DEFAULT 100;
+    CREATE INDEX IF NOT EXISTS "IDX_homework_dueDate" ON homework ("dueDate");
+    CREATE INDEX IF NOT EXISTS "IDX_homework_termId" ON homework ("termId");
+    CREATE INDEX IF NOT EXISTS "IDX_homework_subjectId" ON homework ("subjectId");
+    CREATE INDEX IF NOT EXISTS "IDX_homework_createdById" ON homework ("createdById");
+
+    CREATE TABLE IF NOT EXISTS homework_attachments (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "homeworkId" uuid NOT NULL REFERENCES homework(id) ON DELETE CASCADE,
+      "uploadedById" uuid REFERENCES users(id) ON DELETE SET NULL,
+      "storageKey" varchar(500) NOT NULL,
+      "originalName" varchar(255) NOT NULL,
+      "mimeType" varchar(120) NOT NULL,
+      "byteSize" integer NOT NULL DEFAULT 0,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_homework_attachments_homeworkId"
+      ON homework_attachments ("homeworkId");
+    CREATE INDEX IF NOT EXISTS "IDX_homework_attachments_uploadedById"
+      ON homework_attachments ("uploadedById");
+
+    CREATE TABLE IF NOT EXISTS homework_students (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "homeworkId" uuid NOT NULL REFERENCES homework(id) ON DELETE CASCADE,
+      "studentId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT "UQ_homework_students_homeworkId_studentId"
+        UNIQUE ("homeworkId", "studentId")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_homework_students_homeworkId"
+      ON homework_students ("homeworkId");
+    CREATE INDEX IF NOT EXISTS "IDX_homework_students_studentId"
+      ON homework_students ("studentId");
+
+    CREATE TABLE IF NOT EXISTS homework_submissions (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "homeworkId" uuid NOT NULL REFERENCES homework(id) ON DELETE CASCADE,
+      "studentId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "status" varchar(32) NOT NULL DEFAULT 'DRAFT',
+      "submittedAt" timestamptz,
+      "marks" numeric(5, 2),
+      "maxMarks" numeric(5, 2) DEFAULT 100,
+      "feedback" text,
+      "isCompleted" boolean NOT NULL DEFAULT false,
+      "markedAt" timestamptz,
+      "markedById" uuid REFERENCES users(id) ON DELETE SET NULL,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT "UQ_homework_submissions_homeworkId_studentId"
+        UNIQUE ("homeworkId", "studentId")
+    );
+    ALTER TABLE homework_submissions ADD COLUMN IF NOT EXISTS "marks" numeric(5, 2);
+    ALTER TABLE homework_submissions ADD COLUMN IF NOT EXISTS "maxMarks" numeric(5, 2) DEFAULT 100;
+    ALTER TABLE homework_submissions ADD COLUMN IF NOT EXISTS "feedback" text;
+    ALTER TABLE homework_submissions ADD COLUMN IF NOT EXISTS "isCompleted" boolean NOT NULL DEFAULT false;
+    ALTER TABLE homework_submissions ADD COLUMN IF NOT EXISTS "markedAt" timestamptz;
+    ALTER TABLE homework_submissions ADD COLUMN IF NOT EXISTS "markedById" uuid REFERENCES users(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS "IDX_homework_submissions_markedById"
+      ON homework_submissions ("markedById");
+    CREATE INDEX IF NOT EXISTS "IDX_homework_submissions_homeworkId"
+      ON homework_submissions ("homeworkId");
+    CREATE INDEX IF NOT EXISTS "IDX_homework_submissions_studentId"
+      ON homework_submissions ("studentId");
+
+    CREATE TABLE IF NOT EXISTS homework_submission_files (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "submissionId" uuid NOT NULL REFERENCES homework_submissions(id) ON DELETE CASCADE,
+      "storageKey" varchar(500) NOT NULL,
+      "originalName" varchar(255) NOT NULL,
+      "mimeType" varchar(120) NOT NULL,
+      "byteSize" integer NOT NULL DEFAULT 0,
+      "sortOrder" integer NOT NULL DEFAULT 0,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_homework_submission_files_submissionId"
+      ON homework_submission_files ("submissionId");
+  `);
+  await bootstrap.destroy();
+}
+
 export async function ensureEnquiryConstraints() {
   if (!AppDataSource.isInitialized) return;
   await AppDataSource.query(`
@@ -296,6 +416,11 @@ export const AppDataSource = new DataSource({
     Enquiry,
     EnquiryStageHistory,
     EnquiryEvent,
+    Homework,
+    HomeworkAttachment,
+    HomeworkStudent,
+    HomeworkSubmission,
+    HomeworkSubmissionFile,
   ],
   migrations: [],
   subscribers: [],

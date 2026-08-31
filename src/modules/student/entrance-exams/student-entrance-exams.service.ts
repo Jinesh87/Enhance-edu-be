@@ -1,4 +1,4 @@
-import { In } from "typeorm";
+import { Brackets, In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
@@ -67,6 +67,7 @@ function toSubmissionDto(
           startTime: assessment.startTime,
           durationMinutes: assessment.durationMinutes,
           kind: assessment.kind,
+          scheduleType: assessment.scheduleType,
         }
       : null,
   };
@@ -74,6 +75,7 @@ function toSubmissionDto(
 
 class StudentEntranceExamsService {
   private readonly assessments = AppDataSource.getRepository(Assessment);
+  private readonly assessmentStudents = AppDataSource.getRepository(AssessmentStudent);
   private readonly submissions = AppDataSource.getRepository(AssessmentSubmission);
   private readonly files = AppDataSource.getRepository(AssessmentSubmissionFile);
   private readonly students = AppDataSource.getRepository(Student);
@@ -165,34 +167,118 @@ class StudentEntranceExamsService {
 
   async listAvailable(studentUserId: string) {
     const student = await this.requireStudent(studentUserId);
-    const termIds = await this.trialTermIdsForStudent(student.id);
-    if (termIds.length === 0) return { exams: [] };
 
-    const eligibleTermIds: string[] = [];
-    for (const termId of termIds) {
+    // 1. Directly assigned assessments
+    const directRows = await this.assessmentStudents.find({
+      where: { studentId: studentUserId },
+      select: { assessmentId: true },
+    });
+    const directAssessmentIds = directRows.map((r) => r.assessmentId);
+
+    // 2. Class enrolled assessments
+    const classRows = await this.classStudents.find({
+      where: { studentId: studentUserId },
+      select: { classId: true },
+    });
+    const enrolledClassIds = classRows.map((r) => r.classId);
+
+    // 3. Trial entrance exams
+    const trialTermIds = await this.trialTermIdsForStudent(student.id);
+    const eligibleTrialTermIds: string[] = [];
+    for (const termId of trialTermIds) {
       if (await this.hasTrialAttendance(studentUserId, termId)) {
-        eligibleTermIds.push(termId);
+        eligibleTrialTermIds.push(termId);
       }
     }
-    if (eligibleTermIds.length === 0) return { exams: [] };
 
-    const exams = await this.assessments.find({
+    // 4. Enrollments (subjects & year levels)
+    const enrollments = await this.enrollments.find({
       where: {
-        kind: "ENTRANCE",
-        termId: In(eligibleTermIds),
-        status: In(["SCHEDULED", "LIVE", "COMPLETED"]),
+        studentId: student.id,
+        status: In([
+          EnrollmentStatus.ACTIVE,
+          EnrollmentStatus.AWAITING_GUARDIAN,
+        ]),
       },
-      relations: { term: true },
-      order: { assessmentDate: "ASC", startTime: "ASC" },
+      relations: {
+        subjects: { subject: true },
+        term: { academicYear: true, yearLevel: true },
+      },
     });
 
-    const submissions = await this.submissions.find({
-      where: {
-        studentId: studentUserId,
-        assessmentId: In(exams.map((e) => e.id)),
-      },
-      relations: { files: true },
-    });
+    const enrolledTermIds = new Set<string>();
+    const enrolledSubjects = new Set<string>();
+
+    for (const enr of enrollments) {
+      if (enr.termId) enrolledTermIds.add(enr.termId);
+      for (const row of enr.subjects ?? []) {
+        const name = row.subject?.name?.trim().toLowerCase();
+        if (name) enrolledSubjects.add(name);
+      }
+    }
+
+    const query = this.assessments
+      .createQueryBuilder("assessment")
+      .leftJoinAndSelect("assessment.term", "term")
+      .leftJoinAndSelect("assessment.classroom", "classroom")
+      .leftJoinAndSelect("assessment.teacher", "teacher")
+      .where("assessment.status IN (:...statuses)", {
+        statuses: ["SCHEDULED", "LIVE", "COMPLETED"],
+      });
+
+    query.andWhere(
+      new Brackets((qb) => {
+        let hasCondition = false;
+        if (directAssessmentIds.length > 0) {
+          qb.orWhere("assessment.id IN (:...directAssessmentIds)", {
+            directAssessmentIds,
+          });
+          hasCondition = true;
+        }
+        if (enrolledClassIds.length > 0) {
+          qb.orWhere("assessment.classId IN (:...enrolledClassIds)", {
+            enrolledClassIds,
+          });
+          hasCondition = true;
+        }
+        if (eligibleTrialTermIds.length > 0) {
+          qb.orWhere(
+            "(assessment.kind = 'ENTRANCE' AND assessment.termId IN (:...eligibleTrialTermIds))",
+            { eligibleTrialTermIds },
+          );
+          hasCondition = true;
+        }
+        if (enrolledTermIds.size > 0 && enrolledSubjects.size > 0) {
+          qb.orWhere(
+            "(assessment.termId IN (:...enrolledTermIds) AND LOWER(assessment.subject) IN (:...enrolledSubjects))",
+            {
+              enrolledTermIds: [...enrolledTermIds],
+              enrolledSubjects: [...enrolledSubjects],
+            },
+          );
+          hasCondition = true;
+        }
+        if (!hasCondition) {
+          qb.where("1 = 0");
+        }
+      }),
+    );
+
+    query.orderBy("assessment.assessmentDate", "ASC").addOrderBy("assessment.startTime", "ASC");
+
+    const exams = await query.getMany();
+
+    const submissions =
+      exams.length > 0
+        ? await this.submissions.find({
+            where: {
+              studentId: studentUserId,
+              assessmentId: In(exams.map((e) => e.id)),
+            },
+            relations: { files: true },
+          })
+        : [];
+
     const byAssessment = new Map(
       submissions.map((row) => [row.assessmentId, row]),
     );
@@ -203,6 +289,8 @@ class StudentEntranceExamsService {
         return {
           id: exam.id,
           name: exam.name,
+          kind: exam.kind,
+          scheduleType: exam.scheduleType,
           subject: exam.subject,
           yearGroup: exam.yearGroup,
           termId: exam.termId,
@@ -258,40 +346,14 @@ class StudentEntranceExamsService {
     studentUserId: string,
     assessmentId: string,
   ): Promise<Assessment> {
-    const student = await this.requireStudent(studentUserId);
-    const assessment = await this.assessments.findOne({
-      where: { id: assessmentId, kind: "ENTRANCE" },
-      relations: { term: true },
-    });
-    if (!assessment || assessment.status === "ARCHIVED" || assessment.status === "CANCELLED") {
-      throw new AppError(404, "Entrance exam not found", "EXAM_NOT_FOUND");
-    }
-    if (!assessment.term?.isTrial) {
-      throw new AppError(
-        400,
-        "Entrance exams must be linked to a trial term",
-        "NOT_TRIAL_TERM",
-      );
-    }
-    const termIds = await this.trialTermIdsForStudent(student.id);
-    if (!termIds.includes(assessment.termId)) {
-      throw new AppError(403, "Not enrolled in this trial term", "NOT_ENROLLED");
-    }
-    if (!(await this.hasTrialAttendance(studentUserId, assessment.termId))) {
-      throw new AppError(
-        403,
-        "Attend a trial class before sitting the entrance exam",
-        "TRIAL_NOT_ATTENDED",
-      );
-    }
-    return assessment;
+    return this.assertCanAccessAssessment(studentUserId, assessmentId);
   }
 
   private async assertCanAccessAssessment(
     studentUserId: string,
     assessmentId: string,
   ): Promise<Assessment> {
-    await this.requireStudent(studentUserId);
+    const student = await this.requireStudent(studentUserId);
     const assessment = await this.assessments.findOne({
       where: { id: assessmentId },
       relations: { term: true },
@@ -307,19 +369,50 @@ class StudentEntranceExamsService {
         "ASSESSMENT_NOT_FOUND",
       );
     }
-    const sitting = await AppDataSource.getRepository(
-      AssessmentStudent,
-    ).findOne({
+
+    // 1. Direct assessment assignment
+    const sitting = await this.assessmentStudents.findOne({
       where: { assessmentId, studentId: studentUserId },
     });
-    if (!sitting) {
-      throw new AppError(
-        403,
-        "You are not on this assessment roll",
-        "NOT_ENROLLED",
-      );
+    if (sitting) return assessment;
+
+    // 2. Class enrollment
+    if (assessment.classId) {
+      const classEnrollment = await this.classStudents.findOne({
+        where: { classId: assessment.classId, studentId: studentUserId },
+      });
+      if (classEnrollment) return assessment;
     }
-    return assessment;
+
+    // 3. Trial entrance exam
+    if (assessment.kind === "ENTRANCE") {
+      const termIds = await this.trialTermIdsForStudent(student.id);
+      if (
+        termIds.includes(assessment.termId) &&
+        (await this.hasTrialAttendance(studentUserId, assessment.termId))
+      ) {
+        return assessment;
+      }
+    }
+
+    // 4. Term and active enrollment check
+    const enrollment = await this.enrollments.findOne({
+      where: {
+        studentId: student.id,
+        termId: assessment.termId,
+        status: In([
+          EnrollmentStatus.ACTIVE,
+          EnrollmentStatus.AWAITING_GUARDIAN,
+        ]),
+      },
+    });
+    if (enrollment) return assessment;
+
+    throw new AppError(
+      403,
+      "You are not enrolled in this assessment",
+      "NOT_ENROLLED",
+    );
   }
 
   async getSubmission(studentUserId: string, assessmentId: string) {
