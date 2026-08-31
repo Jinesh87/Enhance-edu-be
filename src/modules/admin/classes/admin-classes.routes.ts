@@ -41,6 +41,11 @@ adminClassesRouter.patch(
   validate(updateSessionSchema),
   adminClassesController.updateSession,
 );
+adminClassesRouter.delete(
+  "/sessions/:id",
+  validate(sessionIdParamsSchema, "params"),
+  adminClassesController.removeSession,
+);
 adminClassesRouter.post(
   "/bulk-replace",
   validate(bulkReplaceClassSchema),

@@ -8,6 +8,22 @@ import { AppError } from "../../../common/errors/AppError.js";
 class AdminAttendanceController {
   async listExceptions(req: Request, res: Response, next: NextFunction) {
     try {
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      const yearLevel =
+        typeof req.query.yearLevel === "string" && req.query.yearLevel.trim()
+          ? req.query.yearLevel.trim()
+          : undefined;
+      if (
+        typeof year !== "number" ||
+        !Number.isInteger(year) ||
+        !yearLevel
+      ) {
+        throw new AppError(
+          400,
+          "Academic year and year level are required",
+          "ATTENDANCE_SCOPE_REQUIRED",
+        );
+      }
       const pageExceptions = req.query.pageExceptions
         ? Number(req.query.pageExceptions)
         : undefined;
@@ -22,6 +38,8 @@ class AdminAttendanceController {
         : undefined;
 
       const data = await adminAttendanceService.getExceptionsAndAbsences({
+        year,
+        yearLevel,
         pageExceptions,
         limitExceptions,
         pageAbsences,
@@ -134,8 +152,20 @@ class AdminAttendanceController {
       const page = req.query.page ? Number(req.query.page) : undefined;
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
 
+      if (
+        typeof year !== "number" ||
+        !Number.isInteger(year) ||
+        !yearLevel
+      ) {
+        throw new AppError(
+          400,
+          "Academic year and year level are required",
+          "ATTENDANCE_SCOPE_REQUIRED",
+        );
+      }
+
       const data = await adminAttendanceService.listRecordsForCorrection({
-        year: Number.isFinite(year) ? year : undefined,
+        year,
         yearLevel,
         term,
         search,

@@ -3,7 +3,7 @@ import "dotenv/config";
 export const env = {
   PORT: Number(process.env.PORT ?? 3000),
   NODE_ENV: process.env.NODE_ENV ?? "development",
-  FRONTEND_URL: process.env.FRONTEND_URL ?? "http://localhost:5173",
+  FRONTEND_URL: process.env.FRONTEND_URL ?? "https://localhost:5173",
   QR_SECRET: process.env.QR_SECRET ?? "enhance-edu-qr-secret-key-2026",
   QR_ROTATION_WINDOW_MS: Number(process.env.QR_ROTATION_WINDOW_MS ?? 30_000),
   LOG_LEVEL: process.env.LOG_LEVEL,

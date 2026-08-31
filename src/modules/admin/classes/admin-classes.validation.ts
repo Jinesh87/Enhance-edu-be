@@ -61,10 +61,11 @@ export const updateSessionSchema = Joi.object({
   room: Joi.string().trim().max(80).allow(null, ""),
   classroomId: Joi.string().uuid().allow(null, ""),
   teacherId: Joi.string().uuid().allow(null, ""),
+  gracePeriodMinutes: Joi.number().integer().min(0).max(480),
   classId: Joi.string().uuid(), // for weekly-slot rows that have no real session yet
   isWeeklySlot: Joi.boolean(),
 })
-  .or("startAt", "endAt", "room", "classroomId", "teacherId")
+  .or("startAt", "endAt", "room", "classroomId", "teacherId", "gracePeriodMinutes")
   .custom((value, helpers) => {
     if (value.startAt && value.endAt) {
       const start = new Date(value.startAt).getTime();
