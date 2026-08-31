@@ -29,6 +29,22 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   sandboxModeEnabled!: boolean;
 
+  /** When true, guardians can view linked students' class timetable and lesson details. */
+  @Column({ type: "boolean", default: false })
+  guardianPortalClassDetailsEnabled!: boolean;
+
+  /** When true, guardians can view linked students' assessments and marks. */
+  @Column({ type: "boolean", default: false })
+  guardianPortalAssessmentsEnabled!: boolean;
+
+  /** When true, guardians can view linked students' entrance exam work. */
+  @Column({ type: "boolean", default: false })
+  guardianPortalEntranceExamsEnabled!: boolean;
+
+  /** When true, guardians can view linked students' attendance records. */
+  @Column({ type: "boolean", default: false })
+  guardianPortalAttendanceEnabled!: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 

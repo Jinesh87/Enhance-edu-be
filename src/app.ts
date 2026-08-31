@@ -25,6 +25,7 @@ import teacherAssessmentsRouter from "./modules/teacher/assessments/teacher-asse
 import adminAuditRouter from "./modules/admin/audit/admin-audit.routes.js";
 import adminEnquiriesRouter from "./modules/admin/enquiries/admin-enquiries.routes.js";
 import guardianStudentsRouter from "./modules/guardian/students/guardian-students.routes.js";
+import guardianPortalRouter from "./modules/guardian/portal/guardian-portal.routes.js";
 import studentClassesRouter from "./modules/student/classes/student-classes.routes.js";
 import studentEntranceExamsRouter from "./modules/student/entrance-exams/student-entrance-exams.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
@@ -83,6 +84,7 @@ app.use("/api/audit-logs", adminAuditRouter);
 app.use("/api/student", studentClassesRouter);
 app.use("/api/student/entrance-exams", studentEntranceExamsRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
+app.use("/api/guardian/portal-settings", guardianPortalRouter);
 
 app.use(errorHandler);
 

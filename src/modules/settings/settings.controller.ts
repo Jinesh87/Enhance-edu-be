@@ -61,6 +61,25 @@ export class SettingsController {
     const sandboxModeEnabled = await settingsService.isSandboxModeEnabled();
     res.json({ sandboxModeEnabled });
   }
+
+  async getGuardianPortalSettings(_req: Request, res: Response): Promise<void> {
+    const config = await settingsService.getGuardianPortalSettings();
+    res.json(config);
+  }
+
+  async updateGuardianPortalSettings(req: Request, res: Response): Promise<void> {
+    const config = await settingsService.updateGuardianPortalSettings(req.body);
+
+    logger.info(
+      {
+        userId: req.user?.id,
+        ...config,
+      },
+      "Guardian portal settings updated",
+    );
+
+    res.json(config);
+  }
 }
 
 export const settingsController = new SettingsController();
