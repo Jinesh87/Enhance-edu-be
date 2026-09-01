@@ -11,6 +11,8 @@ class AdminSyllabusController {
         subjectId?: string | null;
         academicYearId?: string | null;
         yearLevelId?: string | null;
+        termId?: string | null;
+        allTerms?: boolean;
       };
       const data = await adminSyllabusService.list({
         page: query.page,
@@ -19,6 +21,8 @@ class AdminSyllabusController {
         subjectId: query.subjectId || undefined,
         academicYearId: query.academicYearId || undefined,
         yearLevelId: query.yearLevelId || undefined,
+        termId: query.termId || undefined,
+        allTerms: query.allTerms,
       });
       res.status(200).json(data);
     } catch (error) {
