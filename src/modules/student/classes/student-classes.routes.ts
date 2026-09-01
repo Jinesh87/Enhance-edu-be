@@ -1,17 +1,16 @@
 import { Router } from "express";
-import multer from "multer";
 import { UserRole } from "../../../common/constants/roles.js";
 import {
   authenticate,
   authorize,
 } from "../../../common/middleware/authenticate.js";
+import {
+  uploadMiddleware,
+  validateUploadedFiles,
+} from "../../../common/middleware/upload-validation.js";
 import { studentClassesController } from "./student-classes.controller.js";
 
 const router = Router();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024, files: 20 },
-});
 
 router.use(authenticate, authorize(UserRole.STUDENT));
 
@@ -27,7 +26,8 @@ router.get(
 );
 router.post(
   "/homework/:homeworkId/files",
-  upload.array("files", 20),
+  uploadMiddleware.array("files", 20),
+  validateUploadedFiles,
   studentClassesController.uploadHomeworkFiles,
 );
 router.delete(
@@ -49,7 +49,8 @@ router.get(
 );
 router.post(
   "/assessments/:assessmentId/files",
-  upload.array("files", 20),
+  uploadMiddleware.array("files", 20),
+  validateUploadedFiles,
   studentClassesController.uploadAssessmentFiles,
 );
 router.delete(

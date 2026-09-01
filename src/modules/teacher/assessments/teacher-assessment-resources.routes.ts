@@ -1,13 +1,11 @@
 import { Router } from "express";
-import multer from "multer";
 import { UserRole } from "../../../common/constants/roles.js";
 import { authorize } from "../../../common/middleware/authenticate.js";
+import {
+  uploadMiddleware,
+  validateUploadedFiles,
+} from "../../../common/middleware/upload-validation.js";
 import { teacherAssessmentResourcesController } from "./teacher-assessment-resources.controller.js";
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024, files: 20 },
-});
 
 const router = Router();
 const staffOnly = authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF, UserRole.STAFF);
@@ -20,7 +18,8 @@ router.get(
 router.post(
   "/tutor/assessments/:assessmentId/resources",
   staffOnly,
-  upload.array("files", 20),
+  uploadMiddleware.array("files", 20),
+  validateUploadedFiles,
   teacherAssessmentResourcesController.upload,
 );
 router.delete(

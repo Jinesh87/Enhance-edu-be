@@ -514,20 +514,6 @@ class StudentEntranceExamsService {
     const savedFiles: AssessmentSubmissionFile[] = [];
     let order = existingCount;
     for (const upload of uploads) {
-      const allowed =
-        upload.mimeType.startsWith("image/") ||
-        upload.mimeType === "application/pdf";
-      if (!allowed) {
-        throw new AppError(
-          400,
-          "Only images or PDF are allowed",
-          "INVALID_FILE_TYPE",
-        );
-      }
-      if (upload.size > 15 * 1024 * 1024) {
-        throw new AppError(400, "Each file must be under 15MB", "FILE_TOO_LARGE");
-      }
-
       const key = buildAssessmentSubmissionKey({
         assessmentId: assessment.id,
         studentId: studentUserId,
