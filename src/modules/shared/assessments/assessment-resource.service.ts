@@ -125,29 +125,6 @@ export class AssessmentResourceService {
 
     const created: AssessmentResource[] = [];
     for (const upload of uploads) {
-      const allowed =
-        upload.mimeType.startsWith("image/") ||
-        upload.mimeType === "application/pdf" ||
-        upload.mimeType === "text/plain" ||
-        upload.mimeType === "text/csv" ||
-        upload.mimeType ===
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-        upload.mimeType === "application/msword";
-      if (!allowed) {
-        throw new AppError(
-          400,
-          "Only images, PDF, Word, or text files are allowed",
-          "INVALID_FILE_TYPE",
-        );
-      }
-      if (upload.size > 15 * 1024 * 1024) {
-        throw new AppError(
-          400,
-          "Each file must be under 15MB",
-          "FILE_TOO_LARGE",
-        );
-      }
-
       const resource = await this.resources.save(
         this.resources.create({
           assessmentId,
