@@ -103,18 +103,6 @@ function toAttachmentDto(attachment: HomeworkAttachment) {
   };
 }
 
-function isAllowedFile(upload: UploadedHomeworkAttachment) {
-  return (
-    upload.mimeType.startsWith("image/") ||
-    upload.mimeType === "application/pdf" ||
-    upload.mimeType === "text/plain" ||
-    upload.mimeType === "text/csv" ||
-    upload.mimeType ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    upload.mimeType === "application/msword"
-  );
-}
-
 export class TeacherHomeworkService {
   private readonly homework = AppDataSource.getRepository(Homework);
   private readonly attachments = AppDataSource.getRepository(HomeworkAttachment);
@@ -269,22 +257,6 @@ export class TeacherHomeworkService {
     if (uploads.length > 20) {
       throw new AppError(400, "Too many files (max 20)", "TOO_MANY_FILES");
     }
-    for (const upload of uploads) {
-      if (!isAllowedFile(upload)) {
-        throw new AppError(
-          400,
-          "Only images, PDF, Word, or text files are allowed",
-          "INVALID_FILE_TYPE",
-        );
-      }
-      if (upload.size > 15 * 1024 * 1024) {
-        throw new AppError(
-          400,
-          "Each file must be under 15MB",
-          "FILE_TOO_LARGE",
-        );
-      }
-    }
 
     const term = await this.terms.findOne({
       where: { id: input.termId },
@@ -376,23 +348,6 @@ export class TeacherHomeworkService {
     input: UpdateTeacherHomeworkInput,
     uploads: UploadedHomeworkAttachment[],
   ) {
-    for (const upload of uploads) {
-      if (!isAllowedFile(upload)) {
-        throw new AppError(
-          400,
-          `File type not supported for ${upload.originalName}`,
-          "INVALID_FILE_TYPE",
-        );
-      }
-      if (upload.size > 15 * 1024 * 1024) {
-        throw new AppError(
-          400,
-          "Each file must be under 15MB",
-          "FILE_TOO_LARGE",
-        );
-      }
-    }
-
     const homework = await this.homework.findOne({
       where: { id: homeworkId },
       relations: {

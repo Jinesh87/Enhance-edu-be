@@ -1,7 +1,10 @@
 import { Router } from "express";
-import multer from "multer";
 import { UserRole } from "../../../common/constants/roles.js";
 import { authorize } from "../../../common/middleware/authenticate.js";
+import {
+  uploadMiddleware,
+  validateUploadedFiles,
+} from "../../../common/middleware/upload-validation.js";
 import { validate } from "../../../common/middleware/validate.js";
 import { teacherHomeworkController } from "./teacher-homework.controller.js";
 import {
@@ -9,11 +12,6 @@ import {
   gradeTeacherHomeworkSubmissionSchema,
   updateTeacherHomeworkSchema,
 } from "./teacher-homework.validation.js";
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024, files: 20 },
-});
 
 const router = Router();
 const staffOnly = authorize(
@@ -32,14 +30,16 @@ router.get(
 router.post(
   "/tutor/homework",
   staffOnly,
-  upload.array("files", 20),
+  uploadMiddleware.array("files", 20),
+  validateUploadedFiles,
   validate(createTeacherHomeworkSchema),
   teacherHomeworkController.create,
 );
 router.put(
   "/tutor/homework/:homeworkId",
   staffOnly,
-  upload.array("files", 20),
+  uploadMiddleware.array("files", 20),
+  validateUploadedFiles,
   validate(updateTeacherHomeworkSchema),
   teacherHomeworkController.update,
 );
