@@ -8,6 +8,7 @@ export const createTeacherHomeworkSchema = Joi.object({
   description: Joi.string().trim().max(5000).allow("", null),
   termId: uuid.required(),
   subjectId: uuid.required(),
+  teacherId: uuid.allow("", null).optional(),
   yearGroup: Joi.string().trim().min(1).max(80).required(),
   dueDate: Joi.string().pattern(datePattern).required(),
   maxMarks: Joi.number().min(1).max(1000).allow(null).optional(),
@@ -16,6 +17,7 @@ export const createTeacherHomeworkSchema = Joi.object({
 export const updateTeacherHomeworkSchema = Joi.object({
   title: Joi.string().trim().min(1).max(160).optional(),
   description: Joi.string().trim().max(5000).allow("", null).optional(),
+  teacherId: uuid.allow("", null).optional(),
   dueDate: Joi.string().pattern(datePattern).optional(),
   maxMarks: Joi.number().min(1).max(1000).allow(null).optional(),
   removeAttachmentIds: Joi.alternatives()
