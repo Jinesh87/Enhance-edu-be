@@ -12,12 +12,13 @@ import {
 } from "typeorm";
 import { AcademicYear } from "./AcademicYear.js";
 import { Subject } from "./Subject.js";
+import { Term } from "./Term.js";
 import { YearLevel } from "./YearLevel.js";
 import { SyllabusDocument } from "./SyllabusDocument.js";
 import { SyllabusSkill } from "./SyllabusSkill.js";
 
 @Entity("syllabi")
-@Index(["subjectId", "academicYearId", "yearLevelId"], { unique: true })
+@Index(["subjectId", "academicYearId", "yearLevelId", "termId"])
 export class Syllabus {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
@@ -45,6 +46,17 @@ export class Syllabus {
   @ManyToOne(() => YearLevel, { onDelete: "RESTRICT" })
   @JoinColumn({ name: "yearLevelId" })
   yearLevel!: Relation<YearLevel>;
+
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  termId!: string | null;
+
+  @ManyToOne(() => Term, { nullable: true, onDelete: "RESTRICT" })
+  @JoinColumn({ name: "termId" })
+  term!: Relation<Term> | null;
+
+  @Column({ type: "boolean", default: false })
+  appliesToAllTerms!: boolean;
 
   @Column({ type: "varchar", length: 200 })
   title!: string;
