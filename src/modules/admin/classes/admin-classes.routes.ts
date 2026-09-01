@@ -11,6 +11,7 @@ import {
   classIdParamsSchema,
   createClassSchema,
   updateClassSchema,
+  bulkDeleteSessionsSchema,
   bulkReplaceClassSchema,
   groupSessionsQuerySchema,
   sessionIdParamsSchema,
@@ -45,6 +46,11 @@ adminClassesRouter.delete(
   "/sessions/:id",
   validate(sessionIdParamsSchema, "params"),
   adminClassesController.removeSession,
+);
+adminClassesRouter.post(
+  "/sessions/bulk-delete",
+  validate(bulkDeleteSessionsSchema),
+  adminClassesController.bulkRemoveSessions,
 );
 adminClassesRouter.post(
   "/bulk-replace",

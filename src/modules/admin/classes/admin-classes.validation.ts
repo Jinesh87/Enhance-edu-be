@@ -49,6 +49,12 @@ export const groupSessionsQuerySchema = Joi.object({
     .valid("ALL", "UPCOMING", "LIVE", "ENDED", "SCHEDULED")
     .default("ALL"),
   search: Joi.string().trim().max(120).allow("", null),
+  startDate: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .allow("", null),
+  endDate: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .allow("", null),
 });
 
 export const sessionIdParamsSchema = Joi.object({
@@ -78,6 +84,10 @@ export const updateSessionSchema = Joi.object({
     }
     return value;
   });
+
+export const bulkDeleteSessionsSchema = Joi.object({
+  ids: Joi.array().items(Joi.string().uuid()).min(1).max(100).required(),
+});
 
 export const bulkReplaceClassSchema = Joi.object({
   termId: Joi.string().uuid().required(),

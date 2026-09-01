@@ -1,5 +1,6 @@
 import { AppError } from "../../../common/errors/AppError.js";
 import {
+  calendarDateInTimeZone,
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
@@ -7,9 +8,18 @@ import {
   sessionStatus,
   type SessionStatus,
 } from "../../../common/utils/session-status.js";
-import { Class, Classroom, Session, AttendanceRecord, AttendanceStatus, ClassStudent } from "../../../entities/index.js";
+import {
+  Class,
+  Classroom,
+  Session,
+  AttendanceRecord,
+  AttendanceStatus,
+  ClassStudent,
+  ScanEvent,
+  Task,
+} from "../../../entities/index.js";
 import { AppDataSource } from "../../../config/data-source.js";
-import { In, IsNull } from "typeorm";
+import { In, IsNull, Not } from "typeorm";
 import {
   adminClassesRepository,
   type ClassInput,
@@ -784,6 +794,8 @@ export class AdminClassesService {
       limit?: number;
       status?: "ALL" | SessionStatus;
       search?: string;
+      startDate?: string;
+      endDate?: string;
     } = {},
   ) {
     const page = Math.max(1, Number(options.page) || 1);
@@ -880,6 +892,18 @@ export class AdminClassesService {
           .join(" ")
           .toLowerCase();
         return haystack.includes(search);
+      });
+    }
+
+    const startDate = (options.startDate ?? "").trim();
+    const endDate = (options.endDate ?? "").trim();
+    if (startDate || endDate) {
+      sessions = sessions.filter((row) => {
+        const timeZone = row.class?.timeZone ?? resolveIanaTimeZone(null);
+        const localDate = calendarDateInTimeZone(new Date(row.startAt), timeZone);
+        if (startDate && localDate < startDate) return false;
+        if (endDate && localDate > endDate) return false;
+        return true;
       });
     }
 
@@ -1041,31 +1065,143 @@ export class AdminClassesService {
     return this.toSessionRow(saved);
   }
 
+  private getSessionDeletionBlockReason(
+    session: Session,
+    lockedSessionIds: Set<string>,
+  ): string | null {
+    if (session.assessmentId) {
+      return "Assessment sessions cannot be deleted here";
+    }
+
+    const status = sessionStatus(session.startAt, session.endAt);
+    if (status === "LIVE" || status === "ENDED") {
+      return "Live and ended sessions cannot be deleted";
+    }
+
+    if (lockedSessionIds.has(session.id)) {
+      return "Session has attendance, check-ins, or linked tasks";
+    }
+
+    return null;
+  }
+
+  private async getLockedSessionIds(sessionIds: string[]): Promise<Set<string>> {
+    if (sessionIds.length === 0) {
+      return new Set();
+    }
+
+    const lockedSessionIds = new Set<string>();
+    const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
+    const scanRepo = AppDataSource.getRepository(ScanEvent);
+    const taskRepo = AppDataSource.getRepository(Task);
+
+    const [attendanceRecords, scanEvents, tasks] = await Promise.all([
+      attendanceRepo.find({
+        where: {
+          sessionId: In(sessionIds),
+          status: Not(AttendanceStatus.PENDING),
+        },
+        select: { sessionId: true },
+      }),
+      scanRepo.find({
+        where: { sessionId: In(sessionIds) },
+        select: { sessionId: true },
+      }),
+      taskRepo.find({
+        where: { sessionId: In(sessionIds) },
+        select: { sessionId: true },
+      }),
+    ]);
+
+    for (const record of attendanceRecords) {
+      lockedSessionIds.add(record.sessionId);
+    }
+    for (const record of scanEvents) {
+      lockedSessionIds.add(record.sessionId);
+    }
+    for (const record of tasks) {
+      lockedSessionIds.add(record.sessionId);
+    }
+
+    return lockedSessionIds;
+  }
+
+  /**
+   * Deletes upcoming/scheduled sessions that have no recorded activity.
+   * Returns per-id results so bulk operations can partially succeed.
+   */
+  async removeSessions(sessionIds: string[]) {
+    const uniqueIds = Array.from(new Set(sessionIds));
+    if (uniqueIds.length === 0) {
+      return { deleted: 0, deletedIds: [] as string[], skipped: [] as Array<{ id: string; reason: string }> };
+    }
+
+    const sessionRepo = AppDataSource.getRepository(Session);
+    const sessions = await sessionRepo.find({
+      where: { id: In(uniqueIds) },
+    });
+    const sessionById = new Map(sessions.map((session) => [session.id, session]));
+    const lockedSessionIds = await this.getLockedSessionIds(
+      sessions.map((session) => session.id),
+    );
+
+    const skipped: Array<{ id: string; reason: string }> = [];
+    const sessionsToDelete: Session[] = [];
+
+    for (const id of uniqueIds) {
+      const session = sessionById.get(id);
+      if (!session) {
+        skipped.push({ id, reason: "Session not found" });
+        continue;
+      }
+
+      const blockReason = this.getSessionDeletionBlockReason(
+        session,
+        lockedSessionIds,
+      );
+      if (blockReason) {
+        skipped.push({ id, reason: blockReason });
+        continue;
+      }
+
+      sessionsToDelete.push(session);
+    }
+
+    if (sessionsToDelete.length > 0) {
+      const deleteIds = sessionsToDelete.map((session) => session.id);
+      await AppDataSource.getRepository(AttendanceRecord).delete({
+        sessionId: In(deleteIds),
+      });
+      await sessionRepo.remove(sessionsToDelete);
+    }
+
+    return {
+      deleted: sessionsToDelete.length,
+      deletedIds: sessionsToDelete.map((session) => session.id),
+      skipped,
+    };
+  }
+
   /**
    * Deletes a single upcoming/scheduled session.
    * Cleans up attendance records for this session.
    */
   async removeSession(sessionId: string) {
-    const sessionRepo = AppDataSource.getRepository(Session);
-    const session = await sessionRepo.findOne({
-      where: { id: sessionId },
-    });
-    if (!session) {
-      throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
+    const result = await this.removeSessions([sessionId]);
+    if (result.deleted > 0) {
+      return;
     }
 
-    const status = sessionStatus(session.startAt, session.endAt);
-    if (status === "LIVE" || status === "ENDED") {
-      throw new AppError(
-        400,
-        "Live and ended sessions cannot be deleted",
-        "SESSION_NOT_DELETABLE",
-      );
+    const skipped = result.skipped[0];
+    if (skipped?.reason === "Session not found") {
+      throw new AppError(404, skipped.reason, "SESSION_NOT_FOUND");
     }
 
-    const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
-    await attendanceRepo.delete({ sessionId });
-    await sessionRepo.remove(session);
+    throw new AppError(
+      400,
+      skipped?.reason ?? "Session cannot be deleted",
+      "SESSION_NOT_DELETABLE",
+    );
   }
 
   private async assertSessionScheduleAvailable(

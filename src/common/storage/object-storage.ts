@@ -158,3 +158,12 @@ export function buildHomeworkSubmissionKey(parts: {
   const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
   return `homework-submissions/${parts.homeworkId}/${parts.studentId}/${parts.submissionId}/${Date.now()}-${safe}`;
 }
+
+export function buildSyllabusDocumentKey(parts: {
+  syllabusId: string;
+  documentId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `syllabus/${parts.syllabusId}/${parts.documentId}/${Date.now()}-${safe}`;
+}
