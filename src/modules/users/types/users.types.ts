@@ -80,6 +80,7 @@ export type InvitePersonInput = {
   students?: GuardianStudentEnrollmentInput[];
   subjectIds?: string[];
   modulePermissions?: string[];
+  includeTimetable?: boolean;
 };
 
 export type UpdatePersonInput = {

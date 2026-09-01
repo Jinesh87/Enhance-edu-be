@@ -39,6 +39,7 @@ class AdminEnrollmentsController {
           student: req.body.student,
           enrollment: req.body.enrollment,
           studentLogin: req.body.studentLogin,
+          includeTimetable: Boolean(req.body.includeTimetable),
         },
         req.user!.id,
       );

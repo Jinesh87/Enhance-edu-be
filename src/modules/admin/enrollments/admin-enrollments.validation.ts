@@ -42,6 +42,7 @@ export const inviteEnrollmentSchema = Joi.object({
     fee: Joi.number().min(0).precision(2).required(),
   }).required(),
   studentLogin: studentLoginSchema.optional(),
+  includeTimetable: Joi.boolean().default(false),
 })
   .xor("guardianId", "guardian")
   .messages({

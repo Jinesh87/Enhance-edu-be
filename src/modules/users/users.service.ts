@@ -11,10 +11,14 @@ import {
 import { deleteUserPasswordResetTokens } from "../../common/utils/password-reset-redis.js";
 import { hashPassword } from "../../common/utils/password.js";
 import { In } from "typeorm";
-import { User, TeacherSubject, Enrollment, PendingEnrollment, Student } from "../../entities/index.js";
+import { User, TeacherSubject, Enrollment, PendingEnrollment, Student, Term } from "../../entities/index.js";
 import { PendingEnrollmentStatus } from "../../common/constants/enrollment.js";
 import { emailService } from "../email/email.service.js";
 import { adminEnrollmentsService } from "../admin/enrollments/admin-enrollments.service.js";
+import {
+  enrollmentTimetableService,
+  type TimetableEnrollmentInput,
+} from "../shared/timetable/enrollment-timetable.service.js";
 import { settingsService } from "../settings/settings.service.js";
 import { sanitizeModulePermissions } from "../../common/constants/modules.js";
 import { writeAuditLog, changedFields } from "../../common/utils/audit-log.js";
@@ -363,6 +367,34 @@ export class UsersService {
       input.role === UserRole.GUARDIAN
         ? await adminEnrollmentsService.listPendingEnrollmentEmailDetails(user.id)
         : [];
+
+    let attachments: Awaited<
+      ReturnType<typeof enrollmentTimetableService.buildAttachments>
+    > = [];
+    if (
+      input.role === UserRole.GUARDIAN &&
+      input.includeTimetable &&
+      input.students?.length
+    ) {
+      const termsRepo = AppDataSource.getRepository(Term);
+      const timetableRows: TimetableEnrollmentInput[] = [];
+      for (const row of input.students) {
+        const term = await termsRepo.findOne({
+          where: { id: row.enrollment.termId },
+          relations: { yearLevel: true },
+        });
+        timetableRows.push({
+          studentFullName: row.student.fullName.trim(),
+          yearLevelName:
+            term?.yearLevel?.name ?? `Year ${row.student.yearLevel ?? ""}`,
+          termId: row.enrollment.termId,
+          subjectIds: row.enrollment.subjectIds,
+        });
+      }
+      attachments = await enrollmentTimetableService.buildAttachments(
+        timetableRows,
+      );
+    }
     
     try {
       await emailService.sendInvitationEmail({
@@ -370,6 +402,7 @@ export class UsersService {
         fullName: user.fullName,
         invitationLink,
         enrollments,
+        attachments,
       });
       
       logger.info(

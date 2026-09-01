@@ -23,7 +23,13 @@ export interface SendInvitationEmailParams {
   invitationLink: string;
   roleLabel?: string;
   enrollments?: InvitationEnrollmentDetails[];
+  attachments?: EmailAttachment[];
 }
+
+export type EmailAttachment = {
+  filename: string;
+  content: Buffer;
+};
 
 export interface SendTrialBookingEmailParams {
   to: string;
@@ -61,7 +67,13 @@ export interface SendAbsenceAlertEmailParams {
   sessionWhen: string;
   message: string;
 }
-export type SendNewEnrollmentEmailParams = SendEnrollmentChangeEmailParams;
+export interface SendNewEnrollmentEmailParams {
+  to: string;
+  fullName: string;
+  studentFullName: string;
+  reviewLink: string;
+  attachments?: EmailAttachment[];
+}
 
 export interface SendPasswordResetEmailParams {
   to: string;
@@ -156,6 +168,7 @@ export class EmailService {
             : `Enrolment invitation for ${params.enrollments[0].studentFullName}`
           : "You've been invited to join",
         html: this.buildInvitationEmailHtml(params),
+        attachments: this.toResendAttachments(params.attachments),
       });
 
       if (error) {
@@ -579,7 +592,7 @@ export class EmailService {
   <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
     <h1 style="color: #2c3e50;">New enrolment to accept</h1>
     <p>Hi ${escapeHtml(params.fullName)},</p>
-    <p>The school has enrolled <strong>${escapeHtml(params.studentFullName)}</strong>. Please sign in to review the details, set their student login, and accept the enrolment.</p>
+    <p>The school has enrolled <strong>${escapeHtml(params.studentFullName)}</strong>. Please sign in to review the details, set their student login, and accept the enrolment.${params.attachments?.length ? " A timetable PDF for the selected subjects is attached." : ""}</p>
     <div style="text-align: center; margin: 30px 0;">
       <a href="${params.reviewLink}"
          style="background-color: #e18f33; color: #002117; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: 700;">
@@ -589,6 +602,7 @@ export class EmailService {
   </div>
 </body>
 </html>`.trim(),
+      attachments: this.toResendAttachments(params.attachments),
     });
 
     if (error) {
@@ -596,11 +610,22 @@ export class EmailService {
     }
   }
 
+  private toResendAttachments(attachments?: EmailAttachment[]) {
+    if (!attachments?.length) return undefined;
+    return attachments.map((attachment) => ({
+      filename: attachment.filename,
+      content: attachment.content,
+    }));
+  }
+
   private buildInvitationEmailHtml(params: SendInvitationEmailParams): string {
     const enrollmentsHtml = this.buildEnrollmentDetailsHtml(params.enrollments);
     const greetingName = escapeHtml(params.fullName);
     const enrollmentCount = params.enrollments?.length ?? 0;
     const trial = Boolean(params.enrollments?.some((row) => row.isTrial));
+    const timetableNote = params.attachments?.length
+      ? " Timetable PDFs for the selected subjects are attached to this email."
+      : "";
     const intro =
       enrollmentCount === 0
         ? "You've been invited to join Enhance Education. Click the button below to accept your invitation and set up your account."
@@ -626,7 +651,7 @@ export class EmailService {
     
     <p>Hi ${greetingName},</p>
     
-    <p>${intro}</p>
+    <p>${intro}${timetableNote}</p>
     ${enrollmentsHtml}
     <div style="text-align: center; margin: 30px 0;">
       <a href="${params.invitationLink}" 
