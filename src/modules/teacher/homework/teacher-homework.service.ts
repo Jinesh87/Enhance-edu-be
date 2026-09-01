@@ -30,6 +30,7 @@ export type CreateTeacherHomeworkInput = {
   description?: string | null;
   termId: string;
   subjectId: string;
+  teacherId?: string | null;
   yearGroup: string;
   dueDate: string;
   maxMarks?: number | null;
@@ -38,6 +39,7 @@ export type CreateTeacherHomeworkInput = {
 export type UpdateTeacherHomeworkInput = {
   title?: string;
   description?: string | null;
+  teacherId?: string | null;
   dueDate?: string;
   maxMarks?: number | null;
   removeAttachmentIds?: string[] | string;
@@ -178,7 +180,8 @@ export class TeacherHomeworkService {
       .leftJoinAndSelect("subject.yearLevel", "subjectYearLevel")
       .leftJoinAndSelect("homework.term", "term")
       .leftJoinAndSelect("term.academicYear", "academicYear")
-      .leftJoinAndSelect("term.yearLevel", "termYearLevel");
+      .leftJoinAndSelect("term.yearLevel", "termYearLevel")
+      .leftJoinAndSelect("homework.createdBy", "createdBy");
 
     if (role === UserRole.STAFF) {
       qb.andWhere("homework.createdById = :userId", { userId });
@@ -323,6 +326,11 @@ export class TeacherHomeworkService {
       );
     }
 
+    const targetCreatedById =
+      role !== UserRole.STAFF && input.teacherId
+        ? input.teacherId
+        : userId;
+
     const homework = await this.homework.save(
       this.homework.create({
         title: input.title.trim(),
@@ -332,7 +340,7 @@ export class TeacherHomeworkService {
         termId: term.id,
         subjectId: subject.id,
         yearGroup: input.yearGroup.trim(),
-        createdById: userId,
+        createdById: targetCreatedById,
       }),
     );
 
@@ -343,7 +351,7 @@ export class TeacherHomeworkService {
     );
 
     try {
-      await this.storeAttachments(homework.id, userId, uploads);
+      await this.storeAttachments(homework.id, targetCreatedById, uploads);
     } catch (error) {
       await this.homework.remove(homework);
       throw error;
@@ -355,6 +363,7 @@ export class TeacherHomeworkService {
         attachments: true,
         subject: { yearLevel: true },
         term: { academicYear: true, yearLevel: true },
+        createdBy: true,
       },
     });
     return { homework: await this.toHomeworkDto(saved) };
@@ -412,6 +421,11 @@ export class TeacherHomeworkService {
     if (input.maxMarks !== undefined) {
       homework.maxMarks = input.maxMarks != null ? input.maxMarks : 100;
     }
+    if (role !== UserRole.STAFF && input.teacherId !== undefined) {
+      if (input.teacherId) {
+        homework.createdById = input.teacherId;
+      }
+    }
 
     await this.homework.save(homework);
 
@@ -449,6 +463,7 @@ export class TeacherHomeworkService {
         attachments: true,
         subject: { yearLevel: true },
         term: { academicYear: true, yearLevel: true },
+        createdBy: true,
       },
     });
 
@@ -907,6 +922,13 @@ export class TeacherHomeworkService {
       term: homework.term ? toTermDto(homework.term) : null,
       subject: homework.subject ? toSubjectDto(homework.subject) : null,
       yearGroup: homework.yearGroup,
+      teacher: homework.createdBy
+        ? {
+            id: homework.createdBy.id,
+            fullName: homework.createdBy.fullName,
+            email: homework.createdBy.email,
+          }
+        : null,
       assignedCount,
       submittedCount,
       pendingCount,
