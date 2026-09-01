@@ -60,6 +60,8 @@ class AdminClassesController {
         limit?: number;
         status?: "ALL" | "UPCOMING" | "LIVE" | "ENDED" | "SCHEDULED";
         search?: string | null;
+        startDate?: string | null;
+        endDate?: string | null;
       };
       const data = await adminClassesService.listGroupSessions(
         query.subject,
@@ -69,6 +71,8 @@ class AdminClassesController {
           limit: query.limit,
           status: query.status,
           search: query.search ?? "",
+          startDate: query.startDate ?? "",
+          endDate: query.endDate ?? "",
         },
       );
       res.status(200).json(data);
@@ -125,6 +129,29 @@ class AdminClassesController {
         recordLabel: "Session",
       });
       res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  bulkRemoveSessions = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const { ids } = req.body as { ids: string[] };
+      const result = await adminClassesService.removeSessions(ids);
+      for (const sessionId of result.deletedIds) {
+        await writeAuditLog({
+          actorUserId: req.user!.id,
+          action: "DELETED",
+          recordType: "session",
+          recordId: sessionId,
+          recordLabel: "Session",
+        });
+      }
+      res.status(200).json(result);
     } catch (error) {
       next(error);
     }

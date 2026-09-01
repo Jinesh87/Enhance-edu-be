@@ -1,0 +1,118 @@
+import type { NextFunction, Request, Response } from "express";
+import { adminSyllabusService } from "./admin-syllabus.service.js";
+
+class AdminSyllabusController {
+  list = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const query = req.query as {
+        page?: number;
+        limit?: number;
+        search?: string | null;
+        subjectId?: string | null;
+        academicYearId?: string | null;
+        yearLevelId?: string | null;
+      };
+      const data = await adminSyllabusService.list({
+        page: query.page,
+        limit: query.limit,
+        search: query.search ?? "",
+        subjectId: query.subjectId || undefined,
+        academicYearId: query.academicYearId || undefined,
+        yearLevelId: query.yearLevelId || undefined,
+      });
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getById = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const syllabus = await adminSyllabusService.getById(req.params.id as string);
+      res.status(200).json({ syllabus });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  create = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const syllabus = await adminSyllabusService.create(req.body, req.user!.id);
+      res.status(201).json({ syllabus });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  update = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const syllabus = await adminSyllabusService.update(
+        req.params.id as string,
+        req.body,
+        req.user!.id,
+      );
+      res.status(200).json({ syllabus });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  remove = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await adminSyllabusService.remove(req.params.id as string, req.user!.id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addDocuments = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      const syllabus = await adminSyllabusService.addDocuments(
+        req.params.id as string,
+        files,
+        req.user!.id,
+      );
+      res.status(200).json({ syllabus });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  removeDocument = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await adminSyllabusService.removeDocument(
+        req.params.id as string,
+        req.params.documentId as string,
+        req.user!.id,
+      );
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  downloadDocument = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const file = await adminSyllabusService.getDocumentFile(
+        req.params.id as string,
+        req.params.documentId as string,
+      );
+      res.setHeader("Content-Type", file.mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${encodeURIComponent(file.originalName)}"`,
+      );
+      res.status(200).send(file.buffer);
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+export const adminSyllabusController = new AdminSyllabusController();

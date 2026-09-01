@@ -42,6 +42,9 @@ import {
   HomeworkStudent,
   HomeworkSubmission,
   HomeworkSubmissionFile,
+  Syllabus,
+  SyllabusDocument,
+  SyllabusSkill,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -421,6 +424,9 @@ export const AppDataSource = new DataSource({
     HomeworkStudent,
     HomeworkSubmission,
     HomeworkSubmissionFile,
+    Syllabus,
+    SyllabusDocument,
+    SyllabusSkill,
   ],
   migrations: [],
   subscribers: [],

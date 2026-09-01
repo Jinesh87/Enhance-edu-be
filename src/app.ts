@@ -17,6 +17,7 @@ import teacherHomeworkRouter from "./modules/teacher/homework/teacher-homework.r
 import adminAttendanceRouter from "./modules/admin/attendance/admin-attendance.routes.js";
 import adminTasksRouter from "./modules/admin/tasks/admin-tasks.routes.js";
 import adminSubjectsRouter from "./modules/admin/subjects/admin-subjects.routes.js";
+import adminSyllabusRouter from "./modules/admin/syllabus/admin-syllabus.routes.js";
 import adminYearLevelsRouter from "./modules/admin/year-levels/admin-year-levels.routes.js";
 import adminTermsRouter from "./modules/admin/terms/admin-terms.routes.js";
 import adminEnrollmentsRouter from "./modules/admin/enrollments/admin-enrollments.routes.js";
@@ -75,6 +76,7 @@ attendanceRouter.use(adminAttendanceRouter);
 app.use("/api/attendance", attendanceRouter);
 app.use("/api/tasks", adminTasksRouter);
 app.use("/api/subjects", adminSubjectsRouter);
+app.use("/api/syllabus", adminSyllabusRouter);
 app.use("/api/year-levels", adminYearLevelsRouter);
 app.use("/api/terms", adminTermsRouter);
 app.use("/api/enquiries", adminEnquiriesRouter);
