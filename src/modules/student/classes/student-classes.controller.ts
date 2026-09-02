@@ -8,8 +8,55 @@ import {
   type UploadedExamFile,
 } from "../entrance-exams/student-entrance-exams.service.js";
 import { assessmentResourceService } from "../../shared/assessments/assessment-resource.service.js";
+import { sessionLessonService } from "../../shared/sessions/session-lesson.service.js";
 
 class StudentClassesController {
+  getSessionSubjects = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await studentClassesService.getStudentSubjects(req.user!.id);
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listUpcomingSessions = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await studentClassesService.listUpcomingSessions(
+        req.user!.id,
+        {
+          subject: req.query.subject as string | undefined,
+          range: (req.query.range as "initial" | "week") ?? "initial",
+          weekStart: req.query.weekStart as string | undefined,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listPastSessions = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await studentClassesService.listPastSessions(req.user!.id, {
+        subject: req.query.subject as string | undefined,
+        page: req.query.page ? Number(req.query.page) : undefined,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      });
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   getTimetable = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await studentClassesService.getTimetable(req.user!.id);
@@ -247,6 +294,28 @@ class StudentClassesController {
         req.user!.id,
         req.params.assessmentId as string,
         req.params.resourceId as string,
+      );
+      res.setHeader("Content-Type", resource.mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${encodeURIComponent(resource.originalName)}"`,
+      );
+      res.status(200).send(resource.buffer);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getSessionResource = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const resource = await sessionLessonService.getResourceForStudent(
+        String(req.params.sessionId),
+        String(req.params.resourceId),
+        req.user!.id,
       );
       res.setHeader("Content-Type", resource.mimeType);
       res.setHeader(

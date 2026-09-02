@@ -140,6 +140,15 @@ export function buildAssessmentResourceKey(parts: {
   return `assessment-resources/${parts.assessmentId}/${parts.resourceId}/${Date.now()}-${safe}`;
 }
 
+export function buildSessionResourceKey(parts: {
+  sessionId: string;
+  resourceId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `session-resources/${parts.sessionId}/${parts.resourceId}/${Date.now()}-${safe}`;
+}
+
 export function buildHomeworkAttachmentKey(parts: {
   homeworkId: string;
   attachmentId: string;
