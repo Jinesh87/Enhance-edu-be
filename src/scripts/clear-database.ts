@@ -3,17 +3,18 @@
  * super admin account defined by SEED_SUPER_ADMIN_EMAIL.
  *
  * Run manually from the backend folder (not wired to Docker):
+ *   npm run build
  *   npm run clear-data -- --confirm
  */
 import "reflect-metadata";
 import { existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
-import { AppDataSource } from "../src/config/data-source.js";
-import { env } from "../src/config/env.js";
-import { logger } from "../src/config/logger.js";
-import { UserRole } from "../src/common/constants/roles.js";
-import { User } from "../src/entities/index.js";
-import { seedEnquiryCatalogue } from "../src/seeder/seed-enquiry-catalogue.js";
+import { AppDataSource } from "../config/data-source.js";
+import { env } from "../config/env.js";
+import { logger } from "../config/logger.js";
+import { UserRole } from "../common/constants/roles.js";
+import { User } from "../entities/index.js";
+import { seedEnquiryCatalogue } from "../seeder/seed-enquiry-catalogue.js";
 
 type TableRow = {
   schemaname: string;
