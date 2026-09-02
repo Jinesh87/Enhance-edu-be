@@ -45,11 +45,13 @@ async function mapWithConcurrency<T, R>(
 
 function redisConnection() {
   const url = new URL(env.REDIS_URL);
+  const password = url.password ? decodeURIComponent(url.password) : undefined;
+  const username = url.username ? decodeURIComponent(url.username) : undefined;
   return {
     host: url.hostname,
     port: Number(url.port || 6379),
-    ...(url.username ? { username: url.username } : {}),
-    ...(url.password ? { password: url.password } : {}),
+    ...(username ? { username } : {}),
+    ...(password ? { password } : {}),
     maxRetriesPerRequest: null as null,
   };
 }
