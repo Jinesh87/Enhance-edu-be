@@ -48,6 +48,8 @@ function redisConnection() {
   return {
     host: url.hostname,
     port: Number(url.port || 6379),
+    ...(url.username ? { username: url.username } : {}),
+    ...(url.password ? { password: url.password } : {}),
     maxRetriesPerRequest: null as null,
   };
 }
