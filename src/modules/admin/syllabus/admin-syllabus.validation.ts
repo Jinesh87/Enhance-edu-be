@@ -22,12 +22,16 @@ export const listSyllabusQuerySchema = Joi.object({
   subjectId: Joi.string().uuid().allow("", null),
   academicYearId: Joi.string().uuid().allow("", null),
   yearLevelId: Joi.string().uuid().allow("", null),
+  termId: Joi.string().uuid().allow("", null),
+  allTerms: Joi.boolean().truthy("true").falsy("false"),
 });
 
 export const createSyllabusSchema = Joi.object({
   subjectId: Joi.string().uuid().required(),
   academicYearId: Joi.string().uuid().required(),
   yearLevelId: Joi.string().uuid().required(),
+  termId: Joi.string().uuid().required(),
+  appliesToAllTerms: Joi.valid(false).default(false),
   title: Joi.string().trim().min(1).max(200).required(),
   overview: Joi.string().trim().max(20000).allow(null, ""),
   skills: Joi.array().items(syllabusSkillSchema).max(100).default([]),
@@ -37,6 +41,8 @@ export const updateSyllabusSchema = Joi.object({
   subjectId: Joi.string().uuid(),
   academicYearId: Joi.string().uuid(),
   yearLevelId: Joi.string().uuid(),
+  termId: Joi.string().uuid(),
+  appliesToAllTerms: Joi.valid(false),
   title: Joi.string().trim().min(1).max(200),
   overview: Joi.string().trim().max(20000).allow(null, ""),
   skills: Joi.array().items(syllabusSkillSchema).max(100),

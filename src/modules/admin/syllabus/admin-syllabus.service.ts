@@ -13,6 +13,7 @@ import {
   Syllabus,
   SyllabusDocument,
   SyllabusSkill,
+  Term,
   YearLevel,
 } from "../../../entities/index.js";
 
@@ -26,6 +27,7 @@ type SyllabusRelations = {
   subject: { yearLevel: true };
   academicYear: true;
   yearLevel: true;
+  term: true;
   documents: true;
   skills: true;
 };
@@ -66,6 +68,16 @@ function toSkillDto(skill: SyllabusSkill) {
   };
 }
 
+function toTermDto(term: Term | null | undefined) {
+  if (!term) return null;
+  return {
+    id: term.id,
+    name: term.name,
+    startDate: term.startDate,
+    endDate: term.endDate,
+  };
+}
+
 function toSyllabusDto(syllabus: Syllabus) {
   const skills = [...(syllabus.skills ?? [])].sort(
     (left, right) => left.sortOrder - right.sortOrder,
@@ -81,6 +93,8 @@ function toSyllabusDto(syllabus: Syllabus) {
       displayName: syllabus.academicYear.displayName,
     },
     yearLevel: toYearLevelDto(syllabus.yearLevel),
+    term: toTermDto(syllabus.term),
+    appliesToAllTerms: syllabus.appliesToAllTerms,
     skills: skills.map(toSkillDto),
     documents: (syllabus.documents ?? []).map(toDocumentDto),
     createdAt: syllabus.createdAt.toISOString(),
@@ -101,6 +115,9 @@ function syllabusSnapshot(syllabus: Syllabus) {
     subject: syllabus.subject?.name ?? null,
     academicYear: syllabus.academicYear?.year ?? null,
     yearLevel: syllabus.yearLevel?.name ?? null,
+    term: syllabus.appliesToAllTerms
+      ? "All terms"
+      : syllabus.term?.name ?? null,
     overview: syllabus.overview,
     skills,
   };
@@ -110,6 +127,7 @@ const syllabusRelations: SyllabusRelations = {
   subject: { yearLevel: true },
   academicYear: true,
   yearLevel: true,
+  term: true,
   documents: true,
   skills: true,
 };
@@ -121,6 +139,7 @@ export class AdminSyllabusService {
   private readonly subjects = AppDataSource.getRepository(Subject);
   private readonly academicYears = AppDataSource.getRepository(AcademicYear);
   private readonly yearLevels = AppDataSource.getRepository(YearLevel);
+  private readonly terms = AppDataSource.getRepository(Term);
 
   async list(filters?: {
     page?: number;
@@ -129,6 +148,8 @@ export class AdminSyllabusService {
     subjectId?: string;
     academicYearId?: string;
     yearLevelId?: string;
+    termId?: string;
+    allTerms?: boolean;
   }) {
     const page = Math.max(1, Number(filters?.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(filters?.limit) || 25));
@@ -140,6 +161,7 @@ export class AdminSyllabusService {
       .leftJoinAndSelect("subject.yearLevel", "subjectYearLevel")
       .leftJoinAndSelect("syllabus.academicYear", "academicYear")
       .leftJoinAndSelect("syllabus.yearLevel", "yearLevel")
+      .leftJoinAndSelect("syllabus.term", "term")
       .leftJoinAndSelect("syllabus.documents", "documents")
       .leftJoinAndSelect("syllabus.skills", "skills")
       .orderBy("academicYear.year", "DESC")
@@ -159,6 +181,13 @@ export class AdminSyllabusService {
     if (filters?.yearLevelId) {
       query.andWhere("syllabus.yearLevelId = :yearLevelId", {
         yearLevelId: filters.yearLevelId,
+      });
+    }
+    if (filters?.allTerms) {
+      query.andWhere("syllabus.appliesToAllTerms = true");
+    } else if (filters?.termId) {
+      query.andWhere("syllabus.termId = :termId", {
+        termId: filters.termId,
       });
     }
 
@@ -196,25 +225,32 @@ export class AdminSyllabusService {
       subjectId: string;
       academicYearId: string;
       yearLevelId: string;
+      termId?: string | null;
+      appliesToAllTerms?: boolean;
       title: string;
       overview?: string | null;
       skills?: SyllabusSkillInput[];
     },
     actorId?: string,
   ) {
-    const { subject, academicYear, yearLevel } =
+    const { subject, academicYear, yearLevel, term, appliesToAllTerms } =
       await this.resolveScope(input);
 
     await this.assertSlotAvailable({
       subjectId: subject.id,
       academicYearId: academicYear.id,
       yearLevelId: yearLevel.id,
+      termId: term?.id ?? null,
+      appliesToAllTerms,
     });
 
     const syllabus = this.syllabi.create({
       subject,
       academicYear,
       yearLevel,
+      term,
+      termId: term?.id ?? null,
+      appliesToAllTerms,
       title: input.title.trim(),
       overview: input.overview?.trim() || null,
     });
@@ -240,6 +276,8 @@ export class AdminSyllabusService {
       subjectId?: string;
       academicYearId?: string;
       yearLevelId?: string;
+      termId?: string | null;
+      appliesToAllTerms?: boolean;
       title?: string;
       overview?: string | null;
       skills?: SyllabusSkillInput[];
@@ -253,6 +291,12 @@ export class AdminSyllabusService {
       subjectId: input.subjectId ?? syllabus.subjectId,
       academicYearId: input.academicYearId ?? syllabus.academicYearId,
       yearLevelId: input.yearLevelId ?? syllabus.yearLevelId,
+      termId:
+        input.termId !== undefined ? input.termId : syllabus.termId,
+      appliesToAllTerms:
+        input.appliesToAllTerms !== undefined
+          ? input.appliesToAllTerms
+          : syllabus.appliesToAllTerms,
       title: syllabus.title,
     });
 
@@ -261,6 +305,8 @@ export class AdminSyllabusService {
         subjectId: scope.subject.id,
         academicYearId: scope.academicYear.id,
         yearLevelId: scope.yearLevel.id,
+        termId: scope.term?.id ?? null,
+        appliesToAllTerms: scope.appliesToAllTerms,
       },
       id,
     );
@@ -268,6 +314,9 @@ export class AdminSyllabusService {
     syllabus.subject = scope.subject;
     syllabus.academicYear = scope.academicYear;
     syllabus.yearLevel = scope.yearLevel;
+    syllabus.term = scope.term;
+    syllabus.termId = scope.term?.id ?? null;
+    syllabus.appliesToAllTerms = scope.appliesToAllTerms;
     if (input.title !== undefined) syllabus.title = input.title.trim();
     if (input.overview !== undefined) {
       syllabus.overview = input.overview?.trim() || null;
@@ -399,6 +448,8 @@ export class AdminSyllabusService {
     subjectId: string;
     academicYearId: string;
     yearLevelId: string;
+    termId?: string | null;
+    appliesToAllTerms?: boolean;
     title?: string;
   }) {
     const subject = await this.subjects.findOne({
@@ -431,7 +482,36 @@ export class AdminSyllabusService {
       );
     }
 
-    return { subject, academicYear, yearLevel };
+    const appliesToAllTerms = false;
+    let term: Term | null = null;
+
+    if (!input.termId) {
+      throw new AppError(400, "Term is required", "VALIDATION_ERROR");
+    }
+
+    term = await this.terms.findOne({
+      where: { id: input.termId },
+      relations: { academicYear: true, yearLevel: true },
+    });
+    if (!term) {
+      throw new AppError(404, "Term not found", "TERM_NOT_FOUND");
+    }
+    if (term.academicYear?.id && term.academicYear.id !== academicYear.id) {
+      throw new AppError(
+        400,
+        "Selected term does not match the chosen academic year",
+        "TERM_ACADEMIC_YEAR_MISMATCH",
+      );
+    }
+    if (term.yearLevel?.id && term.yearLevel.id !== yearLevel.id) {
+      throw new AppError(
+        400,
+        "Selected term does not match the chosen year level",
+        "TERM_YEAR_LEVEL_MISMATCH",
+      );
+    }
+
+    return { subject, academicYear, yearLevel, term, appliesToAllTerms };
   }
 
   private validateSkills(skills: SyllabusSkillInput[]) {
@@ -483,6 +563,8 @@ export class AdminSyllabusService {
       subjectId: string;
       academicYearId: string;
       yearLevelId: string;
+      termId: string | null;
+      appliesToAllTerms: boolean;
     },
     excludeId?: string,
   ) {
@@ -496,6 +578,12 @@ export class AdminSyllabusService {
         yearLevelId: slot.yearLevelId,
       });
 
+    if (slot.appliesToAllTerms) {
+      query.andWhere("syllabus.appliesToAllTerms = true");
+    } else {
+      query.andWhere("syllabus.termId = :termId", { termId: slot.termId });
+    }
+
     if (excludeId) {
       query.andWhere("syllabus.id != :excludeId", { excludeId });
     }
@@ -504,7 +592,7 @@ export class AdminSyllabusService {
     if (existing) {
       throw new AppError(
         409,
-        "A syllabus already exists for this subject, year level, and academic year",
+        "A syllabus already exists for this subject, year level, academic year, and term scope",
         "SYLLABUS_ALREADY_EXISTS",
       );
     }

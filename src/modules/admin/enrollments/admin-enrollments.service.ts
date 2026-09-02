@@ -27,7 +27,11 @@ import {
 } from "../../../entities/index.js";
 import type { EnrollmentSnapshot } from "../../../entities/PendingEnrollment.js";
 import { emailService } from "../../email/email.service.js";
-import type { InvitationEnrollmentDetails } from "../../email/email.service.js";
+import type { EmailAttachment, InvitationEnrollmentDetails } from "../../email/email.service.js";
+import {
+  enrollmentTimetableService,
+  type TimetableEnrollmentInput,
+} from "../../shared/timetable/enrollment-timetable.service.js";
 import { hashPassword } from "../../../common/utils/password.js";
 import {
   termYearLevelNumber,
@@ -874,6 +878,7 @@ export class AdminEnrollmentsService {
       student: StudentInput;
       enrollment: EnrollmentInput;
       studentLogin?: StudentLoginInput;
+      includeTimetable?: boolean;
     },
     actorId: string,
     options?: { purpose?: "enrollment" | "trial" },
@@ -930,11 +935,22 @@ export class AdminEnrollmentsService {
     pending.guardian = guardian;
     pending.term = term;
 
+    const timetableInput: TimetableEnrollmentInput = {
+      studentFullName: input.student.fullName.trim(),
+      yearLevelName: term.yearLevel?.name ?? `Year ${input.student.yearLevel}`,
+      termId: term.id,
+      subjectIds: input.enrollment.subjectIds,
+    };
+    const timetableAttachments = input.includeTimetable
+      ? await enrollmentTimetableService.buildAttachments([timetableInput])
+      : [];
+
     let invitationSent = false;
     let invitationToken: string | undefined;
     if (guardian.status === UserStatus.INVITED) {
       const invite = await this.sendGuardianInvitation(guardian, {
         trial: options?.purpose === "trial" || Boolean(term.isTrial),
+        attachments: timetableAttachments,
       });
       invitationSent = invite.emailSent;
       invitationToken = invite.invitationToken;
@@ -942,7 +958,11 @@ export class AdminEnrollmentsService {
       if (options?.purpose === "trial" || term.isTrial) {
         await this.notifyGuardianOfTrialBooking(guardian);
       } else {
-        await this.notifyGuardianOfNewEnrollment(guardian, pending);
+        await this.notifyGuardianOfNewEnrollment(
+          guardian,
+          pending,
+          timetableAttachments,
+        );
       }
     }
 
@@ -1639,6 +1659,7 @@ export class AdminEnrollmentsService {
   private async notifyGuardianOfNewEnrollment(
     guardian: User,
     pending: PendingEnrollment,
+    attachments: EmailAttachment[] = [],
   ) {
     if (!guardian.email || guardian.status !== UserStatus.ACTIVE) {
       return;
@@ -1650,6 +1671,7 @@ export class AdminEnrollmentsService {
         fullName: guardian.fullName,
         studentFullName: pending.studentFullName,
         reviewLink: `${env.FRONTEND_URL}/guardian/students`,
+        attachments,
       });
     } catch (error) {
       logger.warn(
@@ -1753,7 +1775,7 @@ export class AdminEnrollmentsService {
 
   private async sendGuardianInvitation(
     guardian: User,
-    options?: { trial?: boolean },
+    options?: { trial?: boolean; attachments?: EmailAttachment[] },
   ) {
     if (!guardian.email) {
       throw new AppError(
@@ -1793,6 +1815,7 @@ export class AdminEnrollmentsService {
         invitationLink,
         roleLabel: "Guardian",
         enrollments,
+        attachments: options?.attachments,
       });
     }
     logger.info(
