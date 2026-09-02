@@ -4,6 +4,7 @@ import {
   AttendanceStatus,
   User,
 } from "../../../entities/index.js";
+import { ScanFlagReason, ScanStatus } from "../../../entities/ScanEvent.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import { DEFAULT_CLASS_TIMEZONE } from "../../../common/utils/timezone.js";
@@ -105,6 +106,13 @@ export class SharedAttendanceService {
     };
   }
 
+  private formatRollTime(value: Date): string {
+    const hours = String(value.getHours()).padStart(2, "0");
+    const mins = String(value.getMinutes()).padStart(2, "0");
+    const secs = String(value.getSeconds()).padStart(2, "0");
+    return `${hours}:${mins}:${secs}`;
+  }
+
   private toRollRow(
     student: User,
     attendanceRecords: Awaited<
@@ -115,16 +123,31 @@ export class SharedAttendanceService {
     >,
   ) {
     const record = attendanceRecords.find((r) => r.studentId === student.id);
-    const isSyncing = pendingScans.some(
-      (s) =>
-        s.studentId === student.id && s.deviceSignal === "queued on device",
+    const studentPendingScans = pendingScans.filter(
+      (s) => s.studentId === student.id,
+    );
+    const isSyncing = studentPendingScans.some(
+      (s) => s.deviceSignal === "queued on device",
     );
 
+    const latestFlaggedScan = [...studentPendingScans]
+      .filter(
+        (scan) =>
+          scan.status === ScanStatus.PENDING &&
+          scan.reasonFlagged !== ScanFlagReason.NONE,
+      )
+      .sort((a, b) => b.scannedAt.getTime() - a.scannedAt.getTime())[0];
+
     let status = "Not scanned";
-    let time = "";
+    let scannedAt: Date | null = null;
+    let exceptionReason: string | null = null;
 
     if (isSyncing) {
       status = "Syncing...";
+    } else if (latestFlaggedScan) {
+      status = "Exception";
+      exceptionReason = latestFlaggedScan.reasonFlagged;
+      scannedAt = latestFlaggedScan.scannedAt;
     } else if (record) {
       if (record.status === AttendanceStatus.PRESENT) {
         status = "Present";
@@ -134,12 +157,12 @@ export class SharedAttendanceService {
         status = "Exception";
       } else if (record.status === AttendanceStatus.EXCUSED) {
         status = "Excused";
+      } else if (record.status === AttendanceStatus.ABSENT) {
+        status = record.scannedAt ? "Grace exception" : "Absent";
       }
+
       if (record.scannedAt) {
-        const hours = String(record.scannedAt.getHours()).padStart(2, "0");
-        const mins = String(record.scannedAt.getMinutes()).padStart(2, "0");
-        const secs = String(record.scannedAt.getSeconds()).padStart(2, "0");
-        time = `${hours}:${mins}:${secs}`;
+        scannedAt = record.scannedAt;
       }
     }
 
@@ -148,7 +171,9 @@ export class SharedAttendanceService {
       fullName: student.fullName,
       preferredName: student.preferredName,
       status,
-      time,
+      time: scannedAt ? this.formatRollTime(scannedAt) : "",
+      scannedAt: scannedAt ? scannedAt.toISOString() : null,
+      exceptionReason,
     };
   }
 }
