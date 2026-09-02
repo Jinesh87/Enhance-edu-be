@@ -2,6 +2,12 @@ import { Brackets, In, IsNull } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
+import { buildScheduleSlotKey } from "../../../common/utils/schedule-slot.js";
+import {
+  addCalendarDays,
+  buildTeacherUpcomingRanges,
+  weekRangeFromMondayStart,
+} from "../../../common/utils/teacher-week-range.js";
 import {
   parseDayTime,
   resolveIanaTimeZone,
@@ -39,6 +45,7 @@ import {
   assessmentSessionSyncService,
   resolveAssessmentTimeZone,
 } from "../../admin/assessments/assessment-session-sync.service.js";
+import { teacherClassRepository } from "../../teacher/class/teacher-class.repository.js";
 
 export type StudentLessonKind = "class" | "assessment";
 
@@ -79,6 +86,14 @@ export type StudentLessonDto = {
   isOnline: boolean;
   canCheckIn: boolean;
   timeZone: string;
+  lessonDetails: {
+    title: string;
+    description: string | null;
+    objectives: string | null;
+    sequence: string | null;
+    watchFor: string | null;
+    notes: string | null;
+  } | null;
   resources: {
     id: string;
     title: string;
@@ -86,6 +101,7 @@ export type StudentLessonDto = {
     releasedAt: string;
     released: boolean;
     downloadable?: boolean;
+    description?: string | null;
   }[];
 };
 
@@ -119,6 +135,8 @@ export type StudentHomeworkDto = {
   }[];
   submission: StudentHomeworkSubmissionSummaryDto | null;
 };
+
+import { sessionLessonService } from "../../shared/sessions/session-lesson.service.js";
 
 const EXCLUDED_ASSESSMENT_STATUSES = ["ARCHIVED", "CANCELLED"] as const;
 
@@ -219,33 +237,10 @@ function weekLabelFor(startAt: Date, termStart?: string | null) {
   return `Week ${week}`;
 }
 
-function buildResources(subject: string, startAt: Date, endAt: Date, now: Date) {
-  const slidesAt = new Date(startAt.getTime() - 2 * 60 * 60_000);
-  const paperAt = new Date(startAt.getTime() + 60 * 60_000);
-  const recordingAt = new Date(endAt.getTime() + 30 * 60_000);
-  return [
-    {
-      id: "slides",
-      title: `${subject} — annotated slides`,
-      kind: "SLIDES" as const,
-      releasedAt: slidesAt.toISOString(),
-      released: now.getTime() >= slidesAt.getTime(),
-    },
-    {
-      id: "paper",
-      title: "Past paper practice",
-      kind: "PAPER" as const,
-      releasedAt: paperAt.toISOString(),
-      released: now.getTime() >= paperAt.getTime(),
-    },
-    {
-      id: "recording",
-      title: "Lesson recording",
-      kind: "RECORDING" as const,
-      releasedAt: recordingAt.toISOString(),
-      released: now.getTime() >= recordingAt.getTime(),
-    },
-  ];
+function resourceKindFromMime(mimeType: string): StudentLessonDto["resources"][number]["kind"] {
+  if (mimeType.includes("pdf")) return "PAPER";
+  if (mimeType.startsWith("image/")) return "SLIDES";
+  return "DOCUMENT";
 }
 
 export class StudentClassesService {
@@ -812,6 +807,10 @@ export class StudentClassesService {
     const attendanceBySession = new Map(
       attendanceRows.map((row) => [row.sessionId, row]),
     );
+    const [lessonsBySession, resourcesBySession] = await Promise.all([
+      sessionLessonService.listLessonsForSessions(sessionIds),
+      sessionLessonService.listResourcesForSessions(sessionIds),
+    ]);
 
     const lessons: StudentLessonDto[] = [];
     for (const row of timed) {
@@ -836,6 +835,8 @@ export class StudentClassesService {
         : row.cls.termName;
 
       const homeworkDue = new Date(row.endAt.getTime() + 2 * 24 * 60 * 60_000);
+      const sessionLesson = lessonsBySession.get(session.id) ?? null;
+      const sessionResources = resourcesBySession.get(session.id) ?? [];
       lessons.push({
         sessionId: session.id,
         kind: "class",
@@ -850,7 +851,17 @@ export class StudentClassesService {
         termName: row.cls.term?.name ?? row.cls.termName ?? null,
         yearLevel: row.cls.term?.yearLevel?.name ?? null,
         weekLabel: weekLabelFor(row.startAt, row.cls.term?.startDate),
-        topic: row.cls.lesson || "Lesson",
+        topic: sessionLesson?.title || row.cls.lesson || "Lesson",
+        lessonDetails: sessionLesson
+          ? {
+              title: sessionLesson.title,
+              description: sessionLesson.description,
+              objectives: sessionLesson.objectives,
+              sequence: sessionLesson.sequence,
+              watchFor: sessionLesson.watchFor,
+              notes: sessionLesson.notes,
+            }
+          : null,
         homework: {
           title: `${row.cls.subject || "Class"} follow-up`,
           dueAt: homeworkDue.toISOString(),
@@ -863,12 +874,15 @@ export class StudentClassesService {
         isOnline: online,
         canCheckIn,
         timeZone: resolveIanaTimeZone(row.cls.timeZone),
-        resources: buildResources(
-          row.cls.subject || row.cls.name,
-          row.startAt,
-          row.endAt,
-          now,
-        ),
+        resources: sessionResources.map((resource) => ({
+          id: resource.id,
+          title: resource.title,
+          kind: resourceKindFromMime(resource.mimeType),
+          description: resource.description,
+          releasedAt: resource.createdAt.toISOString(),
+          released: true,
+          downloadable: true,
+        })),
       });
     }
 
@@ -1093,6 +1107,7 @@ export class StudentClassesService {
           assessment.yearGroup || assessment.term?.yearLevel?.name || null,
         weekLabel: weekLabelFor(window.startAt, assessment.term?.startDate),
         topic: assessment.name,
+        lessonDetails: null,
         homework: null,
         status,
         minutesUntilStart,
@@ -1267,6 +1282,536 @@ export class StudentClassesService {
       })),
       submission: submissionSummary,
     };
+  }
+
+  async getStudentSubjects(userId: string) {
+    const classes = await this.resolveStudentClasses(userId);
+    const subjects = new Set<string>();
+    for (const cls of classes) {
+      if (cls.subject?.trim()) subjects.add(cls.subject.trim());
+    }
+
+    const context = await this.buildTimetableContext(userId, classes);
+    const assessments = await this.listVisibleAssessments(context);
+    for (const assessment of assessments) {
+      if (assessment.subject?.trim()) subjects.add(assessment.subject.trim());
+    }
+
+    return {
+      subjects: Array.from(subjects).sort((a, b) => a.localeCompare(b)),
+    };
+  }
+
+  async listUpcomingSessions(
+    userId: string,
+    options: {
+      subject?: string;
+      range: "initial" | "week";
+      weekStart?: string;
+    },
+  ) {
+    const subject = options.subject?.trim() || undefined;
+    const ranges = buildTeacherUpcomingRanges();
+
+    if (options.range === "week") {
+      if (!options.weekStart) {
+        throw new AppError(400, "weekStart is required", "WEEK_START_REQUIRED");
+      }
+      const { start, end, weekEndKey } = weekRangeFromMondayStart(
+        options.weekStart,
+      );
+      const sessions = await this.fetchStudentSessionsInRange(
+        userId,
+        start,
+        end,
+        subject,
+      );
+      const lessons = await this.mapSessionsToStudentLessons(userId, sessions);
+      const hasMoreWeeks = await this.hasStudentSessionsAfter(userId, end, subject);
+      return {
+        range: "week" as const,
+        weekStart: options.weekStart,
+        weekEnd: weekEndKey,
+        sessions: lessons,
+        hasMoreWeeks,
+        nextWeekStart: hasMoreWeeks ? addCalendarDays(weekEndKey, 1) : null,
+      };
+    }
+
+    const [todaySessions, thisWeekSessions, nextWeekSessions] =
+      await Promise.all([
+        this.fetchStudentSessionsInRange(
+          userId,
+          ranges.todayStart,
+          ranges.todayEnd,
+          subject,
+        ),
+        this.fetchStudentSessionsInRange(
+          userId,
+          ranges.thisWeekStart,
+          ranges.thisWeekEnd,
+          subject,
+        ),
+        this.fetchStudentSessionsInRange(
+          userId,
+          ranges.nextWeekStart,
+          ranges.nextWeekEnd,
+          subject,
+        ),
+      ]);
+
+    const hasMoreWeeks = await this.hasStudentSessionsAfter(
+      userId,
+      ranges.nextWeekEnd,
+      subject,
+    );
+
+    return {
+      range: "initial" as const,
+      today: await this.mapSessionsToStudentLessons(userId, todaySessions),
+      thisWeek: await this.mapSessionsToStudentLessons(userId, thisWeekSessions),
+      nextWeek: await this.mapSessionsToStudentLessons(userId, nextWeekSessions),
+      hasMoreWeeks,
+      nextWeekStart: hasMoreWeeks ? ranges.nextExtraWeekStart : null,
+    };
+  }
+
+  async listPastSessions(
+    userId: string,
+    options: { subject?: string; page?: number; limit?: number },
+  ) {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(50, Math.max(1, options.limit ?? 15));
+    const subject = options.subject?.trim() || undefined;
+    const now = new Date();
+
+    const classes = await this.resolveStudentClasses(userId);
+    const classIds = await this.enrolledClassIds(userId, classes);
+    const context = await this.buildTimetableContext(userId, classes);
+    const visibleAssessmentIds = (
+      await this.listVisibleAssessments(context)
+    ).map((row) => row.id);
+
+    if (classIds.length === 0 && visibleAssessmentIds.length === 0) {
+      return {
+        sessions: [],
+        total: 0,
+        page,
+        limit,
+        hasMore: false,
+      };
+    }
+
+    const qb = this.sessions
+      .createQueryBuilder("session")
+      .leftJoinAndSelect("session.class", "class")
+      .leftJoinAndSelect("class.term", "term")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("class.teacher", "teacher")
+      .leftJoinAndSelect("session.assessment", "assessment")
+      .leftJoinAndSelect("assessment.term", "assessmentTerm")
+      .leftJoinAndSelect("assessmentTerm.yearLevel", "assessmentYearLevel")
+      .leftJoinAndSelect("assessment.teacher", "assessmentTeacher")
+      .leftJoinAndSelect("assessment.classroom", "classroom")
+      .where("session.endAt < :now", { now })
+      .andWhere(
+        new Brackets((where) => {
+          if (classIds.length > 0) {
+            where.orWhere(
+              "session.classId IN (:...classIds) AND session.assessmentId IS NULL",
+              { classIds },
+            );
+          }
+          if (visibleAssessmentIds.length > 0) {
+            where.orWhere("session.assessmentId IN (:...visibleAssessmentIds)", {
+              visibleAssessmentIds,
+            });
+          }
+        }),
+      );
+
+    if (subject) {
+      qb.andWhere(
+        "(LOWER(TRIM(class.subject)) = LOWER(:subject) OR LOWER(TRIM(assessment.subject)) = LOWER(:subject))",
+        { subject },
+      );
+    }
+
+    const total = await qb.getCount();
+    const rows = await qb
+      .orderBy("session.startAt", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    const sessions = await this.mapSessionsToStudentLessons(
+      userId,
+      this.dedupeSessionsByScheduleSlot(rows),
+    );
+
+    return {
+      sessions,
+      total,
+      page,
+      limit,
+      hasMore: page * limit < total,
+    };
+  }
+
+  private async enrolledClassIds(userId: string, classes: Class[]) {
+    const allowed = new Set(classes.map((cls) => cls.id));
+    const rows = await this.classStudents.find({
+      where: { studentId: userId },
+      select: { classId: true },
+    });
+    return rows.map((row) => row.classId).filter((id) => allowed.has(id));
+  }
+
+  private async listVisibleAssessments(context: StudentTimetableContext) {
+    const linkedIds = [...context.linkedAssessmentIds];
+    const classIds = [...context.classIds];
+    const subjects = [...context.subjectKeys];
+    if (linkedIds.length === 0 && classIds.length === 0 && subjects.length === 0) {
+      return [];
+    }
+
+    const assessments = await this.assessments
+      .createQueryBuilder("assessment")
+      .leftJoinAndSelect("assessment.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .where("assessment.status NOT IN (:...excluded)", {
+        excluded: [...EXCLUDED_ASSESSMENT_STATUSES],
+      })
+      .andWhere(
+        new Brackets((where) => {
+          if (linkedIds.length > 0) {
+            where.orWhere("assessment.id IN (:...linkedIds)", { linkedIds });
+          }
+          if (classIds.length > 0) {
+            where.orWhere("assessment.classId IN (:...classIds)", { classIds });
+          }
+          if (subjects.length > 0) {
+            where.orWhere("LOWER(assessment.subject) IN (:...subjects)", {
+              subjects,
+            });
+          }
+        }),
+      )
+      .getMany();
+
+    return assessments.filter((assessment) =>
+      this.assessmentVisibleToStudent(assessment, context),
+    );
+  }
+
+  private async fetchStudentSessionsInRange(
+    userId: string,
+    since: Date,
+    until: Date,
+    subject?: string,
+  ): Promise<Session[]> {
+    const classes = await this.resolveStudentClasses(userId);
+    const classIds = await this.enrolledClassIds(userId, classes);
+    const context = await this.buildTimetableContext(userId, classes);
+
+    const classSessions =
+      classIds.length > 0
+        ? await teacherClassRepository.findSessionsByClassIds(
+            classIds,
+            since,
+            until,
+          )
+        : [];
+
+    const filteredClassSessions = classSessions.filter((session) => {
+      if (!subject) return true;
+      return (
+        session.class?.subject?.trim().toLowerCase() === subject.toLowerCase()
+      );
+    });
+
+    const assessmentSessions = await this.findStudentAssessmentSessions(
+      context,
+      since,
+      until,
+      subject,
+    );
+
+    const fullDayAssessmentSessions =
+      await this.findFullDayAssessmentSessions(since, until);
+
+    const visibleClassSessions = this.dedupeSessionsByScheduleSlot(
+      filteredClassSessions.filter(
+        (session) =>
+          !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions),
+      ),
+    );
+
+    return [...visibleClassSessions, ...assessmentSessions]
+      .filter((session, index, all) => {
+        const first = all.findIndex((row) => row.id === session.id);
+        return first === index;
+      })
+      .sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+  }
+
+  private async findStudentAssessmentSessions(
+    context: StudentTimetableContext,
+    since: Date,
+    until: Date,
+    subject?: string,
+  ): Promise<Session[]> {
+    const visible = await this.listVisibleAssessments(context);
+    await Promise.all(
+      visible.map((assessment) =>
+        assessmentSessionSyncService.syncFromAssessment(assessment.id),
+      ),
+    );
+    const assessmentIds = visible.map((row) => row.id);
+    if (assessmentIds.length === 0) return [];
+
+    const qb = this.sessions
+      .createQueryBuilder("session")
+      .innerJoinAndSelect("session.assessment", "assessment")
+      .leftJoinAndSelect("assessment.term", "term")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("assessment.teacher", "teacher")
+      .leftJoinAndSelect("assessment.classroom", "classroom")
+      .where("session.assessmentId IN (:...assessmentIds)", { assessmentIds })
+      .andWhere("session.endAt >= :since", { since })
+      .andWhere("session.startAt <= :until", { until });
+
+    if (subject) {
+      qb.andWhere("LOWER(TRIM(assessment.subject)) = LOWER(:subject)", {
+        subject,
+      });
+    }
+
+    return qb.orderBy("session.startAt", "ASC").getMany();
+  }
+
+  private async findFullDayAssessmentSessions(since: Date, until: Date) {
+    return this.sessions
+      .createQueryBuilder("session")
+      .innerJoinAndSelect("session.assessment", "assessment")
+      .where("assessment.scheduleType = :scheduleType", {
+        scheduleType: "FULL_DAY",
+      })
+      .andWhere("assessment.status NOT IN (:...excluded)", {
+        excluded: [...EXCLUDED_ASSESSMENT_STATUSES],
+      })
+      .andWhere("session.assessmentId IS NOT NULL")
+      .andWhere("session.endAt >= :since", { since })
+      .andWhere("session.startAt <= :until", { until })
+      .getMany();
+  }
+
+  private isSupersededByFullDayExam(
+    session: Session,
+    fullDayAssessmentSessions: Session[],
+  ): boolean {
+    return fullDayAssessmentSessions.some(
+      (exam) =>
+        session.startAt.getTime() < exam.endAt.getTime() &&
+        exam.startAt.getTime() < session.endAt.getTime(),
+    );
+  }
+
+  private dedupeSessionsByScheduleSlot(sessions: Session[]): Session[] {
+    const seen = new Map<string, Session>();
+    for (const session of sessions) {
+      const slotKey =
+        (session.class ? buildScheduleSlotKey(session.class) : null) ??
+        `${session.classId ?? "assessment"}|${session.startAt.toISOString()}`;
+      const existing = seen.get(slotKey);
+      if (!existing || session.startAt < existing.startAt) {
+        seen.set(slotKey, session);
+      }
+    }
+    return [...seen.values()].sort(
+      (a, b) => a.startAt.getTime() - b.startAt.getTime(),
+    );
+  }
+
+  private async hasStudentSessionsAfter(
+    userId: string,
+    after: Date,
+    subject?: string,
+  ): Promise<boolean> {
+    const classes = await this.resolveStudentClasses(userId);
+    const classIds = await this.enrolledClassIds(userId, classes);
+    const context = await this.buildTimetableContext(userId, classes);
+
+    if (classIds.length > 0) {
+      const classQb = this.sessions
+        .createQueryBuilder("session")
+        .innerJoin("session.class", "class")
+        .where("session.classId IN (:...classIds)", { classIds })
+        .andWhere("session.assessmentId IS NULL")
+        .andWhere("session.startAt > :after", { after });
+      if (subject) {
+        classQb.andWhere("LOWER(TRIM(class.subject)) = LOWER(:subject)", {
+          subject,
+        });
+      }
+      if ((await classQb.getCount()) > 0) return true;
+    }
+
+    const visibleAssessmentIds = (
+      await this.listVisibleAssessments(context)
+    ).map((row) => row.id);
+    if (visibleAssessmentIds.length === 0) return false;
+
+    const assessmentQb = this.sessions
+      .createQueryBuilder("session")
+      .where("session.assessmentId IN (:...visibleAssessmentIds)", {
+        visibleAssessmentIds,
+      })
+      .andWhere("session.startAt > :after", { after });
+    if (subject) {
+      assessmentQb
+        .innerJoin("session.assessment", "assessment")
+        .andWhere("LOWER(TRIM(assessment.subject)) = LOWER(:subject)", {
+          subject,
+        });
+    }
+    return (await assessmentQb.getCount()) > 0;
+  }
+
+  private async mapSessionsToStudentLessons(
+    userId: string,
+    sessions: Session[],
+  ): Promise<StudentLessonDto[]> {
+    if (sessions.length === 0) return [];
+
+    const sessionIds = sessions.map((session) => session.id);
+    const attendanceRows = await this.attendance.find({
+      where: { studentId: userId, sessionId: In(sessionIds) },
+    });
+    const attendanceBySession = new Map(
+      attendanceRows.map((row) => [row.sessionId, row]),
+    );
+    const now = new Date();
+    const lessons: StudentLessonDto[] = [];
+
+    for (const session of sessions) {
+      if (session.assessmentId && session.assessment) {
+        const assessment = session.assessment;
+        const window =
+          assessmentScheduleWindow(
+            assessment.assessmentDate,
+            assessment.startTime,
+            assessment.durationMinutes,
+            assessment.scheduleType,
+            assessment.timeZone,
+          ) ?? {
+            startAt: session.startAt,
+            endAt: session.endAt,
+          };
+        const attendance = attendanceBySession.get(session.id);
+        const online = isOnlineRoom(session.room || assessment.room);
+        const { status, minutesUntilStart, canCheckIn } = lessonStatus({
+          startAt: window.startAt,
+          endAt: window.endAt,
+          attendanceStatus: attendance?.status ?? null,
+          scannedAt: attendance?.scannedAt ?? null,
+          online,
+          now,
+        });
+        const termLabel = assessment.term
+          ? assessment.term.academicYear && assessment.term.yearLevel
+            ? `${assessment.term.name} · ${assessment.term.academicYear.year} · ${assessment.term.yearLevel.name}`
+            : assessment.term.name
+          : null;
+        const room =
+          session.room?.trim() ||
+          assessment.room?.trim() ||
+          assessment.classroom?.name?.trim() ||
+          "—";
+
+        lessons.push({
+          sessionId: session.id,
+          kind: "assessment",
+          scheduleType: assessment.scheduleType ?? "SESSION",
+          assessmentId: assessment.id,
+          classId: session.classId ?? assessment.classId ?? "",
+          subject: assessment.subject,
+          className: assessment.name,
+          room,
+          teacher: assessment.teacher?.fullName ?? null,
+          startAt: window.startAt.toISOString(),
+          endAt: window.endAt.toISOString(),
+          term: termLabel,
+          termName: assessment.term?.name ?? null,
+          yearLevel:
+            assessment.yearGroup || assessment.term?.yearLevel?.name || null,
+          weekLabel: weekLabelFor(window.startAt, assessment.term?.startDate),
+          topic: assessment.name,
+          lessonDetails: null,
+          homework: null,
+          status,
+          minutesUntilStart,
+          checkedInAt: attendance?.scannedAt
+            ? attendance.scannedAt.toISOString()
+            : null,
+          isOnline: online,
+          canCheckIn,
+          timeZone: resolveAssessmentTimeZone(assessment.timeZone),
+          resources: [],
+        });
+        continue;
+      }
+
+      const cls = session.class;
+      if (!cls) continue;
+
+      const attendance = attendanceBySession.get(session.id);
+      const online = isOnlineRoom(session.room ?? cls.room);
+      const { status, minutesUntilStart, canCheckIn } = lessonStatus({
+        startAt: session.startAt,
+        endAt: session.endAt,
+        attendanceStatus: attendance?.status ?? null,
+        scannedAt: attendance?.scannedAt ?? null,
+        online,
+        now,
+      });
+      const termLabel = cls.term
+        ? cls.term.academicYear && cls.term.yearLevel
+          ? `${cls.term.name} · ${cls.term.academicYear.year} · ${cls.term.yearLevel.name}`
+          : cls.term.name
+        : cls.termName;
+
+      lessons.push({
+        sessionId: session.id,
+        kind: "class",
+        classId: cls.id,
+        subject: cls.subject || cls.name,
+        className: cls.subject || cls.name,
+        room: session.room || cls.room || "Room",
+        teacher: cls.teacher?.fullName ?? null,
+        startAt: session.startAt.toISOString(),
+        endAt: session.endAt.toISOString(),
+        term: termLabel,
+        termName: cls.term?.name ?? cls.termName ?? null,
+        yearLevel: cls.term?.yearLevel?.name ?? null,
+        weekLabel: weekLabelFor(session.startAt, cls.term?.startDate),
+        topic: cls.lesson || "Lesson",
+        lessonDetails: null,
+        homework: null,
+        status,
+        minutesUntilStart,
+        checkedInAt: attendance?.scannedAt
+          ? attendance.scannedAt.toISOString()
+          : null,
+        isOnline: online,
+        canCheckIn,
+        timeZone: resolveIanaTimeZone(cls.timeZone),
+        resources: [],
+      });
+    }
+
+    return lessons;
   }
 }
 

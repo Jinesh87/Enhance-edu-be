@@ -42,6 +42,19 @@ function getS3(): S3Client {
   return s3;
 }
 
+function storageFolder(): string {
+  return env.STORAGE_FOLDER.trim().replace(/^\/+|\/+$/g, "");
+}
+
+/** Logical DB key → S3 object key, with STORAGE_FOLDER prefix when set. */
+function remoteKey(key: string): string {
+  const folder = storageFolder();
+  const trimmed = key.replace(/^\/+/, "");
+  if (!folder) return trimmed;
+  if (trimmed === folder || trimmed.startsWith(`${folder}/`)) return trimmed;
+  return `${folder}/${trimmed}`;
+}
+
 function localPathForKey(key: string): string {
   return join(process.cwd(), env.UPLOAD_LOCAL_DIR, key);
 }
@@ -55,7 +68,7 @@ export async function putObject(params: {
     await getS3().send(
       new PutObjectCommand({
         Bucket: env.LINODE_OBJECT_STORAGE_BUCKET,
-        Key: params.key,
+        Key: remoteKey(params.key),
         Body: params.body,
         ContentType: params.contentType,
       }),
@@ -75,7 +88,7 @@ export async function getObjectBuffer(key: string): Promise<Buffer> {
     const result = await getS3().send(
       new GetObjectCommand({
         Bucket: env.LINODE_OBJECT_STORAGE_BUCKET,
-        Key: key,
+        Key: remoteKey(key),
       }),
     );
     const bytes = await result.Body?.transformToByteArray();
@@ -97,7 +110,7 @@ export async function deleteObject(key: string): Promise<void> {
     await getS3().send(
       new DeleteObjectCommand({
         Bucket: env.LINODE_OBJECT_STORAGE_BUCKET,
-        Key: key,
+        Key: remoteKey(key),
       }),
     );
     return;
@@ -138,6 +151,15 @@ export function buildAssessmentResourceKey(parts: {
 }): string {
   const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
   return `assessment-resources/${parts.assessmentId}/${parts.resourceId}/${Date.now()}-${safe}`;
+}
+
+export function buildSessionResourceKey(parts: {
+  sessionId: string;
+  resourceId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `session-resources/${parts.sessionId}/${parts.resourceId}/${Date.now()}-${safe}`;
 }
 
 export function buildHomeworkAttachmentKey(parts: {

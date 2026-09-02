@@ -4,6 +4,7 @@ import {
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
+import { buildScheduleSlotKey } from "../../../common/utils/schedule-slot.js";
 import {
   sessionStatus,
   type SessionStatus,
@@ -784,9 +785,26 @@ export class AdminClassesService {
 
     return {
       sessions: applySequentialLessonLabels(
-        sessionRows.map((row) => this.toSessionRow(row)),
+        this.dedupeCalendarSessions(sessionRows).map((row) =>
+          this.toSessionRow(row),
+        ),
       ),
     };
+  }
+
+  private dedupeCalendarSessions(sessions: Session[]): Session[] {
+    const seen = new Map<string, Session>();
+    for (const session of sessions) {
+      const termId = session.class?.term?.id ?? "";
+      const slotKey = session.class ? buildScheduleSlotKey(session.class) : null;
+      const key = slotKey ? `${termId}|${slotKey}` : session.id;
+      if (!seen.has(key)) {
+        seen.set(key, session);
+      }
+    }
+    return Array.from(seen.values()).sort(
+      (a, b) => a.startAt.getTime() - b.startAt.getTime(),
+    );
   }
 
   async listGroupSessions(
