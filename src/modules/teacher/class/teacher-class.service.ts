@@ -3,6 +3,7 @@ import {
   DEFAULT_CLASS_TIMEZONE,
   dayRangeInTimeZone,
 } from "../../../common/utils/timezone.js";
+import { buildScheduleSlotKey } from "../../../common/utils/schedule-slot.js";
 import { Session } from "../../../entities/index.js";
 import { assessmentSessionSyncService } from "../../admin/assessments/assessment-session-sync.service.js";
 import { teacherClassRepository } from "./teacher-class.repository.js";
@@ -31,6 +32,21 @@ function mapSessionDto(session: Session) {
     gracePeriodMinutes: session.gracePeriodMinutes,
     timeZone: cls?.timeZone ?? DEFAULT_CLASS_TIMEZONE,
   };
+}
+
+function dedupeSessionsByScheduleSlot(sessions: Session[]): Session[] {
+  const seen = new Map<string, Session>();
+  for (const session of sessions) {
+    const termId = session.class?.term?.id ?? "";
+    const slotKey =
+      (session.class ? buildScheduleSlotKey(session.class) : null) ??
+      `${session.classId}|${session.startAt.getTime()}`;
+    const key = `${termId}|${slotKey}`;
+    if (!seen.has(key)) {
+      seen.set(key, session);
+    }
+  }
+  return Array.from(seen.values());
 }
 
 export class TeacherClassService {
@@ -73,15 +89,20 @@ export class TeacherClassService {
       await this.findFullDayAssessmentSessions(since, until);
     const fullDayWeekAssessmentSessions =
       await this.findFullDayAssessmentSessions(tomorrow);
-    const visibleClassSessions = classSessions.filter(
-      (session) => !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions),
+    const visibleClassSessions = dedupeSessionsByScheduleSlot(
+      classSessions.filter(
+        (session) =>
+          !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions),
+      ),
     );
-    const visibleClassWeekSessions = classWeekSessions.filter(
-      (session) =>
-        !this.isSupersededByFullDayExam(
-          session,
-          fullDayWeekAssessmentSessions,
-        ),
+    const visibleClassWeekSessions = dedupeSessionsByScheduleSlot(
+      classWeekSessions.filter(
+        (session) =>
+          !this.isSupersededByFullDayExam(
+            session,
+            fullDayWeekAssessmentSessions,
+          ),
+      ),
     );
 
     const activeSessions = [...visibleClassSessions, ...assessmentSessions]

@@ -74,6 +74,7 @@ export class TeacherClassRepository {
     const qb = this.sessions
       .createQueryBuilder("session")
       .leftJoinAndSelect("session.class", "class")
+      .leftJoinAndSelect("class.term", "term")
       .where("session.classId IN (:...classIds)", { classIds })
       .andWhere("session.assessmentId IS NULL");
 

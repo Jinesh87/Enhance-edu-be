@@ -1,4 +1,4 @@
-import { In, IsNull, Not } from "typeorm";
+import { EntityManager, In, IsNull, Not } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   calendarDateFromDayTime,
@@ -8,6 +8,7 @@ import {
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
+import { buildScheduleSlotKey, startTimeFromDayTime } from "../../../common/utils/schedule-slot.js";
 import { sessionHasStarted, sessionStatus } from "../../../common/utils/session-status.js";
 import {
   Class,
@@ -295,15 +296,18 @@ export class AdminClassesRepository {
       });
 
       const savedClasses: Class[] = [];
-
-      const getBaseCode = (cCode: string) => {
-        const parts = cCode.trim().split("-");
-        return parts.length > 1 ? parts.slice(0, -1).join("-") : cCode;
-      };
+      const savedClassIds = new Set<string>();
 
       const getDatePart = (dt: string | null | undefined) => {
         return dt ? dt.split("T")[0] : null;
       };
+
+      const slotIndex = new Map<string, Class>();
+      for (const existing of existingClasses) {
+        const slotKey = buildScheduleSlotKey(existing);
+        if (!slotKey || slotIndex.has(slotKey)) continue;
+        slotIndex.set(slotKey, existing);
+      }
 
       for (const input of classesToCreate) {
         const inputDate = calendarDateFromDayTime(input.dayTime);
@@ -318,20 +322,24 @@ export class AdminClassesRepository {
           ? teacherMap.get(input.teacherId) || null
           : null;
         const code = input.code.trim();
-        const baseCode = getBaseCode(code);
+        const slotKey = buildScheduleSlotKey({
+          dayTime: input.dayTime,
+          subject: input.subject,
+          teacherId: input.teacherId,
+        });
 
-        let existingClass = existingClassMap.get(code);
-        if (!existingClass) {
-          existingClass = existingClasses.find(
-            (c) => getBaseCode(c.code) === baseCode,
-          );
-        }
+        let existingClass =
+          (slotKey ? slotIndex.get(slotKey) : undefined) ??
+          existingClassMap.get(code);
         if (!existingClass) {
           const matchDate = getDatePart(input.dayTime);
+          const normalizedSubject = (input.subject ?? "").trim().toLowerCase();
           existingClass = existingClasses.find(
             (c) =>
-              c.subject?.trim() === input.subject?.trim() &&
-              getDatePart(c.dayTime) === matchDate,
+              (c.subject ?? "").trim().toLowerCase() === normalizedSubject &&
+              getDatePart(c.dayTime) === matchDate &&
+              startTimeFromDayTime(c.dayTime) ===
+                startTimeFromDayTime(input.dayTime),
           );
         }
 
@@ -362,9 +370,13 @@ export class AdminClassesRepository {
           existingClass.termName = input.term?.trim() || "Term 3 2026";
           if (termObj) existingClass.term = termObj;
           existingClass.teacher = teacher;
+          existingClass.code = code;
 
           const saved = await classRepo.save(existingClass);
           savedClasses.push(saved);
+          savedClassIds.add(saved.id);
+          existingClassMap.set(code, saved);
+          if (slotKey) slotIndex.set(slotKey, saved);
         } else {
           const newEntity = classRepo.create({
             name: input.name?.trim() || `${input.subject ?? "Subject"} Class`,
@@ -383,12 +395,37 @@ export class AdminClassesRepository {
           });
           const saved = await classRepo.save(newEntity);
           savedClasses.push(saved);
+          savedClassIds.add(saved.id);
+          existingClassMap.set(code, saved);
+          if (slotKey) slotIndex.set(slotKey, saved);
         }
       }
 
+      await this.deduplicateClassesByScheduleSlot(
+        transactionManager,
+        termId,
+        savedClassIds,
+        lockedSessionIds,
+      );
+
+      const refreshedClasses = await classRepo.find({
+        where: { term: { id: termId } },
+        relations: { teacher: true, term: true },
+      });
+
+      const inputSlotKeys = new Set(
+        classesToCreate
+          .map((input) => buildScheduleSlotKey(input))
+          .filter((key): key is string => Boolean(key)),
+      );
+      const classesForSessionGen = refreshedClasses.filter((cls) => {
+        const slotKey = buildScheduleSlotKey(cls);
+        return slotKey ? inputSlotKeys.has(slotKey) : false;
+      });
+
       // Reassign/clean up student enrollments for unused existing classes to allow deletion
-      for (const oldClass of existingClasses) {
-        if (!savedClasses.some((c) => c.id === oldClass.id)) {
+      for (const oldClass of refreshedClasses) {
+        if (!classesForSessionGen.some((c) => c.id === oldClass.id)) {
           // Check if this class has any historical/locked sessions we must preserve
           const remainingSessionCount = await sessionRepo.count({
             where: { classId: oldClass.id },
@@ -401,7 +438,7 @@ export class AdminClassesRepository {
 
           // Find if there is a new class of the same subject on the same date
           const oldDate = getDatePart(oldClass.dayTime);
-          const newClass = savedClasses.find(
+          const newClass = classesForSessionGen.find(
             (c) =>
               c.subject?.trim() === oldClass.subject?.trim() &&
               getDatePart(c.dayTime) === oldDate,
@@ -442,13 +479,24 @@ export class AdminClassesRepository {
 
       const nowMs = now.getTime();
       const remainingSessionKeys = new Set<string>();
-      for (const s of existingSessions) {
+      const existingSessionsAfterDedup = await sessionRepo.find({
+        where: { classId: In(refreshedClasses.map((c) => c.id)), assessmentId: IsNull() },
+      });
+      for (const s of existingSessionsAfterDedup) {
         if (lockedSessionIds.has(s.id)) {
           remainingSessionKeys.add(`${s.classId}|${s.startAt.getTime()}`);
         }
       }
 
-      for (const c of savedClasses) {
+      const sessionsByClassId = new Map<string, Set<number>>();
+      for (const s of existingSessionsAfterDedup) {
+        if (!s.classId) continue;
+        const starts = sessionsByClassId.get(s.classId) ?? new Set<number>();
+        starts.add(s.startAt.getTime());
+        sessionsByClassId.set(s.classId, starts);
+      }
+
+      for (const c of classesForSessionGen) {
         if (!c.dayTime) continue;
         try {
           const times = parseDayTime(c.dayTime, c.timeZone);
@@ -456,6 +504,10 @@ export class AdminClassesRepository {
           const { startAt, endAt } = times;
 
           const sessionKey = `${c.id}|${startAt.getTime()}`;
+          const existingStarts = sessionsByClassId.get(c.id);
+          if (existingStarts?.has(startAt.getTime())) {
+            continue;
+          }
           // Only generate occurrences that have not started yet.
           if (
             sessionStatus(startAt, endAt, nowMs) === "UPCOMING" &&
@@ -509,8 +561,114 @@ export class AdminClassesRepository {
         }
       }
 
-      return savedClasses;
+      return classesForSessionGen;
     });
+  }
+
+  private async deduplicateClassesByScheduleSlot(
+    transactionManager: EntityManager,
+    termId: string,
+    preferredClassIds: Set<string>,
+    lockedSessionIds: Set<string>,
+  ): Promise<void> {
+    const classRepo = transactionManager.getRepository(Class);
+    const classStudentRepo = transactionManager.getRepository(ClassStudent);
+    const sessionRepo = transactionManager.getRepository(Session);
+    const attendanceRepo = transactionManager.getRepository(AttendanceRecord);
+    const scanRepo = transactionManager.getRepository(ScanEvent);
+    const taskRepo = transactionManager.getRepository(Task);
+
+    const allClasses = await classRepo.find({
+      where: { term: { id: termId } },
+      relations: { teacher: true },
+      order: { createdAt: "ASC" },
+    });
+
+    const groups = new Map<string, Class[]>();
+    for (const cls of allClasses) {
+      const slotKey = buildScheduleSlotKey(cls);
+      if (!slotKey) continue;
+      const group = groups.get(slotKey) ?? [];
+      group.push(cls);
+      groups.set(slotKey, group);
+    }
+
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue;
+
+      const canonical = group
+        .slice()
+        .sort((a, b) => {
+          const aPreferred = preferredClassIds.has(a.id) ? 0 : 1;
+          const bPreferred = preferredClassIds.has(b.id) ? 0 : 1;
+          if (aPreferred !== bPreferred) return aPreferred - bPreferred;
+          return a.createdAt.getTime() - b.createdAt.getTime();
+        })[0];
+
+      const duplicates = group.filter((cls) => cls.id !== canonical.id);
+      for (const duplicate of duplicates) {
+        const duplicateSessions = await sessionRepo.find({
+          where: { classId: duplicate.id, assessmentId: IsNull() },
+        });
+        const canonicalSessions = await sessionRepo.find({
+          where: { classId: canonical.id, assessmentId: IsNull() },
+        });
+        const canonicalByStart = new Map(
+          canonicalSessions.map((session) => [
+            session.startAt.getTime(),
+            session,
+          ]),
+        );
+
+        for (const session of duplicateSessions) {
+          const startMs = session.startAt.getTime();
+          const existing = canonicalByStart.get(startMs);
+          if (existing) {
+            await attendanceRepo.update(
+              { sessionId: session.id },
+              { sessionId: existing.id },
+            );
+            await scanRepo.update(
+              { sessionId: session.id },
+              { sessionId: existing.id },
+            );
+            await taskRepo.update(
+              { sessionId: session.id },
+              { sessionId: existing.id },
+            );
+            lockedSessionIds.delete(session.id);
+            await sessionRepo.remove(session);
+          } else {
+            session.classId = canonical.id;
+            await sessionRepo.save(session);
+            canonicalByStart.set(startMs, session);
+          }
+        }
+
+        const enrollments = await classStudentRepo.find({
+          where: { classId: duplicate.id },
+        });
+        for (const enroll of enrollments) {
+          const alreadyEnrolled = await classStudentRepo.findOne({
+            where: { classId: canonical.id, studentId: enroll.studentId },
+          });
+          if (alreadyEnrolled) {
+            await classStudentRepo.remove(enroll);
+          } else {
+            enroll.classId = canonical.id;
+            enroll.class = canonical;
+            await classStudentRepo.save(enroll);
+          }
+        }
+
+        const remainingSessions = await sessionRepo.count({
+          where: { classId: duplicate.id },
+        });
+        if (remainingSessions === 0) {
+          await classRepo.remove(duplicate);
+        }
+      }
+    }
   }
 }
 
