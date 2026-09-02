@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "clear-data": "node dist/scripts/clear-database.js",
+    "backfill-sandbox-students": "node dist/scripts/backfill-sandbox-students.js",
     "typeorm": "typeorm-ts-node-esm"
   },
   "keywords": [],
