@@ -2,6 +2,7 @@ import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { Subject, Term } from "../../../entities/index.js";
 import { adminClassesService } from "../../admin/classes/admin-classes.service.js";
+import { applySequentialLessonLabels } from "../../../common/utils/session-lesson-labels.js";
 import type { EmailAttachment } from "../../email/email.service.js";
 import {
   renderEnrollmentTimetablePdf,
@@ -59,7 +60,9 @@ export class EnrollmentTimetableService {
           );
           return {
             subjectName: subject.name,
-            sessions: data.sessions as TimetableSessionRow[],
+            sessions: applySequentialLessonLabels(
+              data.sessions,
+            ) as TimetableSessionRow[],
           };
         }),
       );

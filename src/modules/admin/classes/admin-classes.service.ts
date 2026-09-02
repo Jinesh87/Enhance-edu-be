@@ -26,6 +26,7 @@ import {
 } from "./admin-classes.repository.js";
 import { syncClassRosterFromEnrollments } from "../../shared/classes/sync-class-roster.js";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
+import { applySequentialLessonLabels } from "../../../common/utils/session-lesson-labels.js";
 
 const attendanceRepository = new AttendanceRepository();
 
@@ -782,7 +783,9 @@ export class AdminClassesService {
     });
 
     return {
-      sessions: sessionRows.map((row) => this.toSessionRow(row)),
+      sessions: applySequentialLessonLabels(
+        sessionRows.map((row) => this.toSessionRow(row)),
+      ),
     };
   }
 
@@ -867,11 +870,9 @@ export class AdminClassesService {
                 class: toClassDto(cls),
               };
             })
-            .filter((row): row is NonNullable<typeof row> => row !== null)
-            .sort(
-              (a, b) =>
-                new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-            );
+            .filter((row): row is NonNullable<typeof row> => row !== null);
+
+    sessions = applySequentialLessonLabels(sessions);
 
     if (statusFilter !== "ALL") {
       sessions = sessions.filter((row) => row.status === statusFilter);

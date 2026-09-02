@@ -5,6 +5,10 @@ import {
   formatInTimeZone,
 } from "../../../common/utils/timezone.js";
 import type { Term } from "../../../entities/Term.js";
+import {
+  applySequentialLessonLabels,
+  type SessionLessonLabelRow,
+} from "../../../common/utils/session-lesson-labels.js";
 
 const INSTITUTION_NAME = "Enhance Education";
 const DOCUMENT_TITLE = "Subject timetable";
@@ -311,8 +315,12 @@ export function renderEnrollmentTimetablePdf(options: {
     y = ensureSpace(doc, y, 24);
     y = drawSubjectHeading(doc, entry.subjectName, entry.sessions.length, y);
 
+    const sessions = applySequentialLessonLabels(
+      entry.sessions as SessionLessonLabelRow[],
+    ) as TimetableSessionRow[];
+
     const body =
-      entry.sessions.length === 0
+      sessions.length === 0
         ? [
             [
               {
@@ -326,7 +334,7 @@ export function renderEnrollmentTimetablePdf(options: {
               },
             ],
           ]
-        : entry.sessions.map((session) => [
+        : sessions.map((session) => [
             formatSessionDay(session),
             formatSessionTime(session),
             session.class?.lesson || session.class?.code || "—",

@@ -1,0 +1,42 @@
+export type SessionLessonLabelRow = {
+  id?: string;
+  startAt: string;
+  class: {
+    subject?: string | null;
+    termId?: string | null;
+    term?: string | null;
+    lesson?: string | null;
+    [key: string]: unknown;
+  } | null;
+};
+
+function sessionLessonGroupKey(row: SessionLessonLabelRow): string {
+  const subject = (row.class?.subject || "General").trim().toLowerCase();
+  const term = (row.class?.termId || row.class?.term || "")
+    .toString()
+    .trim()
+    .toLowerCase();
+  return `${subject}|${term}`;
+}
+
+export function applySequentialLessonLabels<T extends SessionLessonLabelRow>(
+  sessions: T[],
+): T[] {
+  const sorted = [...sessions].sort(
+    (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+  );
+  const lessonCounters = new Map<string, number>();
+  return sorted.map((row) => {
+    const groupKey = sessionLessonGroupKey(row);
+    const lessonNumber = (lessonCounters.get(groupKey) ?? 0) + 1;
+    lessonCounters.set(groupKey, lessonNumber);
+    if (!row.class) return row;
+    return {
+      ...row,
+      class: {
+        ...row.class,
+        lesson: `Lesson ${lessonNumber}`,
+      },
+    };
+  });
+}
