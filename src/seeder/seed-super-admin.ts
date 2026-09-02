@@ -15,10 +15,7 @@ export async function seedSuperAdmin(): Promise<void> {
   const existing = await usersRepo.findOne({ where: { email } });
 
   if (existing) {
-    logger.info(
-      { email },
-      "Super admin already seeded. Checking rest of the seed data...",
-    );
+    logger.info({ email }, "Super admin already exists");
   } else {
     const user = usersRepo.create({
       fullName,
@@ -35,6 +32,4 @@ export async function seedSuperAdmin(): Promise<void> {
     await usersRepo.save(user);
     logger.info({ email }, "Seeded SUPER_ADMIN");
   }
-
-  logger.info("Database seed completion verified.");
 }
