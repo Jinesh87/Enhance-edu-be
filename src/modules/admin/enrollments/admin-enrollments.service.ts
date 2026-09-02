@@ -1165,6 +1165,7 @@ export class AdminEnrollmentsService {
   private async createStudentUserAccount(
     studentInput: StudentInput,
     credentials: { username: string; passwordHash: string },
+    options?: { createdViaSandbox?: boolean },
   ) {
     await this.assertUsernameAvailable(credentials.username);
 
@@ -1179,6 +1180,7 @@ export class AdminEnrollmentsService {
       status: UserStatus.ACTIVE,
       employmentType: null,
       securitySetupComplete: true,
+      createdViaSandbox: options?.createdViaSandbox ?? false,
       twoFactorMethod: null,
       authenticatorSecret: null,
       invitationTokenHash: null,
@@ -1272,10 +1274,14 @@ export class AdminEnrollmentsService {
         "passwordHash" in studentLogin
           ? studentLogin.passwordHash
           : await hashPassword(studentLogin.password);
-      const studentUser = await this.createStudentUserAccount(studentInput, {
-        username: studentLogin.username,
-        passwordHash,
-      });
+      const studentUser = await this.createStudentUserAccount(
+        studentInput,
+        {
+          username: studentLogin.username,
+          passwordHash,
+        },
+        { createdViaSandbox: guardian.createdViaSandbox },
+      );
       student.userId = studentUser.id;
       await this.students.save(student);
     }
