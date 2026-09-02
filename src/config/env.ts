@@ -28,6 +28,8 @@ export const env = {
   LINODE_OBJECT_STORAGE_BUCKET: process.env.LINODE_OBJECT_STORAGE_BUCKET ?? "",
   LINODE_OBJECT_STORAGE_ACCESS_KEY: process.env.LINODE_OBJECT_STORAGE_ACCESS_KEY ?? "",
   LINODE_OBJECT_STORAGE_SECRET_KEY: process.env.LINODE_OBJECT_STORAGE_SECRET_KEY ?? "",
+  /** Optional prefix inside the bucket, e.g. "enhance". Empty = bucket root. */
+  STORAGE_FOLDER: process.env.STORAGE_FOLDER ?? "",
   UPLOAD_LOCAL_DIR: process.env.UPLOAD_LOCAL_DIR ?? "uploads",
   /** Azure AI Document Intelligence (OCR / handwriting). Required for entrance-exam OCR. */
   AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT:

@@ -4,6 +4,7 @@ import app from "./app.js";
 import {
   AppDataSource,
   ensureAssessmentSessionSchema,
+  ensureSessionLessonSchema,
   ensureAuditSchema,
   ensureEnrollmentStatusSchema,
   ensureHomeworkSchema,
@@ -24,6 +25,7 @@ const ASSESSMENT_STATUS_SYNC_MS = 60_000;
 async function bootstrap() {
   await ensureAuditSchema();
   await ensureAssessmentSessionSchema();
+  await ensureSessionLessonSchema();
   await ensureEnrollmentStatusSchema();
   await ensureInstitutionSettingSchema();
   await ensureHomeworkSchema();

@@ -5,6 +5,8 @@ import {
   User,
   Class,
   Session,
+  SessionLesson,
+  SessionResource,
   ClassStudent,
   Assessment,
   AssessmentStudent,
@@ -154,6 +156,58 @@ export async function ensureAssessmentSessionSchema() {
       ADD COLUMN IF NOT EXISTS "markedById" uuid;
     ALTER TABLE assessment_submissions
       ADD COLUMN IF NOT EXISTS "markNotes" text;
+  `);
+  await bootstrap.destroy();
+}
+
+export async function ensureSessionLessonSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  const [{ sessionsTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.sessions') IS NOT NULL AS "sessionsTable"
+  `);
+  if (!sessionsTable) {
+    await bootstrap.destroy();
+    return;
+  }
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS session_lessons (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "sessionId" uuid NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+      "title" varchar(200) NOT NULL,
+      "description" text,
+      "objectives" text,
+      "sequence" text,
+      "watchFor" text,
+      "notes" text,
+      "updatedById" uuid REFERENCES users(id) ON DELETE SET NULL,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_session_lessons_sessionId"
+      ON session_lessons ("sessionId");
+    CREATE TABLE IF NOT EXISTS session_resources (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "sessionId" uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      "uploadedById" uuid REFERENCES users(id) ON DELETE SET NULL,
+      "title" varchar(255) NOT NULL,
+      "description" text,
+      "storageKey" varchar(500) NOT NULL,
+      "originalName" varchar(255) NOT NULL,
+      "mimeType" varchar(120) NOT NULL,
+      "byteSize" integer NOT NULL DEFAULT 0,
+      "sortOrder" integer NOT NULL DEFAULT 0,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_session_resources_sessionId"
+      ON session_resources ("sessionId");
+    CREATE INDEX IF NOT EXISTS "IDX_session_resources_uploadedById"
+      ON session_resources ("uploadedById");
   `);
   await bootstrap.destroy();
 }
@@ -387,6 +441,8 @@ export const AppDataSource = new DataSource({
     MessagingConfig,
     Class,
     Session,
+    SessionLesson,
+    SessionResource,
     ClassStudent,
     Assessment,
     AssessmentStudent,

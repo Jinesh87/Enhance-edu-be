@@ -4,16 +4,32 @@ import {
   authenticate,
   authorize,
 } from "../../../common/middleware/authenticate.js";
+import { validate } from "../../../common/middleware/validate.js";
 import {
   uploadMiddleware,
   validateUploadedFiles,
 } from "../../../common/middleware/upload-validation.js";
 import { studentClassesController } from "./student-classes.controller.js";
+import {
+  studentSessionsPastQuerySchema,
+  studentSessionsUpcomingQuerySchema,
+} from "./student-classes.validation.js";
 
 const router = Router();
 
 router.use(authenticate, authorize(UserRole.STUDENT));
 
+router.get("/sessions/subjects", studentClassesController.getSessionSubjects);
+router.get(
+  "/sessions/upcoming",
+  validate(studentSessionsUpcomingQuerySchema, "query"),
+  studentClassesController.listUpcomingSessions,
+);
+router.get(
+  "/sessions/past",
+  validate(studentSessionsPastQuerySchema, "query"),
+  studentClassesController.listPastSessions,
+);
 router.get("/timetable", studentClassesController.getTimetable);
 router.get("/homework", studentClassesController.listHomework);
 router.get(
@@ -43,6 +59,10 @@ router.get(
   studentClassesController.getHomeworkSubmissionFile,
 );
 router.get("/lessons/:sessionId", studentClassesController.getLesson);
+router.get(
+  "/lessons/:sessionId/resources/:resourceId",
+  studentClassesController.getSessionResource,
+);
 router.get(
   "/assessments/:assessmentId/submission",
   studentClassesController.getAssessmentSubmission,
