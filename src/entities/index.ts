@@ -65,3 +65,4 @@ export * from "./HomeworkSubmissionFile.js";
 export * from "./Syllabus.js";
 export * from "./SyllabusDocument.js";
 export * from "./SyllabusSkill.js";
+export * from "./Notification.js";

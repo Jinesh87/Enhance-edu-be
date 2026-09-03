@@ -12,6 +12,8 @@ import {
   updateInstitutionSettingSchema,
   updateSecuritySettingSchema,
   updateGuardianPortalSettingSchema,
+  updateOpenAiSettingSchema,
+  updateNotificationSettingSchema,
 } from "./settings.validation.js";
 import {
   createHolidaySchema,
@@ -89,6 +91,28 @@ router.put(
   "/guardian-portal",
   validate(updateGuardianPortalSettingSchema, "body"),
   (req, res) => void settingsController.updateGuardianPortalSettings(req, res),
+);
+
+router.get(
+  "/openai",
+  (req, res) => void settingsController.getOpenAiSettings(req, res),
+);
+
+router.put(
+  "/openai",
+  validate(updateOpenAiSettingSchema, "body"),
+  (req, res) => void settingsController.updateOpenAiSettings(req, res),
+);
+
+router.get(
+  "/notifications",
+  (req, res) => void settingsController.getNotificationSettings(req, res),
+);
+
+router.put(
+  "/notifications",
+  validate(updateNotificationSettingSchema, "body"),
+  (req, res) => void settingsController.updateNotificationSettings(req, res),
 );
 
 router.post(

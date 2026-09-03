@@ -45,6 +45,17 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   guardianPortalAttendanceEnabled!: boolean;
 
+  /** OpenAI API key for institution AI features. */
+  @Column({ type: "varchar", length: 255, nullable: true })
+  openaiApiKey!: string | null;
+
+  /**
+   * When true, session edit/delete also sends email to teacher, students,
+   * and eligible guardians (in addition to in-app SSE notifications).
+   */
+  @Column({ type: "boolean", default: false })
+  sessionChangeEmailNotificationsEnabled!: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 

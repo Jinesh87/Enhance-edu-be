@@ -67,6 +67,15 @@ export interface SendAbsenceAlertEmailParams {
   sessionWhen: string;
   message: string;
 }
+
+export interface SendSessionChangeEmailParams {
+  to: string;
+  fullName: string;
+  title: string;
+  body: string;
+  sessionWhen: string;
+  classLabel: string;
+}
 export interface SendNewEnrollmentEmailParams {
   to: string;
   fullName: string;
@@ -420,6 +429,65 @@ export class EmailService {
         "EMAIL_SEND_ERROR",
         { error: err },
       );
+    }
+  }
+
+  async sendSessionChangeEmail(
+    params: SendSessionChangeEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+
+    if (!config) {
+      logger.warn(
+        { to: params.to },
+        "Email configuration not found, skipping session change email",
+      );
+      return;
+    }
+
+    if (!config.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email sending is disabled, skipping session change email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: params.title,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">${escapeHtml(params.title)}</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p>${escapeHtml(params.body)}</p>
+    <p style="color: #7f8c8d; font-size: 14px; margin-top: 24px;">${escapeHtml(params.classLabel)} · ${escapeHtml(params.sessionWhen)}</p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send session change email",
+        );
+        return;
+      }
+
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Session change email sent",
+      );
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending session change email");
     }
   }
 

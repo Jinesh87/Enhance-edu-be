@@ -47,6 +47,7 @@ import {
   Syllabus,
   SyllabusDocument,
   SyllabusSkill,
+  Notification,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -236,6 +237,49 @@ export async function ensureInstitutionSettingSchema() {
       ADD COLUMN IF NOT EXISTS "guardianPortalEntranceExamsEnabled" boolean NOT NULL DEFAULT false;
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "guardianPortalAttendanceEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "openaiApiKey" varchar(255);
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "sessionChangeEmailNotificationsEnabled" boolean NOT NULL DEFAULT false;
+  `);
+  await bootstrap.destroy();
+}
+
+export async function ensureNotificationSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  const [{ usersTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.users') IS NOT NULL AS "usersTable"
+  `);
+  if (!usersTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "userId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "type" varchar(40) NOT NULL,
+      "title" varchar(200) NOT NULL,
+      "body" text NOT NULL,
+      "data" jsonb,
+      "readAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_notifications_userId"
+      ON notifications ("userId");
+    CREATE INDEX IF NOT EXISTS "IDX_notifications_type"
+      ON notifications ("type");
+    CREATE INDEX IF NOT EXISTS "IDX_notifications_readAt"
+      ON notifications ("readAt");
+    CREATE INDEX IF NOT EXISTS "IDX_notifications_userId_createdAt"
+      ON notifications ("userId", "createdAt" DESC);
   `);
   await bootstrap.destroy();
 }
@@ -483,6 +527,7 @@ export const AppDataSource = new DataSource({
     Syllabus,
     SyllabusDocument,
     SyllabusSkill,
+    Notification,
   ],
   migrations: [],
   subscribers: [],
