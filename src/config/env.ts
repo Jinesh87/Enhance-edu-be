@@ -31,10 +31,6 @@ export const env = {
   /** Optional prefix inside the bucket, e.g. "enhance". Empty = bucket root. */
   STORAGE_FOLDER: process.env.STORAGE_FOLDER ?? "",
   UPLOAD_LOCAL_DIR: process.env.UPLOAD_LOCAL_DIR ?? "uploads",
-  /**
-   * Browser → Linode direct upload/download (presigned URLs).
-   * Default off: requires bucket CORS for the FE origin. Set "true" after CORS is configured.
-   */
   STORAGE_BROWSER_DIRECT:
     (process.env.STORAGE_BROWSER_DIRECT ?? "").toLowerCase() === "true",
   /** Azure AI Document Intelligence (OCR / handwriting). Required for entrance-exam OCR. */
