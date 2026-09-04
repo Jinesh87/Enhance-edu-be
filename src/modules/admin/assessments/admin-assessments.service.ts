@@ -320,9 +320,9 @@ export class AdminAssessmentsService {
     const futureTerms = allTerms
       .filter((other) => {
         if (other.id === term.id || other.isTrial) return false;
-        const otherYear = other.academicYear?.year;
+        if (!other.startDate) return false;
         const otherLevel = (other.yearLevel?.name ?? "").trim().toLowerCase();
-        if (termYear && otherYear && otherYear !== termYear) return false;
+        // Same year level only — next term may be in a later academic year.
         if (termLevel && otherLevel && otherLevel !== termLevel) return false;
         return other.startDate > term.startDate;
       })
@@ -335,7 +335,9 @@ export class AdminAssessmentsService {
           ? `${termYear}-12-31`
           : term.endDate;
 
-    if (assessmentDate > maxDate) {
+    const allowedEnd = maxDate > term.endDate ? maxDate : term.endDate;
+
+    if (assessmentDate > allowedEnd) {
       throw new AppError(
         400,
         "Assessment date is outside the term assessment period",
@@ -590,12 +592,15 @@ export class AdminAssessmentsService {
   }
 
   private async enrichDto(assessment: Assessment, includeStudents: boolean) {
+    if (!includeStudents) {
+      return toAssessmentDto(assessment, false, []);
+    }
     const enrolled = await this.enrolledStudentsForSubject(
       assessment.subject,
       assessment.termId,
       assessment.yearGroup,
     );
-    return toAssessmentDto(assessment, includeStudents, enrolled);
+    return toAssessmentDto(assessment, true, enrolled);
   }
 
   private async ensureAutoStatus(assessment: Assessment): Promise<Assessment> {
@@ -782,13 +787,20 @@ export class AdminAssessmentsService {
     termId?: string;
     subject?: string;
     yearGroup?: string;
+    teacherId?: string;
+    fromDate?: string;
+    toDate?: string;
     kind?: "SCHOOL" | "ENTRANCE" | "ALL";
     status?: AssessmentStatus | "ACTIVE" | "OPEN";
+    includeStudents?: boolean;
   }) {
-    await this.syncPastScheduled();
+    const includeStudents = filters.includeStudents !== false;
+    if (includeStudents) {
+      await this.syncPastScheduled();
+    }
     const { assessments, total } = await this.repo.list(filters);
     const enriched = await Promise.all(
-      assessments.map((item) => this.enrichDto(item, true)),
+      assessments.map((item) => this.enrichDto(item, includeStudents)),
     );
     return { assessments: enriched, total };
   }

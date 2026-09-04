@@ -26,6 +26,17 @@ class AdminAssessmentsController {
       const kind = req.query.kind
         ? (String(req.query.kind) as "SCHOOL" | "ENTRANCE" | "ALL")
         : undefined;
+      const teacherId = req.query.teacherId
+        ? String(req.query.teacherId)
+        : undefined;
+      const fromDate = req.query.fromDate
+        ? String(req.query.fromDate)
+        : undefined;
+      const toDate = req.query.toDate ? String(req.query.toDate) : undefined;
+      const includeStudents =
+        req.query.includeStudents === undefined
+          ? undefined
+          : String(req.query.includeStudents) !== "false";
       const { assessments, total } = await adminAssessmentsService.list({
         page,
         limit,
@@ -33,8 +44,12 @@ class AdminAssessmentsController {
         termId,
         subject,
         yearGroup,
+        teacherId,
+        fromDate,
+        toDate,
         kind,
         status,
+        includeStudents,
       });
       res.status(200).json({ assessments, total });
     } catch (error) {

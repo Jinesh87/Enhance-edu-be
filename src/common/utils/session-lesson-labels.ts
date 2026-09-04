@@ -1,7 +1,12 @@
 export type SessionLessonLabelRow = {
   id?: string;
   startAt: string;
-  class: {
+  /** Top-level fields used by slim calendar rows (no nested class). */
+  subject?: string | null;
+  termId?: string | null;
+  lesson?: string | null;
+  /** Legacy nested class — still supported for full session rows. */
+  class?: {
     subject?: string | null;
     termId?: string | null;
     term?: string | null;
@@ -11,8 +16,14 @@ export type SessionLessonLabelRow = {
 };
 
 function sessionLessonGroupKey(row: SessionLessonLabelRow): string {
-  const subject = (row.class?.subject || "General").trim().toLowerCase();
-  const term = (row.class?.termId || row.class?.term || "")
+  const subject = (
+    row.subject || row.class?.subject || "General"
+  )
+    .trim()
+    .toLowerCase();
+  const term = (
+    row.termId || row.class?.termId || row.class?.term || ""
+  )
     .toString()
     .trim()
     .toLowerCase();
@@ -30,13 +41,14 @@ export function applySequentialLessonLabels<T extends SessionLessonLabelRow>(
     const groupKey = sessionLessonGroupKey(row);
     const lessonNumber = (lessonCounters.get(groupKey) ?? 0) + 1;
     lessonCounters.set(groupKey, lessonNumber);
-    if (!row.class) return row;
-    return {
-      ...row,
-      class: {
-        ...row.class,
-        lesson: `Lesson ${lessonNumber}`,
-      },
-    };
+    const label = `Lesson ${lessonNumber}`;
+    if (row.class) {
+      return {
+        ...row,
+        lesson: label,
+        class: { ...row.class, lesson: label },
+      };
+    }
+    return { ...row, lesson: label };
   });
 }

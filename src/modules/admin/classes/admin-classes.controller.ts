@@ -85,8 +85,38 @@ class AdminClassesController {
     try {
       const year = req.query.year ? Number(req.query.year) : undefined;
       const term = req.query.term ? String(req.query.term) : undefined;
-      const data = await adminClassesService.listCalendarSessions({ year, term });
+      const yearLevel = req.query.yearLevel
+        ? String(req.query.yearLevel)
+        : undefined;
+      const from = req.query.from ? String(req.query.from) : undefined;
+      const to = req.query.to ? String(req.query.to) : undefined;
+      const teacherId = req.query.teacherId
+        ? String(req.query.teacherId)
+        : undefined;
+      const subject = req.query.subject ? String(req.query.subject) : undefined;
+      const data = await adminClassesService.listCalendarSessions({
+        year,
+        term,
+        yearLevel,
+        from,
+        to,
+        teacherId,
+        subject,
+      });
+      res.setHeader("Cache-Control", "no-store");
       res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getSession = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const session = await adminClassesService.getSession(
+        req.params.id as string,
+      );
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ session });
     } catch (error) {
       next(error);
     }
