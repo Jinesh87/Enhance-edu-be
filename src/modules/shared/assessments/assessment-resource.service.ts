@@ -8,13 +8,13 @@ import {
 import {
   buildAssessmentResourceKey,
   deleteObject,
-  getObjectBuffer,
-  putObject,
+  storeUploadedObject,
 } from "../../../common/storage/object-storage.js";
 import { UserRole } from "../../../common/constants/roles.js";
 
 export type UploadedAssessmentResource = {
-  buffer: Buffer;
+  buffer?: Buffer;
+  directStorageKey?: string;
   originalName: string;
   mimeType: string;
   size: number;
@@ -141,10 +141,12 @@ export class AssessmentResourceService {
         fileName: upload.originalName,
       });
       try {
-        await putObject({
-          key,
-          body: upload.buffer,
+        await storeUploadedObject({
+          finalKey: key,
           contentType: upload.mimeType,
+          buffer: upload.buffer,
+          directStorageKey: upload.directStorageKey,
+          byteSize: upload.size,
         });
         resource.storageKey = key;
         created.push(await this.resources.save(resource));
@@ -189,8 +191,9 @@ export class AssessmentResourceService {
       throw new AppError(404, "Resource not found", "RESOURCE_NOT_FOUND");
     }
     return {
-      ...resource,
-      buffer: await getObjectBuffer(resource.storageKey),
+      storageKey: resource.storageKey,
+      mimeType: resource.mimeType,
+      originalName: resource.originalName,
     };
   }
 

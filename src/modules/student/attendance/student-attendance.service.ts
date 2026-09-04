@@ -6,7 +6,9 @@ import {
   ScanFlagReason,
   InstitutionSetting,
   AssessmentStudent,
+  ClassStudent,
 } from "../../../entities/index.js";
+import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 
 type ScanOutcomeStatus =
   | "CONFIRMED"
@@ -182,7 +184,17 @@ export class StudentAttendanceService {
           }),
         )
       : session.classId
-        ? await this.repo.isStudentEnrolled(session.classId, studentId)
+        ? await (async () => {
+            const enrolment = await AppDataSource.getRepository(
+              ClassStudent,
+            ).findOne({
+              where: { classId: session.classId!, studentId },
+            });
+            return Boolean(
+              enrolment &&
+                isStudentAccountableForSession(session, enrolment.createdAt),
+            );
+          })()
         : false;
 
     if (!isEnrolled) {

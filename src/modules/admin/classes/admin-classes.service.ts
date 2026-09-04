@@ -4,7 +4,7 @@ import {
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
-import { buildScheduleSlotKey } from "../../../common/utils/schedule-slot.js";
+import { buildScheduleSlotKey, startTimeFromDayTime } from "../../../common/utils/schedule-slot.js";
 import {
   sessionStatus,
   type SessionStatus,
@@ -26,6 +26,7 @@ import {
   type ClassInput,
 } from "./admin-classes.repository.js";
 import { syncClassRosterFromEnrollments } from "../../shared/classes/sync-class-roster.js";
+import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 import { applySequentialLessonLabels } from "../../../common/utils/session-lesson-labels.js";
 import {
   sessionChangeNotificationService,
@@ -139,10 +140,26 @@ export class AdminClassesService {
     excludeClassIds: string[] = [],
     proposedSubject?: string | null,
   ) {
+    const occupied = await this.repo.findByClassroomId(classroomId);
+    this.assertClassroomAvailableAgainst(
+      occupied,
+      dayTime,
+      timeZone,
+      excludeClassIds,
+      proposedSubject,
+    );
+  }
+
+  private assertClassroomAvailableAgainst(
+    occupied: Class[],
+    dayTime: string | null | undefined,
+    timeZone: string | null | undefined,
+    excludeClassIds: string[] = [],
+    proposedSubject?: string | null,
+  ) {
     const proposed = this.occupancyTimes(dayTime, timeZone);
     if (!proposed) return;
 
-    const occupied = await this.repo.findByClassroomId(classroomId);
     const exclude = new Set(excludeClassIds);
     const conflict = occupied.find((cls) => {
       if (exclude.has(cls.id)) return false;
@@ -182,11 +199,10 @@ export class AdminClassesService {
     const proposed = this.occupancyTimes(dayTime, timeZone);
     if (!proposed) return;
 
-    const { classes } = await this.repo.findAll();
+    const classes = await this.repo.findByTeacherId(teacherId);
     const exclude = new Set(excludeClassIds);
     const conflict = classes.find((cls) => {
       if (exclude.has(cls.id)) return false;
-      if (cls.teacher?.id !== teacherId) return false;
       const existing = this.occupancyTimes(cls.dayTime, cls.timeZone);
       if (!existing) return false;
       return (
@@ -224,18 +240,14 @@ export class AdminClassesService {
     const proposed = this.occupancyTimes(dayTime, timeZone);
     if (!proposed) return;
 
-    const { classes } = await this.repo.findAll();
+    const classes = await this.repo.findForTermScheduleOccupancy(
+      termId,
+      termName,
+    );
     const exclude = new Set(excludeClassIds);
-    const termNeedle = (termName ?? "").trim().toLowerCase();
 
     const conflict = classes.find((cls) => {
       if (exclude.has(cls.id)) return false;
-      const sameTerm =
-        (termId && cls.term?.id && cls.term.id === termId) ||
-        (termNeedle &&
-          (cls.term?.name || cls.termName || "").trim().toLowerCase() ===
-            termNeedle);
-      if (!sameTerm) return false;
 
       const existing = this.occupancyTimes(cls.dayTime, cls.timeZone);
       if (!existing) return false;
@@ -299,6 +311,64 @@ export class AdminClassesService {
     }
   }
 
+  private durationMinutesFromDayTime(dayTime: string | null): number {
+    if (!dayTime) return 60;
+    const parts = dayTime.split(" ");
+    const startTimeStr = parts[0] || "";
+    const tIndex = startTimeStr.indexOf("T");
+    if (tIndex === -1) return 60;
+    const timeStr = startTimeStr.slice(tIndex + 1, tIndex + 6);
+    const endTimeStr = parts[1] || "";
+    if (!endTimeStr) return 60;
+    const [sh, sm] = timeStr.split(":").map(Number);
+    const [eh, em] = endTimeStr.split(":").map(Number);
+    const diff = eh * 60 + em - (sh * 60 + sm);
+    return diff > 0 ? diff : 60;
+  }
+
+  private listTermLabel(cls: Class): string {
+    if (cls.term?.academicYear && cls.term.yearLevel) {
+      return `${cls.term.name} · ${cls.term.academicYear.year} · ${cls.term.yearLevel.name}`;
+    }
+    return cls.term?.name ?? cls.termName ?? "Term 3 2026";
+  }
+
+  /** Weekday name matching CreateClassPage parseDayOfWeek (Mon–Fri only). */
+  private timetableWeekdayFromDayTime(dayTime: string | null): string | null {
+    if (!dayTime) return null;
+    const isoPart = dayTime.split(" ")[0]?.trim() ?? "";
+    const datePart = isoPart.includes("T") ? isoPart.split("T")[0] : isoPart;
+    const [yearStr, monthStr, dayStr] = datePart.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+    if (!year || !month || !day) return null;
+    const dayName = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ][new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay()];
+    if (
+      dayName !== "Monday" &&
+      dayName !== "Tuesday" &&
+      dayName !== "Wednesday" &&
+      dayName !== "Thursday" &&
+      dayName !== "Friday"
+    ) {
+      return null;
+    }
+    return dayName;
+  }
+
+  /**
+   * Classes table list. Prefer summaryOnly=true — returns subject/term rows only.
+   * templateOnly=true — unique weekday slots for edit timetable (slim payload).
+   * Full class DTOs are returned only when both flags are false.
+   */
   async list(filters?: {
     page?: number;
     limit?: number;
@@ -306,43 +376,62 @@ export class AdminClassesService {
     year?: number;
     yearLevel?: string;
     term?: string;
+    summaryOnly?: boolean;
+    templateOnly?: boolean;
   }) {
-    const { classes } = await this.repo.findAll();
+    const summaryOnly = filters?.summaryOnly === true;
+    const templateOnly = filters?.templateOnly === true;
+    const filteredClasses = await this.repo.findFiltered({
+      search: filters?.search,
+      year: filters?.year,
+      yearLevel: filters?.yearLevel,
+      term: filters?.term,
+    });
 
-    let filteredClasses = classes;
-    if (filters?.search) {
-      const searchNeedle = filters.search.trim().toLowerCase();
-      filteredClasses = filteredClasses.filter((c) => {
-        const subject = (c.subject || "").toLowerCase();
-        return subject.includes(searchNeedle);
-      });
+    if (templateOnly) {
+      const seen = new Set<string>();
+      const representatives: Class[] = [];
+      for (const cls of filteredClasses) {
+        const weekday = this.timetableWeekdayFromDayTime(cls.dayTime);
+        const time = startTimeFromDayTime(cls.dayTime);
+        if (!weekday || !time) continue;
+        const subject = (cls.subject ?? "").trim();
+        const teacherId = cls.teacher?.id ?? "";
+        const key = `${weekday}|${time}|${subject}|${teacherId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        representatives.push(cls);
+      }
+
+      const graceByClassId = await this.repo.findGraceMinutesByClassIds(
+        representatives.map((item) => item.id),
+      );
+
+      const classes = representatives.map((item) =>
+        toClassDto(item, graceByClassId.get(item.id) ?? null),
+      );
+      return {
+        classes,
+        summaries: [] as Array<{
+          subject: string;
+          term: string;
+          termId: string | null;
+          yearGroup: string | null;
+          academicYear: number | null;
+          classIds: string[];
+          sessionCount: number;
+          totalDurationMinutes: number;
+          teachers: string[];
+          enrolled: number;
+          needAttention: number;
+          dayTime: string;
+          startDate: Date | null;
+          endDate: Date | null;
+        }>,
+        total: classes.length,
+      };
     }
 
-    if (filters?.year) {
-      filteredClasses = filteredClasses.filter((c) => {
-        return c.term?.academicYear?.year === filters.year;
-      });
-    }
-
-    if (filters?.yearLevel) {
-      const lvlNeedle = filters.yearLevel.trim().toLowerCase();
-      filteredClasses = filteredClasses.filter((c) => {
-        const lvlName = c.term?.yearLevel?.name?.toLowerCase() || "";
-        return lvlName.includes(lvlNeedle);
-      });
-    }
-
-    if (filters?.term) {
-      const termNeedle = filters.term.trim().toLowerCase();
-      filteredClasses = filteredClasses.filter((c) => {
-        const tName = c.term?.name?.toLowerCase() || "";
-        return tName.includes(termNeedle);
-      });
-    }
-
-    await Promise.all(
-      filteredClasses.map((cls) => syncClassRosterFromEnrollments(cls)),
-    );
     const studentsByClassId = await this.repo.findStudentIdsByClassIds(
       filteredClasses.map((item) => item.id),
     );
@@ -352,6 +441,10 @@ export class AdminClassesService {
       {
         subject: string;
         term: string;
+        termId: string | null;
+        yearGroup: string | null;
+        academicYear: number | null;
+        classIds: string[];
         sessionCount: number;
         totalDurationMinutes: number;
         teachers: Set<string>;
@@ -362,40 +455,24 @@ export class AdminClassesService {
         endDate: Date | null;
       }
     >();
+
     for (const c of filteredClasses) {
       const subjectName = c.subject || "General";
-      const termName = c.term
-        ? c.term.academicYear && c.term.yearLevel
-          ? `${c.term.name} · ${c.term.academicYear.year} · ${c.term.yearLevel.name}`
-          : c.term.name
-        : (c.termName ?? "Term 3 2026");
+      const termName = this.listTermLabel(c);
+      const yearGroup = c.term?.yearLevel?.name ?? null;
+      const academicYear = c.term?.academicYear?.year ?? null;
       const key = `${subjectName}|${termName}`;
-
-      let durationMins = 60;
-      if (c.dayTime) {
-        const parts = c.dayTime.split(" ");
-        if (parts.length > 0) {
-          const startTimeStr = parts[0];
-          const tIndex = startTimeStr.indexOf("T");
-          if (tIndex !== -1) {
-            const timeStr = startTimeStr.slice(tIndex + 1, tIndex + 6);
-            const endTimeStr = parts[1] || "";
-            if (endTimeStr) {
-              const [sh, sm] = timeStr.split(":").map(Number);
-              const [eh, em] = endTimeStr.split(":").map(Number);
-              const diff = eh * 60 + em - (sh * 60 + sm);
-              if (diff > 0) durationMins = diff;
-            }
-          }
-        }
-      }
-
+      const durationMins = this.durationMinutesFromDayTime(c.dayTime);
       const sessionDate = parseDayTimeStart(c.dayTime, c.timeZone);
 
       if (!groupedMap.has(key)) {
         groupedMap.set(key, {
           subject: subjectName,
           term: termName,
+          termId: c.term?.id ?? null,
+          yearGroup,
+          academicYear,
+          classIds: [],
           sessionCount: 0,
           totalDurationMinutes: 0,
           teachers: new Set<string>(),
@@ -408,16 +485,14 @@ export class AdminClassesService {
       }
 
       const group = groupedMap.get(key);
-      if (!group) {
-        continue;
-      }
+      if (!group) continue;
+
+      group.classIds.push(c.id);
       group.sessionCount += 1;
       group.totalDurationMinutes += durationMins;
-      if (c.teacher?.fullName) {
-        group.teachers.add(c.teacher.fullName);
-      }
-      const enrolledStudentIds = studentsByClassId.get(c.id) ?? [];
-      for (const studentId of enrolledStudentIds) {
+      if (!group.termId && c.term?.id) group.termId = c.term.id;
+      if (c.teacher?.fullName) group.teachers.add(c.teacher.fullName);
+      for (const studentId of studentsByClassId.get(c.id) ?? []) {
         group.studentIds.add(studentId);
       }
       if (sessionDate) {
@@ -433,6 +508,10 @@ export class AdminClassesService {
     const summaries = Array.from(groupedMap.values()).map((g) => ({
       subject: g.subject,
       term: g.term,
+      termId: g.termId,
+      yearGroup: g.yearGroup,
+      academicYear: g.academicYear,
+      classIds: g.classIds,
       sessionCount: g.sessionCount,
       totalDurationMinutes: g.totalDurationMinutes,
       teachers: Array.from(g.teachers),
@@ -448,6 +527,10 @@ export class AdminClassesService {
     if (filters?.page && filters?.limit) {
       const start = (filters.page - 1) * filters.limit;
       paginated = summaries.slice(start, start + filters.limit);
+    }
+
+    if (summaryOnly) {
+      return { classes: [] as ReturnType<typeof toClassDto>[], summaries: paginated, total };
     }
 
     const graceByClassId = await this.repo.findGraceMinutesByClassIds(
@@ -582,6 +665,9 @@ export class AdminClassesService {
           where: { classId: saved.id },
         });
         for (const enrol of enrolments) {
+          if (!isStudentAccountableForSession(newSession, enrol.createdAt)) {
+            continue;
+          }
           await attendanceRepo.save(
             attendanceRepo.create({
               sessionId: newSession.id,
@@ -717,14 +803,30 @@ export class AdminClassesService {
       ),
     );
     this.assertNoInternalScheduleOverlap(resolved);
-    const existingInTerm = (await this.repo.findAll()).classes.filter(
-      (item) => item.term?.id === termId,
-    );
+    const existingInTerm = await this.repo.findByTermId(termId);
     const excludeIds = existingInTerm.map((item) => item.id);
+
+    const classroomIds = [
+      ...new Set(
+        resolved
+          .map((item) => item.classroomId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const occupiedByClassroom = new Map<string, typeof existingInTerm>();
+    await Promise.all(
+      classroomIds.map(async (classroomId) => {
+        occupiedByClassroom.set(
+          classroomId,
+          await this.repo.findByClassroomId(classroomId),
+        );
+      }),
+    );
+
     for (const item of resolved) {
       if (!item.classroomId) continue;
-      await this.assertClassroomAvailable(
-        item.classroomId,
+      this.assertClassroomAvailableAgainst(
+        occupiedByClassroom.get(item.classroomId) ?? [],
         item.dayTime,
         item.timeZone,
         excludeIds,
@@ -736,7 +838,10 @@ export class AdminClassesService {
       resolved,
       gracePeriodMinutes,
     );
-    return savedEntities.map(toClassDto);
+    return {
+      sessionCount: savedEntities.length,
+      termId,
+    };
   }
 
   async remove(id: string) {

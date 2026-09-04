@@ -9,6 +9,7 @@ import {
   ensureEnrollmentStatusSchema,
   ensureHomeworkSchema,
   ensureInstitutionSettingSchema,
+  ensureClassScheduleIndexes,
   ensureNotificationSchema,
   ensureCoachSchema,
   ensureEnquiryConstraints,
@@ -32,6 +33,7 @@ async function bootstrap() {
   await ensureEnrollmentStatusSchema();
   await ensureInstitutionSettingSchema();
   await ensureHomeworkSchema();
+  await ensureClassScheduleIndexes();
   await ensureNotificationSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");

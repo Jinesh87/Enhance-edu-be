@@ -10,6 +10,7 @@ import { AppDataSource } from "../../../config/data-source.js";
 import { DEFAULT_CLASS_TIMEZONE } from "../../../common/utils/timezone.js";
 import { resolveAssessmentTimeZone } from "../../admin/assessments/assessment-schedule.utils.js";
 import { syncClassRosterFromEnrollments } from "../classes/sync-class-roster.js";
+import { isStudentAccountableForSession } from "./student-session-eligibility.js";
 
 export class SharedAttendanceService {
   private readonly repo = new AttendanceRepository();
@@ -33,13 +34,16 @@ export class SharedAttendanceService {
     }
 
     const enrols = await this.repo.findEnrolmentsByClassId(session.classId);
+    const accountableEnrols = enrols.filter((enrol) =>
+      isStudentAccountableForSession(session, enrol.createdAt),
+    );
 
     const attendanceRecords =
       await this.repo.findAttendanceRecordsBySessionId(sessionId);
 
     const pendingScans = await this.repo.findPendingScansBySessionId(sessionId);
 
-    const roll = enrols.map((enrol) => {
+    const roll = accountableEnrols.map((enrol) => {
       const student = enrol.student;
       return this.toRollRow(student, attendanceRecords, pendingScans);
     });

@@ -10,12 +10,16 @@ export const listAssessmentsQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(100),
   search: Joi.string().trim().max(160).allow(""),
   termId: uuid.allow(""),
+  term: Joi.string().trim().max(120).allow(""),
   subject: Joi.string().trim().max(120).allow(""),
+  year: Joi.number().integer().min(2000).max(2100),
   yearGroup: Joi.string().trim().max(80).allow(""),
   teacherId: uuid.allow(""),
   fromDate: Joi.string().pattern(datePattern).allow(""),
   toDate: Joi.string().pattern(datePattern).allow(""),
   includeStudents: Joi.boolean().truthy("true").falsy("false"),
+  /** Table/calendar list — display fields only, no students/notes. */
+  summaryOnly: Joi.boolean().truthy("true").falsy("false"),
   kind: Joi.string().valid("SCHOOL", "ENTRANCE", "ALL").allow(""),
   status: Joi.string()
     .valid(...ASSESSMENT_STATUSES, "ACTIVE", "OPEN")

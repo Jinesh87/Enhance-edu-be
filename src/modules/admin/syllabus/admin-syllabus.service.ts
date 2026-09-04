@@ -4,8 +4,8 @@ import { changedFields, writeAuditLog } from "../../../common/utils/audit-log.js
 import {
   buildSyllabusDocumentKey,
   deleteObject,
-  getObjectBuffer,
-  putObject,
+  storeUploadedObject,
+  type IncomingStoredFile,
 } from "../../../common/storage/object-storage.js";
 import {
   AcademicYear,
@@ -367,7 +367,7 @@ export class AdminSyllabusService {
 
   async addDocuments(
     syllabusId: string,
-    files: Express.Multer.File[],
+    files: IncomingStoredFile[],
     actorId?: string,
   ) {
     if (!files.length) {
@@ -382,8 +382,8 @@ export class AdminSyllabusService {
         syllabusId: syllabus.id,
         uploadedById: actorId ?? null,
         storageKey: "",
-        originalName: file.originalname,
-        mimeType: file.mimetype || "application/octet-stream",
+        originalName: file.originalName,
+        mimeType: file.mimeType || "application/octet-stream",
         byteSize: file.size,
       });
       await this.documents.save(document);
@@ -391,14 +391,16 @@ export class AdminSyllabusService {
       const key = buildSyllabusDocumentKey({
         syllabusId: syllabus.id,
         documentId: document.id,
-        fileName: file.originalname,
+        fileName: file.originalName,
       });
 
       try {
-        await putObject({
-          key,
-          body: file.buffer,
+        await storeUploadedObject({
+          finalKey: key,
           contentType: document.mimeType,
+          buffer: file.buffer,
+          directStorageKey: file.directStorageKey,
+          byteSize: file.size,
         });
         document.storageKey = key;
         await this.documents.save(document);
@@ -452,7 +454,7 @@ export class AdminSyllabusService {
     }
 
     return {
-      buffer: await getObjectBuffer(document.storageKey),
+      storageKey: document.storageKey,
       mimeType: document.mimeType,
       originalName: document.originalName,
     };

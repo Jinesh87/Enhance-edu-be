@@ -1,4 +1,4 @@
-import { Between, ILike, In, LessThanOrEqual, MoreThanOrEqual } from "typeorm";
+import { In } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   Assessment,
@@ -15,7 +15,9 @@ export class AdminAssessmentsRepository {
     limit?: number;
     search?: string;
     termId?: string;
+    term?: string;
     subject?: string;
+    year?: number;
     yearGroup?: string;
     teacherId?: string;
     fromDate?: string;
@@ -23,49 +25,121 @@ export class AdminAssessmentsRepository {
     kind?: "SCHOOL" | "ENTRANCE" | "ALL";
     status?: AssessmentStatus | "ACTIVE" | "OPEN";
     includeStudents?: boolean;
+    summaryOnly?: boolean;
   }): Promise<{ assessments: Assessment[]; total: number }> {
-    const where: Record<string, unknown> = {};
-    if (filters.termId) where.termId = filters.termId;
-    if (filters.subject) where.subject = filters.subject;
-    if (filters.yearGroup) where.yearGroup = filters.yearGroup;
-    if (filters.teacherId) where.teacherId = filters.teacherId;
-    if (filters.kind && filters.kind !== "ALL") where.kind = filters.kind;
-    if (filters.status === "ACTIVE") {
-      where.status = In(["SCHEDULED", "LIVE"]);
-    } else if (filters.status === "OPEN" || !filters.status) {
-      where.status = In(["SCHEDULED", "LIVE", "COMPLETED"]);
-    } else {
-      where.status = filters.status;
+    const summaryOnly = filters.summaryOnly === true;
+    const includeStudents =
+      !summaryOnly && filters.includeStudents !== false;
+
+    const qb = this.assessments
+      .createQueryBuilder("assessment")
+      .leftJoinAndSelect("assessment.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("assessment.classroom", "classroom")
+      .leftJoinAndSelect("assessment.teacher", "teacher");
+
+    if (!summaryOnly) {
+      qb.leftJoinAndSelect("assessment.linkedClass", "linkedClass");
     }
-    if (filters.search) {
-      where.name = ILike(`%${filters.search}%`);
+
+    if (includeStudents) {
+      qb.leftJoinAndSelect("assessment.students", "students").leftJoinAndSelect(
+        "students.student",
+        "student",
+      );
+    }
+
+    if (filters.termId) {
+      qb.andWhere("assessment.termId = :termId", { termId: filters.termId });
+    }
+    if (filters.term?.trim()) {
+      qb.andWhere("LOWER(term.name) = LOWER(:termName)", {
+        termName: filters.term.trim(),
+      });
+    }
+    if (filters.subject) {
+      qb.andWhere("assessment.subject = :subject", {
+        subject: filters.subject,
+      });
+    }
+    if (filters.year) {
+      qb.andWhere("academicYear.year = :year", { year: filters.year });
+    }
+    if (filters.yearGroup?.trim()) {
+      qb.andWhere("LOWER(assessment.yearGroup) = LOWER(:yearGroup)", {
+        yearGroup: filters.yearGroup.trim(),
+      });
+    }
+    if (filters.teacherId) {
+      qb.andWhere("assessment.teacherId = :teacherId", {
+        teacherId: filters.teacherId,
+      });
+    }
+    if (filters.kind && filters.kind !== "ALL") {
+      qb.andWhere("assessment.kind = :kind", { kind: filters.kind });
+    }
+    if (filters.status === "ACTIVE") {
+      qb.andWhere("assessment.status IN (:...statuses)", {
+        statuses: ["SCHEDULED", "LIVE"],
+      });
+    } else if (filters.status === "OPEN" || !filters.status) {
+      qb.andWhere("assessment.status IN (:...statuses)", {
+        statuses: ["SCHEDULED", "LIVE", "COMPLETED"],
+      });
+    } else {
+      qb.andWhere("assessment.status = :status", { status: filters.status });
+    }
+    if (filters.search?.trim()) {
+      qb.andWhere("assessment.name ILIKE :search", {
+        search: `%${filters.search.trim()}%`,
+      });
     }
     if (filters.fromDate && filters.toDate) {
-      where.assessmentDate = Between(filters.fromDate, filters.toDate);
+      qb.andWhere("assessment.assessmentDate BETWEEN :fromDate AND :toDate", {
+        fromDate: filters.fromDate,
+        toDate: filters.toDate,
+      });
     } else if (filters.fromDate) {
-      where.assessmentDate = MoreThanOrEqual(filters.fromDate);
+      qb.andWhere("assessment.assessmentDate >= :fromDate", {
+        fromDate: filters.fromDate,
+      });
     } else if (filters.toDate) {
-      where.assessmentDate = LessThanOrEqual(filters.toDate);
+      qb.andWhere("assessment.assessmentDate <= :toDate", {
+        toDate: filters.toDate,
+      });
     }
 
-    const includeStudents = filters.includeStudents !== false;
+    qb.orderBy("assessment.assessmentDate", "DESC")
+      .addOrderBy("assessment.startTime", "ASC")
+      .addOrderBy("assessment.createdAt", "DESC");
 
-    const [assessments, total] = await this.assessments.findAndCount({
-      where,
-      relations: {
-        linkedClass: true,
-        term: { academicYear: true, yearLevel: true },
-        classroom: true,
-        teacher: true,
-        ...(includeStudents ? { students: { student: true } } : {}),
-      },
-      order: { assessmentDate: "DESC", startTime: "ASC", createdAt: "DESC" },
-      skip:
-        filters.page && filters.limit
-          ? (filters.page - 1) * filters.limit
-          : undefined,
-      take: filters.limit,
-    });
+    if (filters.page && filters.limit) {
+      qb.skip((filters.page - 1) * filters.limit).take(filters.limit);
+    } else if (filters.limit) {
+      qb.take(filters.limit);
+    }
+
+    const [assessments, total] = await qb.getManyAndCount();
+
+    if (summaryOnly && assessments.length > 0) {
+      const ids = assessments.map((item) => item.id);
+      const countRows = await this.sitting
+        .createQueryBuilder("sitting")
+        .select("sitting.assessmentId", "assessmentId")
+        .addSelect("COUNT(*)", "cnt")
+        .where("sitting.assessmentId IN (:...ids)", { ids })
+        .groupBy("sitting.assessmentId")
+        .getRawMany<{ assessmentId: string; cnt: string }>();
+
+      const countById = new Map(
+        countRows.map((row) => [row.assessmentId, Number(row.cnt) || 0]),
+      );
+      for (const assessment of assessments) {
+        (assessment as Assessment & { studentCount?: number }).studentCount =
+          countById.get(assessment.id) ?? 0;
+      }
+    }
 
     return { assessments, total };
   }
@@ -98,6 +172,7 @@ export class AdminAssessmentsRepository {
         startTime: true,
         durationMinutes: true,
         status: true,
+        timeZone: true,
         scheduleType: true,
       },
     });
@@ -107,19 +182,8 @@ export class AdminAssessmentsRepository {
     return this.assessments.create(data);
   }
 
-  save(assessment: Assessment): Promise<Assessment> {
+  async save(assessment: Assessment): Promise<Assessment> {
     return this.assessments.save(assessment);
-  }
-
-  async replaceStudents(assessmentId: string, studentIds: string[]) {
-    await this.sitting.delete({ assessmentId });
-    const uniqueIds = Array.from(new Set(studentIds));
-    if (uniqueIds.length === 0) return;
-    await this.sitting.save(
-      uniqueIds.map((studentId) =>
-        this.sitting.create({ assessmentId, studentId }),
-      ),
-    );
   }
 
   async findSittingStudentIds(assessmentId: string): Promise<string[]> {
@@ -130,9 +194,21 @@ export class AdminAssessmentsRepository {
     return rows.map((row) => row.studentId);
   }
 
+  async replaceStudents(
+    assessmentId: string,
+    studentIds: string[],
+  ): Promise<void> {
+    await this.sitting.delete({ assessmentId });
+    if (studentIds.length === 0) return;
+    await this.sitting.save(
+      studentIds.map((studentId) =>
+        this.sitting.create({ assessmentId, studentId }),
+      ),
+    );
+  }
+
   async deleteById(id: string): Promise<void> {
-    await this.sitting.delete({ assessmentId: id });
-    await this.assessments.delete({ id });
+    await this.assessments.delete(id);
   }
 }
 

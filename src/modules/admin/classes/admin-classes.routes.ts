@@ -14,6 +14,7 @@ import {
   bulkDeleteSessionsSchema,
   bulkReplaceClassSchema,
   groupSessionsQuerySchema,
+  listClassesQuerySchema,
   sessionIdParamsSchema,
   updateSessionSchema,
 } from "./admin-classes.validation.js";
@@ -26,7 +27,11 @@ adminClassesRouter.use(
   authorizeAdminModule("classes"),
 );
 
-adminClassesRouter.get("/", adminClassesController.list);
+adminClassesRouter.get(
+  "/",
+  validate(listClassesQuerySchema, "query"),
+  adminClassesController.list,
+);
 adminClassesRouter.get(
   "/calendar-sessions",
   adminClassesController.listCalendarSessions,

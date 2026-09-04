@@ -10,6 +10,9 @@ import {
 } from "../../../entities/index.js";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import { adminNotificationManager } from "./admin-task-updates.js";
+import {
+  isStudentAccountableForSession,
+} from "../../shared/attendance/student-session-eligibility.js";
 
 function graceClosedAt(startAt: Date, gracePeriodMinutes: number): Date {
   return new Date(startAt.getTime() + gracePeriodMinutes * 60_000);
@@ -136,6 +139,9 @@ export class AdminTasksService {
       const recordByStudent = new Set(records.map((r) => r.studentId));
 
       for (const enrolment of enrolments) {
+        if (!isStudentAccountableForSession(session, enrolment.createdAt)) {
+          continue;
+        }
         if (!recordByStudent.has(enrolment.studentId)) {
           await this.attendance.createAttendanceRecord({
             sessionId: session.id,
@@ -176,6 +182,10 @@ export class AdminTasksService {
       );
 
       for (const enrolment of enrolments) {
+        if (!isStudentAccountableForSession(session, enrolment.createdAt)) {
+          continue;
+        }
+
         const record = recordByStudent.get(enrolment.studentId);
         if (
           record &&

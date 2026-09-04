@@ -9,6 +9,10 @@ import {
 } from "../../../entities/index.js";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import {
+  buildClassJoinAtMap,
+  isStudentAccountableForSession,
+} from "../../shared/attendance/student-session-eligibility.js";
+import {
   studentClassesService,
   type StudentLessonDto,
 } from "../../student/classes/student-classes.service.js";
@@ -194,6 +198,8 @@ export class GuardianAcademicsService {
       return { records: [], stats: { attendancePercent: null } };
     }
 
+    const joinAtByClassId = buildClassJoinAtMap(enrols);
+
     const since = new Date();
     since.setDate(since.getDate() - 90);
     since.setHours(0, 0, 0, 0);
@@ -208,6 +214,14 @@ export class GuardianAcademicsService {
       order: { startAt: "DESC" },
     });
 
+    const accountableSessions = sessions.filter((session) => {
+      if (!session.classId) return false;
+      const joinedAt = joinAtByClassId.get(session.classId);
+      return Boolean(
+        joinedAt && isStudentAccountableForSession(session, joinedAt),
+      );
+    });
+
     const attendanceRecords = await this.repo.findAttendanceRecordsByStudentId(
       studentUserId,
     );
@@ -216,7 +230,7 @@ export class GuardianAcademicsService {
     );
 
     const now = Date.now();
-    const ended = sessions.filter(
+    const ended = accountableSessions.filter(
       (session) => new Date(session.endAt).getTime() < now,
     );
     const attended = ended.filter((session) => {
@@ -229,7 +243,7 @@ export class GuardianAcademicsService {
     });
 
     return {
-      records: sessions.map((session) => {
+      records: accountableSessions.map((session) => {
         const record = bySession.get(session.id) as AttendanceRecord | undefined;
         return {
           sessionId: session.id,

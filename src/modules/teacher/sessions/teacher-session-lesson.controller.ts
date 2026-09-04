@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { UserRole } from "../../../common/constants/roles.js";
+import { resolveIncomingFiles } from "../../../common/storage/object-storage.js";
 import { sessionLessonService } from "../../shared/sessions/session-lesson.service.js";
 
 class TeacherSessionLessonController {
@@ -45,7 +46,11 @@ class TeacherSessionLessonController {
 
   uploadResources = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const files = Array.isArray(req.files) ? req.files : [];
+      const uploads = resolveIncomingFiles(
+        Array.isArray(req.files) ? req.files : undefined,
+        req.body,
+        req.user!.id,
+      );
       let meta: Array<{ title?: string; description?: string }> = [];
       if (typeof req.body.meta === "string" && req.body.meta.trim()) {
         try {
@@ -56,17 +61,16 @@ class TeacherSessionLessonController {
         } catch {
           meta = [];
         }
+      } else if (Array.isArray(req.body.meta)) {
+        meta = req.body.meta as Array<{ title?: string; description?: string }>;
       }
 
       const result = await sessionLessonService.uploadResources(
         String(req.params.sessionId),
         req.user!.id,
         req.user!.role as UserRole,
-        files.map((file, index) => ({
-          buffer: file.buffer,
-          originalName: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
+        uploads.map((file, index) => ({
+          ...file,
           title: meta[index]?.title,
           description: meta[index]?.description,
         })),

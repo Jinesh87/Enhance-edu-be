@@ -17,6 +17,7 @@ import {
   ScanEvent,
   ScanStatus,
 } from "../../../entities/index.js";
+import { isStudentAccountableForSession } from "./student-session-eligibility.js";
 
 export type AttendanceCohortFilters = {
   year: number;
@@ -198,6 +199,7 @@ export class AttendanceRepository {
         if (!s.classId) continue;
         const enrolments = await this.findEnrolmentsByClassId(s.classId);
         for (const enrol of enrolments) {
+          if (!isStudentAccountableForSession(s, enrol.createdAt)) continue;
           const existing = await this.findAttendanceRecord(s.id, enrol.studentId);
           if (!existing) {
             await this.createAttendanceRecord({

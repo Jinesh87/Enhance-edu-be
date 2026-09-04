@@ -454,6 +454,69 @@ export async function ensureHomeworkSchema() {
   await bootstrap.destroy();
 }
 
+/**
+ * Idempotent indexes for class timetable / bulk-replace hot paths.
+ * Safe when synchronize is off (production); no-ops if indexes already exist.
+ */
+export async function ensureClassScheduleIndexes() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  try {
+    const [{ classesTable, sessionsTable, attendanceTable, scansTable, tasksTable }] =
+      await bootstrap.query(`
+      SELECT
+        to_regclass('public.classes') IS NOT NULL AS "classesTable",
+        to_regclass('public.sessions') IS NOT NULL AS "sessionsTable",
+        to_regclass('public.attendance_records') IS NOT NULL AS "attendanceTable",
+        to_regclass('public.scan_events') IS NOT NULL AS "scansTable",
+        to_regclass('public.tasks') IS NOT NULL AS "tasksTable"
+    `);
+    if (!classesTable || !sessionsTable) {
+      return;
+    }
+    await bootstrap.query(`
+      CREATE INDEX IF NOT EXISTS "IDX_classes_classroomId"
+        ON classes ("classroomId");
+      CREATE INDEX IF NOT EXISTS "IDX_classes_termId"
+        ON classes ("termId");
+      CREATE INDEX IF NOT EXISTS "IDX_classes_teacherId"
+        ON classes ("teacherId");
+      CREATE INDEX IF NOT EXISTS "IDX_sessions_classId"
+        ON sessions ("classId");
+      CREATE INDEX IF NOT EXISTS "IDX_sessions_startAt"
+        ON sessions ("startAt");
+      CREATE INDEX IF NOT EXISTS "IDX_sessions_classroomId"
+        ON sessions ("classroomId");
+      CREATE INDEX IF NOT EXISTS "IDX_sessions_teacherId"
+        ON sessions ("teacherId");
+    `);
+    if (attendanceTable) {
+      await bootstrap.query(`
+        CREATE INDEX IF NOT EXISTS "IDX_attendance_records_sessionId"
+          ON attendance_records ("sessionId");
+      `);
+    }
+    if (scansTable) {
+      await bootstrap.query(`
+        CREATE INDEX IF NOT EXISTS "IDX_scan_events_sessionId"
+          ON scan_events ("sessionId");
+      `);
+    }
+    if (tasksTable) {
+      await bootstrap.query(`
+        CREATE INDEX IF NOT EXISTS "IDX_tasks_sessionId"
+          ON tasks ("sessionId");
+      `);
+    }
+  } finally {
+    await bootstrap.destroy();
+  }
+}
+
 export async function ensureEnquiryConstraints() {
   if (!AppDataSource.isInitialized) return;
   await AppDataSource.query(`

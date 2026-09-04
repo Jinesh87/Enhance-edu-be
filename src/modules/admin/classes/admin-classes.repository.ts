@@ -22,6 +22,7 @@ import {
   Task,
   Holiday,
 } from "../../../entities/index.js";
+import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 
 export type ClassInput = {
   name?: string;
@@ -63,6 +64,44 @@ export class AdminClassesRepository {
     }
     const [classes, total] = await this.classes.findAndCount(findOptions);
     return { classes, total };
+  }
+
+  /** Filtered class rows for list/summary — relations needed for grouping only. */
+  async findFiltered(filters?: {
+    search?: string;
+    year?: number;
+    yearLevel?: string;
+    term?: string;
+  }): Promise<Class[]> {
+    const qb = this.classes
+      .createQueryBuilder("cls")
+      .leftJoinAndSelect("cls.teacher", "teacher")
+      .leftJoinAndSelect("cls.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("cls.classroom", "classroom")
+      .orderBy("cls.createdAt", "DESC");
+
+    if (filters?.search?.trim()) {
+      qb.andWhere("LOWER(COALESCE(cls.subject, '')) LIKE :search", {
+        search: `%${filters.search.trim().toLowerCase()}%`,
+      });
+    }
+    if (filters?.year) {
+      qb.andWhere("academicYear.year = :year", { year: filters.year });
+    }
+    if (filters?.yearLevel?.trim()) {
+      qb.andWhere("LOWER(COALESCE(yearLevel.name, '')) LIKE :yearLevel", {
+        yearLevel: `%${filters.yearLevel.trim().toLowerCase()}%`,
+      });
+    }
+    if (filters?.term?.trim()) {
+      qb.andWhere("LOWER(COALESCE(term.name, '')) LIKE :term", {
+        term: `%${filters.term.trim().toLowerCase()}%`,
+      });
+    }
+
+    return qb.getMany();
   }
 
   async findById(id: string): Promise<Class | null> {
@@ -199,6 +238,67 @@ export class AdminClassesRepository {
         term: { academicYear: true, yearLevel: true },
       },
     });
+  }
+
+  async findByTermId(termId: string): Promise<Class[]> {
+    return this.classes.find({
+      where: { term: { id: termId } },
+      relations: {
+        teacher: true,
+        term: { academicYear: true, yearLevel: true },
+        classroom: true,
+      },
+    });
+  }
+
+  /** Classes taught by one teacher — for occupancy checks (avoids findAll). */
+  async findByTeacherId(teacherId: string): Promise<Class[]> {
+    return this.classes.find({
+      where: { teacher: { id: teacherId } },
+      relations: {
+        teacher: true,
+        term: { academicYear: true, yearLevel: true },
+        classroom: true,
+      },
+    });
+  }
+
+  /**
+   * Classes in a term (by id and/or name) — same match rules as
+   * assertTermScheduleAvailable, without loading every class.
+   */
+  async findForTermScheduleOccupancy(
+    termId?: string | null,
+    termName?: string | null,
+  ): Promise<Class[]> {
+    const termNeedle = (termName ?? "").trim().toLowerCase();
+    if (!termId && !termNeedle) {
+      return [];
+    }
+
+    const qb = this.classes
+      .createQueryBuilder("cls")
+      .leftJoinAndSelect("cls.teacher", "teacher")
+      .leftJoinAndSelect("cls.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("cls.classroom", "classroom");
+
+    if (termId && termNeedle) {
+      qb.andWhere(
+        "(term.id = :termId OR LOWER(COALESCE(term.name, cls.termName, '')) = :termNeedle)",
+        { termId, termNeedle },
+      );
+    } else if (termId) {
+      qb.andWhere("term.id = :termId", { termId });
+    } else {
+      qb.andWhere(
+        "LOWER(COALESCE(term.name, cls.termName, '')) = :termNeedle",
+        { termNeedle },
+      );
+    }
+
+    return qb.getMany();
   }
 
   async bulkReplace(
@@ -544,6 +644,7 @@ export class AdminClassesRepository {
             where: { classId: s.classId },
           });
           for (const enrol of enrolments) {
+            if (!isStudentAccountableForSession(s, enrol.createdAt)) continue;
             const existing = await attendanceRepo.findOne({
               where: { sessionId: s.id, studentId: enrol.studentId },
             });
