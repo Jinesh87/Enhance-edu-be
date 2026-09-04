@@ -13,6 +13,7 @@ class AdminClassesController {
         yearLevel?: string;
         term?: string;
         summaryOnly?: boolean;
+        templateOnly?: boolean;
       };
 
       const { classes, summaries, total } = await adminClassesService.list({
@@ -23,6 +24,7 @@ class AdminClassesController {
         yearLevel: query.yearLevel,
         term: query.term,
         summaryOnly: query.summaryOnly === true,
+        templateOnly: query.templateOnly === true,
       });
       res.setHeader("Cache-Control", "no-store");
       res.status(200).json({ classes, summaries, total });
@@ -254,7 +256,7 @@ class AdminClassesController {
 
   bulkReplace = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const classes = await adminClassesService.bulkReplace(
+      const result = await adminClassesService.bulkReplace(
         req.body.termId,
         req.body.classes,
         req.body.gracePeriodMinutes,
@@ -264,10 +266,13 @@ class AdminClassesController {
         action: "EDITED",
         recordType: "class",
         recordId: req.body.termId,
-        recordLabel: `Timetable · ${classes.length} sessions`,
-        after: { sessionCount: classes.length, termId: req.body.termId },
+        recordLabel: `Timetable · ${result.sessionCount} sessions`,
+        after: {
+          sessionCount: result.sessionCount,
+          termId: result.termId,
+        },
       });
-      res.status(201).json({ classes });
+      res.status(201).json(result);
     } catch (error) {
       next(error);
     }

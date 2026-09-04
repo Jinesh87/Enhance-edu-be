@@ -8,6 +8,8 @@ export const listClassesQuerySchema = Joi.object({
   yearLevel: Joi.string().trim().max(80).allow("", null),
   term: Joi.string().trim().max(120).allow("", null),
   summaryOnly: Joi.boolean().truthy("true").falsy("false"),
+  /** Edit timetable: unique weekday slots only (no full term session dump). */
+  templateOnly: Joi.boolean().truthy("true").falsy("false"),
 });
 
 export const createClassSchema = Joi.object({

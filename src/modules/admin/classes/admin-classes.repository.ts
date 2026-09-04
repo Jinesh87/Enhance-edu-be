@@ -240,6 +240,67 @@ export class AdminClassesRepository {
     });
   }
 
+  async findByTermId(termId: string): Promise<Class[]> {
+    return this.classes.find({
+      where: { term: { id: termId } },
+      relations: {
+        teacher: true,
+        term: { academicYear: true, yearLevel: true },
+        classroom: true,
+      },
+    });
+  }
+
+  /** Classes taught by one teacher — for occupancy checks (avoids findAll). */
+  async findByTeacherId(teacherId: string): Promise<Class[]> {
+    return this.classes.find({
+      where: { teacher: { id: teacherId } },
+      relations: {
+        teacher: true,
+        term: { academicYear: true, yearLevel: true },
+        classroom: true,
+      },
+    });
+  }
+
+  /**
+   * Classes in a term (by id and/or name) — same match rules as
+   * assertTermScheduleAvailable, without loading every class.
+   */
+  async findForTermScheduleOccupancy(
+    termId?: string | null,
+    termName?: string | null,
+  ): Promise<Class[]> {
+    const termNeedle = (termName ?? "").trim().toLowerCase();
+    if (!termId && !termNeedle) {
+      return [];
+    }
+
+    const qb = this.classes
+      .createQueryBuilder("cls")
+      .leftJoinAndSelect("cls.teacher", "teacher")
+      .leftJoinAndSelect("cls.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("cls.classroom", "classroom");
+
+    if (termId && termNeedle) {
+      qb.andWhere(
+        "(term.id = :termId OR LOWER(COALESCE(term.name, cls.termName, '')) = :termNeedle)",
+        { termId, termNeedle },
+      );
+    } else if (termId) {
+      qb.andWhere("term.id = :termId", { termId });
+    } else {
+      qb.andWhere(
+        "LOWER(COALESCE(term.name, cls.termName, '')) = :termNeedle",
+        { termNeedle },
+      );
+    }
+
+    return qb.getMany();
+  }
+
   async bulkReplace(
     termId: string,
     classesToCreate: ClassInput[],

@@ -4,7 +4,7 @@ import {
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
-import { buildScheduleSlotKey } from "../../../common/utils/schedule-slot.js";
+import { buildScheduleSlotKey, startTimeFromDayTime } from "../../../common/utils/schedule-slot.js";
 import {
   sessionStatus,
   type SessionStatus,
@@ -136,10 +136,26 @@ export class AdminClassesService {
     excludeClassIds: string[] = [],
     proposedSubject?: string | null,
   ) {
+    const occupied = await this.repo.findByClassroomId(classroomId);
+    this.assertClassroomAvailableAgainst(
+      occupied,
+      dayTime,
+      timeZone,
+      excludeClassIds,
+      proposedSubject,
+    );
+  }
+
+  private assertClassroomAvailableAgainst(
+    occupied: Class[],
+    dayTime: string | null | undefined,
+    timeZone: string | null | undefined,
+    excludeClassIds: string[] = [],
+    proposedSubject?: string | null,
+  ) {
     const proposed = this.occupancyTimes(dayTime, timeZone);
     if (!proposed) return;
 
-    const occupied = await this.repo.findByClassroomId(classroomId);
     const exclude = new Set(excludeClassIds);
     const conflict = occupied.find((cls) => {
       if (exclude.has(cls.id)) return false;
@@ -179,11 +195,10 @@ export class AdminClassesService {
     const proposed = this.occupancyTimes(dayTime, timeZone);
     if (!proposed) return;
 
-    const { classes } = await this.repo.findAll();
+    const classes = await this.repo.findByTeacherId(teacherId);
     const exclude = new Set(excludeClassIds);
     const conflict = classes.find((cls) => {
       if (exclude.has(cls.id)) return false;
-      if (cls.teacher?.id !== teacherId) return false;
       const existing = this.occupancyTimes(cls.dayTime, cls.timeZone);
       if (!existing) return false;
       return (
@@ -221,18 +236,14 @@ export class AdminClassesService {
     const proposed = this.occupancyTimes(dayTime, timeZone);
     if (!proposed) return;
 
-    const { classes } = await this.repo.findAll();
+    const classes = await this.repo.findForTermScheduleOccupancy(
+      termId,
+      termName,
+    );
     const exclude = new Set(excludeClassIds);
-    const termNeedle = (termName ?? "").trim().toLowerCase();
 
     const conflict = classes.find((cls) => {
       if (exclude.has(cls.id)) return false;
-      const sameTerm =
-        (termId && cls.term?.id && cls.term.id === termId) ||
-        (termNeedle &&
-          (cls.term?.name || cls.termName || "").trim().toLowerCase() ===
-            termNeedle);
-      if (!sameTerm) return false;
 
       const existing = this.occupancyTimes(cls.dayTime, cls.timeZone);
       if (!existing) return false;
@@ -318,9 +329,41 @@ export class AdminClassesService {
     return cls.term?.name ?? cls.termName ?? "Term 3 2026";
   }
 
+  /** Weekday name matching CreateClassPage parseDayOfWeek (Mon–Fri only). */
+  private timetableWeekdayFromDayTime(dayTime: string | null): string | null {
+    if (!dayTime) return null;
+    const isoPart = dayTime.split(" ")[0]?.trim() ?? "";
+    const datePart = isoPart.includes("T") ? isoPart.split("T")[0] : isoPart;
+    const [yearStr, monthStr, dayStr] = datePart.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+    if (!year || !month || !day) return null;
+    const dayName = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ][new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay()];
+    if (
+      dayName !== "Monday" &&
+      dayName !== "Tuesday" &&
+      dayName !== "Wednesday" &&
+      dayName !== "Thursday" &&
+      dayName !== "Friday"
+    ) {
+      return null;
+    }
+    return dayName;
+  }
+
   /**
    * Classes table list. Prefer summaryOnly=true — returns subject/term rows only.
-   * Full class DTOs are returned only when summaryOnly is false (edit/create flows).
+   * templateOnly=true — unique weekday slots for edit timetable (slim payload).
+   * Full class DTOs are returned only when both flags are false.
    */
   async list(filters?: {
     page?: number;
@@ -330,14 +373,60 @@ export class AdminClassesService {
     yearLevel?: string;
     term?: string;
     summaryOnly?: boolean;
+    templateOnly?: boolean;
   }) {
     const summaryOnly = filters?.summaryOnly === true;
+    const templateOnly = filters?.templateOnly === true;
     const filteredClasses = await this.repo.findFiltered({
       search: filters?.search,
       year: filters?.year,
       yearLevel: filters?.yearLevel,
       term: filters?.term,
     });
+
+    if (templateOnly) {
+      const seen = new Set<string>();
+      const representatives: Class[] = [];
+      for (const cls of filteredClasses) {
+        const weekday = this.timetableWeekdayFromDayTime(cls.dayTime);
+        const time = startTimeFromDayTime(cls.dayTime);
+        if (!weekday || !time) continue;
+        const subject = (cls.subject ?? "").trim();
+        const teacherId = cls.teacher?.id ?? "";
+        const key = `${weekday}|${time}|${subject}|${teacherId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        representatives.push(cls);
+      }
+
+      const graceByClassId = await this.repo.findGraceMinutesByClassIds(
+        representatives.map((item) => item.id),
+      );
+
+      const classes = representatives.map((item) =>
+        toClassDto(item, graceByClassId.get(item.id) ?? null),
+      );
+      return {
+        classes,
+        summaries: [] as Array<{
+          subject: string;
+          term: string;
+          termId: string | null;
+          yearGroup: string | null;
+          academicYear: number | null;
+          classIds: string[];
+          sessionCount: number;
+          totalDurationMinutes: number;
+          teachers: string[];
+          enrolled: number;
+          needAttention: number;
+          dayTime: string;
+          startDate: Date | null;
+          endDate: Date | null;
+        }>,
+        total: classes.length,
+      };
+    }
 
     const studentsByClassId = await this.repo.findStudentIdsByClassIds(
       filteredClasses.map((item) => item.id),
@@ -710,14 +799,30 @@ export class AdminClassesService {
       ),
     );
     this.assertNoInternalScheduleOverlap(resolved);
-    const existingInTerm = (await this.repo.findAll()).classes.filter(
-      (item) => item.term?.id === termId,
-    );
+    const existingInTerm = await this.repo.findByTermId(termId);
     const excludeIds = existingInTerm.map((item) => item.id);
+
+    const classroomIds = [
+      ...new Set(
+        resolved
+          .map((item) => item.classroomId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const occupiedByClassroom = new Map<string, typeof existingInTerm>();
+    await Promise.all(
+      classroomIds.map(async (classroomId) => {
+        occupiedByClassroom.set(
+          classroomId,
+          await this.repo.findByClassroomId(classroomId),
+        );
+      }),
+    );
+
     for (const item of resolved) {
       if (!item.classroomId) continue;
-      await this.assertClassroomAvailable(
-        item.classroomId,
+      this.assertClassroomAvailableAgainst(
+        occupiedByClassroom.get(item.classroomId) ?? [],
         item.dayTime,
         item.timeZone,
         excludeIds,
@@ -729,7 +834,10 @@ export class AdminClassesService {
       resolved,
       gracePeriodMinutes,
     );
-    return savedEntities.map(toClassDto);
+    return {
+      sessionCount: savedEntities.length,
+      termId,
+    };
   }
 
   async remove(id: string) {
