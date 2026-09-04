@@ -4,7 +4,9 @@ import {
   authorize,
   authorizeAdminModule,
 } from "../../../common/middleware/authenticate.js";
+import { validate } from "../../../common/middleware/validate.js";
 import { adminAttendanceController } from "./admin-attendance.controller.js";
+import { exportStudentAttendanceSchema } from "./admin-attendance-export.validation.js";
 
 const router = Router();
 
@@ -35,6 +37,16 @@ router.post("/records/:id/correct", adminAttendanceController.correctRecord);
 router.get(
   "/records/:id/history",
   adminAttendanceController.getCorrectionHistory,
+);
+router.post(
+  "/export/student/preview",
+  validate(exportStudentAttendanceSchema),
+  adminAttendanceController.previewStudentAttendance,
+);
+router.post(
+  "/export/student",
+  validate(exportStudentAttendanceSchema),
+  adminAttendanceController.exportStudentAttendance,
 );
 
 export default router;

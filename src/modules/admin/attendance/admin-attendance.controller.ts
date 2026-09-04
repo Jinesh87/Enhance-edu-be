@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { sharedAttendanceService } from "../../shared/attendance/shared-attendance.service.js";
 import { adminAttendanceService } from "./admin-attendance.service.js";
+import { studentAttendanceExportService } from "./student-attendance-export.service.js";
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
 import { AdminDecision } from "../../../entities/index.js";
 import { AppError } from "../../../common/errors/AppError.js";
@@ -213,6 +214,51 @@ class AdminAttendanceController {
         req.params.id as string,
       );
       res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async exportStudentAttendance(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const result = await studentAttendanceExportService.exportPdf({
+        studentId: String(req.body.studentId),
+        academicYearId: String(req.body.academicYearId),
+        termId: String(req.body.termId),
+        subjectId: req.body.subjectId,
+        actorUserId: req.user!.id,
+      });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.filename}"`,
+      );
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).send(result.buffer);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async previewStudentAttendance(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const report = await studentAttendanceExportService.preview({
+        studentId: String(req.body.studentId),
+        academicYearId: String(req.body.academicYearId),
+        termId: String(req.body.termId),
+        subjectId: req.body.subjectId,
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ report });
     } catch (error) {
       next(error);
     }
