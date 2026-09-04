@@ -12,6 +12,10 @@ export const listAssessmentsQuerySchema = Joi.object({
   termId: uuid.allow(""),
   subject: Joi.string().trim().max(120).allow(""),
   yearGroup: Joi.string().trim().max(80).allow(""),
+  teacherId: uuid.allow(""),
+  fromDate: Joi.string().pattern(datePattern).allow(""),
+  toDate: Joi.string().pattern(datePattern).allow(""),
+  includeStudents: Joi.boolean().truthy("true").falsy("false"),
   kind: Joi.string().valid("SCHOOL", "ENTRANCE", "ALL").allow(""),
   status: Joi.string()
     .valid(...ASSESSMENT_STATUSES, "ACTIVE", "OPEN")

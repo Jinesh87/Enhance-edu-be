@@ -26,10 +26,7 @@ import {
   type ClassInput,
 } from "./admin-classes.repository.js";
 import { syncClassRosterFromEnrollments } from "../../shared/classes/sync-class-roster.js";
-import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import { applySequentialLessonLabels } from "../../../common/utils/session-lesson-labels.js";
-
-const attendanceRepository = new AttendanceRepository();
 
 function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Date | null {
   return parseDayTime(dayTime, timeZone)?.startAt ?? null;
@@ -746,31 +743,121 @@ export class AdminClassesService {
     await this.repo.remove(cls);
   }
 
-  async listCalendarSessions(filters?: { year?: number; term?: string }) {
-    const { classes } = await this.repo.findAll();
-    let filteredClasses = classes;
-    if (filters?.year) {
-      filteredClasses = filteredClasses.filter(
-        (c) => c.term?.academicYear?.year === filters.year,
-      );
+  async listCalendarSessions(filters?: {
+    year?: number;
+    term?: string;
+    yearLevel?: string;
+    from?: string;
+    to?: string;
+    teacherId?: string;
+    subject?: string;
+  }) {
+    const qb = AppDataSource.getRepository(Session)
+      .createQueryBuilder("session")
+      .innerJoinAndSelect("session.class", "class")
+      .leftJoinAndSelect("class.teacher", "classTeacher")
+      .leftJoinAndSelect("class.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("class.classroom", "classClassroom")
+      .leftJoinAndSelect("session.classroom", "sessionClassroom")
+      .leftJoinAndSelect("session.teacher", "sessionTeacher")
+      .where("session.assessmentId IS NULL");
+
+    if (filters?.year != null && !Number.isNaN(filters.year)) {
+      qb.andWhere("academicYear.year = :year", { year: filters.year });
     }
-    if (filters?.term) {
-      const termNeedle = filters.term.trim().toLowerCase();
-      filteredClasses = filteredClasses.filter((c) => {
-        const tName = (c.term?.name || c.termName || "").toLowerCase();
-        return tName.includes(termNeedle);
+    if (filters?.term?.trim()) {
+      qb.andWhere("LOWER(term.name) LIKE :term", {
+        term: `%${filters.term.trim().toLowerCase()}%`,
       });
     }
-
-    const classIds = filteredClasses.map((c) => c.id);
-    if (classIds.length === 0) {
-      return { sessions: [] };
+    if (filters?.yearLevel?.trim()) {
+      qb.andWhere("yearLevel.name = :yearLevel", {
+        yearLevel: filters.yearLevel.trim(),
+      });
+    }
+    if (filters?.teacherId?.trim()) {
+      qb.andWhere(
+        "(session.teacherId = :teacherId OR (session.teacherId IS NULL AND class.teacherId = :teacherId))",
+        { teacherId: filters.teacherId.trim() },
+      );
+    }
+    if (filters?.subject?.trim()) {
+      qb.andWhere("class.subject = :subject", {
+        subject: filters.subject.trim(),
+      });
+    }
+    if (filters?.from && /^\d{4}-\d{2}-\d{2}$/.test(filters.from)) {
+      qb.andWhere("session.startAt >= :fromAt", {
+        fromAt: new Date(`${filters.from}T00:00:00.000`),
+      });
+    }
+    if (filters?.to && /^\d{4}-\d{2}-\d{2}$/.test(filters.to)) {
+      const toParts = filters.to.split("-").map(Number);
+      const toExclusive = new Date(
+        toParts[0],
+        toParts[1] - 1,
+        toParts[2] + 1,
+        0,
+        0,
+        0,
+        0,
+      );
+      qb.andWhere("session.startAt < :toExclusive", { toExclusive });
     }
 
-    await attendanceRepository.ensureSessionsExistForClassIds(classIds);
+    qb.orderBy("session.startAt", "ASC");
 
-    const sessionRows = await AppDataSource.getRepository(Session).find({
-      where: { classId: In(classIds), assessmentId: IsNull() },
+    const sessionRows = await qb.getMany();
+
+    return {
+      sessions: applySequentialLessonLabels(
+        this.dedupeCalendarSessions(sessionRows).map((row) =>
+          this.toCalendarListRow(row),
+        ),
+      ),
+    };
+  }
+
+  /** Slim row for calendar grids — display fields only, no nested class. */
+  private toCalendarListRow(row: Session) {
+    const teacher = row.teacher ?? row.class?.teacher ?? null;
+    const term = row.class?.term ?? null;
+    const subject = row.class?.subject ?? null;
+    const termId = term?.id ?? null;
+    const termLabel = term?.name ?? row.class?.termName ?? null;
+    const timeZone = resolveIanaTimeZone(row.class?.timeZone);
+    return {
+      id: row.id,
+      classId: row.classId,
+      startAt: row.startAt.toISOString(),
+      endAt: row.endAt.toISOString(),
+      room: row.room ?? row.class?.room ?? row.classroom?.name ?? null,
+      classroomId:
+        row.classroomId ??
+        row.classroom?.id ??
+        row.class?.classroomId ??
+        null,
+      teacherId: teacher?.id ?? null,
+      teacher: teacher
+        ? { id: teacher.id, fullName: teacher.fullName }
+        : null,
+      gracePeriodMinutes: row.gracePeriodMinutes,
+      status: sessionStatus(row.startAt, row.endAt),
+      isWeeklySlot: false,
+      subject,
+      lesson: null as string | null,
+      termId,
+      termLabel,
+      yearGroup: term?.yearLevel?.name ?? null,
+      timeZone,
+    };
+  }
+
+  async getSession(sessionId: string) {
+    const session = await AppDataSource.getRepository(Session).findOne({
+      where: { id: sessionId },
       relations: {
         class: {
           teacher: true,
@@ -780,16 +867,11 @@ export class AdminClassesService {
         classroom: true,
         teacher: true,
       },
-      order: { startAt: "ASC" },
     });
-
-    return {
-      sessions: applySequentialLessonLabels(
-        this.dedupeCalendarSessions(sessionRows).map((row) =>
-          this.toSessionRow(row),
-        ),
-      ),
-    };
+    if (!session || session.assessmentId) {
+      throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
+    }
+    return this.toSessionRow(session);
   }
 
   private dedupeCalendarSessions(sessions: Session[]): Session[] {

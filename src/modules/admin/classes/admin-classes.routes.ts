@@ -36,6 +36,11 @@ adminClassesRouter.get(
   validate(groupSessionsQuerySchema, "query"),
   adminClassesController.listGroupSessions,
 );
+adminClassesRouter.get(
+  "/sessions/:id",
+  validate(sessionIdParamsSchema, "params"),
+  adminClassesController.getSession,
+);
 adminClassesRouter.patch(
   "/sessions/:id",
   validate(sessionIdParamsSchema, "params"),
