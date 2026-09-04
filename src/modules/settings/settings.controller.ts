@@ -80,6 +80,46 @@ export class SettingsController {
 
     res.json(config);
   }
+
+  async getOpenAiSettings(_req: Request, res: Response): Promise<void> {
+    const config = await settingsService.getOpenAiSettings();
+    res.json(config);
+  }
+
+  async updateOpenAiSettings(req: Request, res: Response): Promise<void> {
+    const config = await settingsService.updateOpenAiSettings({
+      openaiApiKey: req.body.openaiApiKey ?? null,
+    });
+
+    logger.info(
+      {
+        userId: req.user?.id,
+        configured: config.configured,
+      },
+      "OpenAI settings updated",
+    );
+
+    res.json(config);
+  }
+
+  async getNotificationSettings(_req: Request, res: Response): Promise<void> {
+    const config = await settingsService.getNotificationSettings();
+    res.json(config);
+  }
+
+  async updateNotificationSettings(req: Request, res: Response): Promise<void> {
+    const config = await settingsService.updateNotificationSettings(req.body);
+
+    logger.info(
+      {
+        userId: req.user?.id,
+        ...config,
+      },
+      "Notification settings updated",
+    );
+
+    res.json(config);
+  }
 }
 
 export const settingsController = new SettingsController();

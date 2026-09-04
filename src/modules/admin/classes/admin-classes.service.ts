@@ -28,6 +28,10 @@ import {
 import { syncClassRosterFromEnrollments } from "../../shared/classes/sync-class-roster.js";
 import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 import { applySequentialLessonLabels } from "../../../common/utils/session-lesson-labels.js";
+import {
+  sessionChangeNotificationService,
+  sessionNotifyContextFromSession,
+} from "../../notifications/session-change-notifications.service.js";
 
 function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Date | null {
   return parseDayTime(dayTime, timeZone)?.startAt ?? null;
@@ -1203,6 +1207,17 @@ export class AdminClassesService {
       );
     }
 
+    const previous = {
+      startAt: new Date(session.startAt),
+      endAt: new Date(session.endAt),
+      room:
+        session.room ||
+        session.classroom?.name ||
+        session.class?.room ||
+        session.class?.classroom?.name ||
+        null,
+    };
+
     if (input.startAt) session.startAt = new Date(input.startAt);
     if (input.endAt) session.endAt = new Date(input.endAt);
     if (session.endAt.getTime() <= session.startAt.getTime()) {
@@ -1268,6 +1283,13 @@ export class AdminClassesService {
     if (!saved) {
       throw new AppError(404, "Session not found", "SESSION_NOT_FOUND");
     }
+
+    void sessionChangeNotificationService.notifySessionChange({
+      kind: "SESSION_UPDATED",
+      context: sessionNotifyContextFromSession(saved),
+      previous,
+    });
+
     return this.toSessionRow(saved);
   }
 
@@ -1345,6 +1367,14 @@ export class AdminClassesService {
     const sessionRepo = AppDataSource.getRepository(Session);
     const sessions = await sessionRepo.find({
       where: { id: In(uniqueIds) },
+      relations: {
+        class: {
+          teacher: true,
+          classroom: true,
+        },
+        classroom: true,
+        teacher: true,
+      },
     });
     const sessionById = new Map(sessions.map((session) => [session.id, session]));
     const lockedSessionIds = await this.getLockedSessionIds(
@@ -1379,6 +1409,13 @@ export class AdminClassesService {
         sessionId: In(deleteIds),
       });
       await sessionRepo.remove(sessionsToDelete);
+
+      for (const session of sessionsToDelete) {
+        void sessionChangeNotificationService.notifySessionChange({
+          kind: "SESSION_DELETED",
+          context: sessionNotifyContextFromSession(session),
+        });
+      }
     }
 
     return {
@@ -1607,6 +1644,23 @@ export class AdminClassesService {
 
     const updated = toClassDto(cls);
     const times = parseDayTime(updated.dayTime, updated.timeZone);
+    if (times) {
+      void sessionChangeNotificationService.notifySessionChange({
+        kind: "SESSION_UPDATED",
+        context: {
+          sessionId: null,
+          classId: updated.id,
+          className: updated.name,
+          subject: updated.subject,
+          startAt: times.startAt,
+          endAt: times.endAt,
+          room: updated.room || null,
+          teacherId: updated.teacher?.id ?? null,
+          teacherName: updated.teacher?.fullName ?? null,
+        },
+      });
+    }
+
     return {
       id: updated.id,
       classId: updated.id,

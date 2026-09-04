@@ -25,6 +25,15 @@ export interface UpdateGuardianPortalSettingInput {
   attendanceEnabled: boolean;
 }
 
+export interface OpenAiSettings {
+  configured: boolean;
+  openaiApiKey: string | null;
+}
+
+export interface UpdateOpenAiSettingInput {
+  openaiApiKey: string | null;
+}
+
 export class SettingsService {
   private readonly settingRepo = AppDataSource.getRepository(InstitutionSetting);
 
@@ -41,6 +50,8 @@ export class SettingsService {
         guardianPortalAssessmentsEnabled: false,
         guardianPortalEntranceExamsEnabled: false,
         guardianPortalAttendanceEnabled: false,
+        openaiApiKey: null,
+        sessionChangeEmailNotificationsEnabled: false,
       });
       setting = await this.settingRepo.save(setting);
     }
@@ -138,6 +149,61 @@ export class SettingsService {
   async isGuardianPortalAttendanceEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.guardianPortalAttendanceEnabled ?? false;
+  }
+
+  async getOpenAiSettings(): Promise<OpenAiSettings> {
+    const setting = await this.getOrCreateDefault();
+    const openaiApiKey = setting.openaiApiKey?.trim() || null;
+    return {
+      configured: Boolean(openaiApiKey),
+      openaiApiKey,
+    };
+  }
+
+  async updateOpenAiSettings(
+    input: UpdateOpenAiSettingInput,
+  ): Promise<OpenAiSettings> {
+    const setting = await this.getOrCreateDefault();
+    const openaiApiKey = input.openaiApiKey?.trim() || null;
+    setting.openaiApiKey = openaiApiKey;
+    await this.settingRepo.save(setting);
+    return {
+      configured: Boolean(openaiApiKey),
+      openaiApiKey,
+    };
+  }
+
+  async getOpenAiApiKey(): Promise<string | null> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.openaiApiKey?.trim() || null;
+  }
+
+  async getNotificationSettings(): Promise<{
+    sessionChangeEmailNotificationsEnabled: boolean;
+  }> {
+    const setting = await this.getOrCreateDefault();
+    return {
+      sessionChangeEmailNotificationsEnabled:
+        setting.sessionChangeEmailNotificationsEnabled ?? false,
+    };
+  }
+
+  async updateNotificationSettings(input: {
+    sessionChangeEmailNotificationsEnabled: boolean;
+  }): Promise<{ sessionChangeEmailNotificationsEnabled: boolean }> {
+    const setting = await this.getOrCreateDefault();
+    setting.sessionChangeEmailNotificationsEnabled =
+      input.sessionChangeEmailNotificationsEnabled;
+    await this.settingRepo.save(setting);
+    return {
+      sessionChangeEmailNotificationsEnabled:
+        setting.sessionChangeEmailNotificationsEnabled,
+    };
+  }
+
+  async isSessionChangeEmailNotificationsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.sessionChangeEmailNotificationsEnabled ?? false;
   }
 }
 
