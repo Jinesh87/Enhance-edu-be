@@ -8,7 +8,6 @@ import {
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
-import { getObjectBuffer } from "../../../common/storage/object-storage.js";
 import {
   Assessment,
   AssessmentSubmission,
@@ -256,6 +255,32 @@ function toAssessmentDto(
     students: includeStudents ? students : undefined,
     createdAt: assessment.createdAt,
     updatedAt: assessment.updatedAt,
+  };
+}
+
+/** Slim row for assessment tables / calendars — display fields only. */
+function toAssessmentListRow(assessment: Assessment) {
+  const counted = assessment as Assessment & { studentCount?: number };
+  return {
+    id: assessment.id,
+    name: assessment.name,
+    kind: assessment.kind ?? "SCHOOL",
+    scheduleType: assessment.scheduleType ?? "SESSION",
+    termId: assessment.termId,
+    termLabel: termLabel(assessment.term),
+    subject: assessment.subject,
+    yearGroup: assessment.yearGroup,
+    assessmentDate: assessment.assessmentDate,
+    startTime: assessment.startTime,
+    durationMinutes: assessment.durationMinutes,
+    classroomId: assessment.classroomId,
+    room: assessment.room || assessment.classroom?.name || "",
+    teacherId: assessment.teacherId,
+    teacherName: assessment.teacher?.fullName ?? null,
+    totalMarks: marksNumber(assessment.totalMarks),
+    cutOffMarks: marksNumber(assessment.cutOffMarks),
+    status: assessment.status,
+    studentCount: counted.studentCount ?? assessment.students?.length ?? 0,
   };
 }
 
@@ -780,12 +805,14 @@ export class AdminAssessmentsService {
     }
   }
 
-  async list(filters: {
+  async list(filters?: {
     page?: number;
     limit?: number;
     search?: string;
     termId?: string;
+    term?: string;
     subject?: string;
+    year?: number;
     yearGroup?: string;
     teacherId?: string;
     fromDate?: string;
@@ -793,12 +820,29 @@ export class AdminAssessmentsService {
     kind?: "SCHOOL" | "ENTRANCE" | "ALL";
     status?: AssessmentStatus | "ACTIVE" | "OPEN";
     includeStudents?: boolean;
+    summaryOnly?: boolean;
   }) {
-    const includeStudents = filters.includeStudents !== false;
+    const summaryOnly = filters?.summaryOnly === true;
+    const includeStudents =
+      !summaryOnly && filters?.includeStudents !== false;
+
     if (includeStudents) {
       await this.syncPastScheduled();
     }
-    const { assessments, total } = await this.repo.list(filters);
+
+    const { assessments, total } = await this.repo.list({
+      ...filters,
+      includeStudents,
+      summaryOnly,
+    });
+
+    if (summaryOnly) {
+      return {
+        assessments: assessments.map((item) => toAssessmentListRow(item)),
+        total,
+      };
+    }
+
     const enriched = await Promise.all(
       assessments.map((item) => this.enrichDto(item, includeStudents)),
     );
@@ -1445,7 +1489,7 @@ export class AdminAssessmentsService {
     assessmentId: string,
     studentId: string,
     fileId: string,
-  ): Promise<{ buffer: Buffer; mimeType: string; originalName: string }> {
+  ): Promise<{ storageKey: string; mimeType: string; originalName: string }> {
     const file = await AppDataSource.getRepository(
       AssessmentSubmissionFile,
     ).findOne({
@@ -1466,16 +1510,11 @@ export class AdminAssessmentsService {
       throw new AppError(404, "File not found", "FILE_NOT_FOUND");
     }
 
-    try {
-      const buffer = await getObjectBuffer(file.storageKey);
-      return {
-        buffer,
-        mimeType: file.mimeType,
-        originalName: file.originalName,
-      };
-    } catch {
-      throw new AppError(404, "Stored file is missing", "FILE_MISSING");
-    }
+    return {
+      storageKey: file.storageKey,
+      mimeType: file.mimeType,
+      originalName: file.originalName,
+    };
   }
 }
 

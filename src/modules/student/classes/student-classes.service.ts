@@ -15,8 +15,7 @@ import {
 import {
   buildHomeworkSubmissionKey,
   deleteObject,
-  getObjectBuffer,
-  putObject,
+  storeUploadedObject,
 } from "../../../common/storage/object-storage.js";
 import {
   termYearLevelNumber,
@@ -46,6 +45,10 @@ import {
   resolveAssessmentTimeZone,
 } from "../../admin/assessments/assessment-session-sync.service.js";
 import { teacherClassRepository } from "../../teacher/class/teacher-class.repository.js";
+import {
+  buildClassJoinAtMap,
+  isStudentAccountableForSession,
+} from "../../shared/attendance/student-session-eligibility.js";
 
 export type StudentLessonKind = "class" | "assessment";
 
@@ -106,7 +109,8 @@ export type StudentLessonDto = {
 };
 
 export type UploadedHomeworkAnswerFile = {
-  buffer: Buffer;
+  buffer?: Buffer;
+  directStorageKey?: string;
   originalName: string;
   mimeType: string;
   size: number;
@@ -413,8 +417,9 @@ export class StudentClassesService {
     }
 
     return {
-      ...attachment,
-      buffer: await getObjectBuffer(attachment.storageKey),
+      storageKey: attachment.storageKey,
+      mimeType: attachment.mimeType,
+      originalName: attachment.originalName,
     };
   }
 
@@ -573,10 +578,12 @@ export class StudentClassesService {
         fileName: file.originalName,
       });
 
-      await putObject({
-        key: storageKey,
-        body: file.buffer,
+      await storeUploadedObject({
+        finalKey: storageKey,
         contentType: file.mimeType,
+        buffer: file.buffer,
+        directStorageKey: file.directStorageKey,
+        byteSize: file.size,
       });
 
       entitiesToSave.push(
@@ -708,8 +715,9 @@ export class StudentClassesService {
     }
 
     return {
-      ...file,
-      buffer: await getObjectBuffer(file.storageKey),
+      storageKey: file.storageKey,
+      mimeType: file.mimeType,
+      originalName: file.originalName,
     };
   }
 
@@ -760,6 +768,7 @@ export class StudentClassesService {
       );
 
     const classIds = timed.map((row) => row.cls.id);
+    const joinAtByClassId = await this.classJoinAtByClassId(userId, classIds);
     const existingSessions = classIds.length
       ? await this.sessions.find({
           where: { classId: In(classIds), assessmentId: IsNull() },
@@ -818,6 +827,10 @@ export class StudentClassesService {
         `${row.cls.id}|${row.startAt.getTime()}`,
       );
       if (!session) continue;
+      const joinedAt = joinAtByClassId.get(row.cls.id);
+      if (!joinedAt || !isStudentAccountableForSession(session, joinedAt)) {
+        continue;
+      }
       const attendance = attendanceBySession.get(session.id);
       const online = isOnlineRoom(row.cls.room);
       const { status, minutesUntilStart, canCheckIn } = lessonStatus({
@@ -1219,13 +1232,14 @@ export class StudentClassesService {
       where: { classId, studentId },
     });
     if (existing) return;
-    await this.classStudents.save(
+    const saved = await this.classStudents.save(
       this.classStudents.create({ classId, studentId }),
     );
 
-    // Create PENDING attendance records for existing sessions of this class
+    // Seed PENDING only for sessions that had not already ended before join.
     const sessions = await this.sessions.find({ where: { classId } });
     for (const session of sessions) {
+      if (!isStudentAccountableForSession(session, saved.createdAt)) continue;
       const existingRecord = await this.attendance.findOne({
         where: { sessionId: session.id, studentId },
       });
@@ -1418,8 +1432,17 @@ export class StudentClassesService {
         new Brackets((where) => {
           if (classIds.length > 0) {
             where.orWhere(
-              "session.classId IN (:...classIds) AND session.assessmentId IS NULL",
-              { classIds },
+              new Brackets((classWhere) => {
+                classWhere
+                  .where(
+                    "session.classId IN (:...classIds) AND session.assessmentId IS NULL",
+                    { classIds },
+                  )
+                  .andWhere(
+                    "EXISTS (SELECT 1 FROM class_students cs WHERE cs.\"classId\" = session.\"classId\" AND cs.\"studentId\" = :studentId AND session.\"endAt\" > cs.\"createdAt\")",
+                    { studentId: userId },
+                  );
+              }),
             );
           }
           if (visibleAssessmentIds.length > 0) {
@@ -1465,6 +1488,18 @@ export class StudentClassesService {
       select: { classId: true },
     });
     return rows.map((row) => row.classId).filter((id) => allowed.has(id));
+  }
+
+  private async classJoinAtByClassId(
+    userId: string,
+    classIds: string[],
+  ): Promise<Map<string, Date>> {
+    if (classIds.length === 0) return new Map();
+    const rows = await this.classStudents.find({
+      where: { studentId: userId, classId: In(classIds) },
+      select: { classId: true, createdAt: true },
+    });
+    return buildClassJoinAtMap(rows);
   }
 
   private async listVisibleAssessments(context: StudentTimetableContext) {
@@ -1513,6 +1548,7 @@ export class StudentClassesService {
   ): Promise<Session[]> {
     const classes = await this.resolveStudentClasses(userId);
     const classIds = await this.enrolledClassIds(userId, classes);
+    const joinAtByClassId = await this.classJoinAtByClassId(userId, classIds);
     const context = await this.buildTimetableContext(userId, classes);
 
     const classSessions =
@@ -1525,6 +1561,11 @@ export class StudentClassesService {
         : [];
 
     const filteredClassSessions = classSessions.filter((session) => {
+      if (!session.classId) return false;
+      const joinedAt = joinAtByClassId.get(session.classId);
+      if (!joinedAt || !isStudentAccountableForSession(session, joinedAt)) {
+        return false;
+      }
       if (!subject) return true;
       return (
         session.class?.subject?.trim().toLowerCase() === subject.toLowerCase()
@@ -1647,9 +1688,16 @@ export class StudentClassesService {
       const classQb = this.sessions
         .createQueryBuilder("session")
         .innerJoin("session.class", "class")
+        .innerJoin(
+          ClassStudent,
+          "cs",
+          "cs.classId = session.classId AND cs.studentId = :studentId",
+          { studentId: userId },
+        )
         .where("session.classId IN (:...classIds)", { classIds })
         .andWhere("session.assessmentId IS NULL")
-        .andWhere("session.startAt > :after", { after });
+        .andWhere("session.startAt > :after", { after })
+        .andWhere("session.endAt > cs.createdAt");
       if (subject) {
         classQb.andWhere("LOWER(TRIM(class.subject)) = LOWER(:subject)", {
           subject,

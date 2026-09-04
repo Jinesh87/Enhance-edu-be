@@ -1,55 +1,52 @@
 import type { NextFunction, Request, Response } from "express";
+import { respondWithStoredFile } from "../../../common/storage/object-storage.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import { adminAssessmentsService } from "./admin-assessments.service.js";
 
 class AdminAssessmentsController {
   list = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const page = req.query.page ? Number(req.query.page) : undefined;
-      const limit = req.query.limit ? Number(req.query.limit) : undefined;
-      const search = req.query.search ? String(req.query.search) : undefined;
-      const termId = req.query.termId ? String(req.query.termId) : undefined;
-      const subject = req.query.subject ? String(req.query.subject) : undefined;
-      const yearGroup = req.query.yearGroup
-        ? String(req.query.yearGroup)
-        : undefined;
-      const status = req.query.status
-        ? (String(req.query.status) as
-            | "SCHEDULED"
-            | "LIVE"
-            | "COMPLETED"
-            | "CANCELLED"
-            | "ARCHIVED"
-            | "ACTIVE"
-            | "OPEN")
-        : undefined;
-      const kind = req.query.kind
-        ? (String(req.query.kind) as "SCHOOL" | "ENTRANCE" | "ALL")
-        : undefined;
-      const teacherId = req.query.teacherId
-        ? String(req.query.teacherId)
-        : undefined;
-      const fromDate = req.query.fromDate
-        ? String(req.query.fromDate)
-        : undefined;
-      const toDate = req.query.toDate ? String(req.query.toDate) : undefined;
-      const includeStudents =
-        req.query.includeStudents === undefined
-          ? undefined
-          : String(req.query.includeStudents) !== "false";
+      const query = req.query as {
+        page?: number;
+        limit?: number;
+        search?: string;
+        termId?: string;
+        term?: string;
+        subject?: string;
+        year?: number;
+        yearGroup?: string;
+        teacherId?: string;
+        fromDate?: string;
+        toDate?: string;
+        kind?: "SCHOOL" | "ENTRANCE" | "ALL";
+        status?:
+          | "SCHEDULED"
+          | "LIVE"
+          | "COMPLETED"
+          | "CANCELLED"
+          | "ARCHIVED"
+          | "ACTIVE"
+          | "OPEN";
+        includeStudents?: boolean;
+        summaryOnly?: boolean;
+      };
+
       const { assessments, total } = await adminAssessmentsService.list({
-        page,
-        limit,
-        search,
-        termId,
-        subject,
-        yearGroup,
-        teacherId,
-        fromDate,
-        toDate,
-        kind,
-        status,
-        includeStudents,
+        page: query.page,
+        limit: query.limit,
+        search: query.search,
+        termId: query.termId,
+        term: query.term,
+        subject: query.subject,
+        year: query.year,
+        yearGroup: query.yearGroup,
+        teacherId: query.teacherId,
+        fromDate: query.fromDate,
+        toDate: query.toDate,
+        kind: query.kind,
+        status: query.status,
+        includeStudents: query.includeStudents,
+        summaryOnly: query.summaryOnly === true,
       });
       res.status(200).json({ assessments, total });
     } catch (error) {
@@ -187,13 +184,11 @@ class AdminAssessmentsController {
         req.params.studentId as string,
         req.params.fileId as string,
       );
-      res.setHeader("Content-Type", file.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${encodeURIComponent(file.originalName)}"`,
-      );
-      res.setHeader("Cache-Control", "private, max-age=60");
-      res.status(200).send(file.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: file.storageKey,
+        mimeType: file.mimeType,
+        originalName: file.originalName,
+      });
     } catch (error) {
       next(error);
     }

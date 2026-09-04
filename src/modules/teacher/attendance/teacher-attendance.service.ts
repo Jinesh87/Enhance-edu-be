@@ -24,9 +24,13 @@ export class TeacherAttendanceService {
 
     if (role === UserRole.SUPER_ADMIN) return session;
 
-    const classTeacherId = session.class?.teacher?.id ?? null;
     const assessmentTeacherId = session.assessment?.teacherId ?? null;
-    if (classTeacherId !== userId && assessmentTeacherId !== userId) {
+    const effectiveTeacherId =
+      session.teacherId ?? session.class?.teacher?.id ?? null;
+    const ownsSession =
+      effectiveTeacherId === userId || assessmentTeacherId === userId;
+
+    if (!ownsSession) {
       throw new AppError(
         403,
         "You are not authorized to manage this session",

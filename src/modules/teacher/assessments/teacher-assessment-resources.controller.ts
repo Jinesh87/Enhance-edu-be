@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { UserRole } from "../../../common/constants/roles.js";
+import { resolveIncomingFiles } from "../../../common/storage/object-storage.js";
 import { assessmentResourceService } from "../../shared/assessments/assessment-resource.service.js";
 
 class TeacherAssessmentResourcesController {
@@ -18,17 +19,16 @@ class TeacherAssessmentResourcesController {
 
   upload = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const files = Array.isArray(req.files) ? req.files : [];
+      const uploads = resolveIncomingFiles(
+        Array.isArray(req.files) ? req.files : undefined,
+        req.body,
+        req.user!.id,
+      );
       const result = await assessmentResourceService.uploadForAssessment(
         req.params.assessmentId as string,
         req.user!.id,
         req.user!.role as UserRole,
-        files.map((file) => ({
-          buffer: file.buffer,
-          originalName: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
-        })),
+        uploads,
       );
       res.status(201).json(result);
     } catch (error) {

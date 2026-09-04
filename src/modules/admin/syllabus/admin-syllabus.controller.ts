@@ -1,4 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
+import {
+  resolveIncomingFiles,
+  respondWithStoredFile,
+} from "../../../common/storage/object-storage.js";
 import { adminSyllabusService } from "./admin-syllabus.service.js";
 
 class AdminSyllabusController {
@@ -72,7 +76,11 @@ class AdminSyllabusController {
 
   addDocuments = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      const files = resolveIncomingFiles(
+        req.files as Express.Multer.File[] | undefined,
+        req.body,
+        req.user!.id,
+      );
       const syllabus = await adminSyllabusService.addDocuments(
         req.params.id as string,
         files,
@@ -107,12 +115,12 @@ class AdminSyllabusController {
         req.params.id as string,
         req.params.documentId as string,
       );
-      res.setHeader("Content-Type", file.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${encodeURIComponent(file.originalName)}"`,
-      );
-      res.status(200).send(file.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: file.storageKey,
+        mimeType: file.mimeType,
+        originalName: file.originalName,
+        inline: false,
+      });
     } catch (error) {
       next(error);
     }

@@ -114,24 +114,15 @@ export class TeacherClassRepository {
     after: Date,
     subject?: string,
   ): Promise<boolean> {
-    const classIds = (await this.findClassesByTeacherId(teacherId)).map(
-      (cls) => cls.id,
-    );
-
     const classQb = this.sessions
       .createQueryBuilder("session")
       .innerJoin("session.class", "class")
       .where("session.assessmentId IS NULL")
-      .andWhere("session.startAt > :after", { after });
-
-    if (classIds.length > 0) {
-      classQb.andWhere(
-        "(class.id IN (:...classIds) OR session.teacherId = :teacherId)",
-        { classIds, teacherId },
+      .andWhere("session.startAt > :after", { after })
+      .andWhere(
+        "(session.teacherId = :teacherId OR (session.teacherId IS NULL AND class.teacherId = :teacherId))",
+        { teacherId },
       );
-    } else {
-      classQb.andWhere("session.teacherId = :teacherId", { teacherId });
-    }
 
     if (subject?.trim()) {
       classQb.andWhere("LOWER(TRIM(class.subject)) = LOWER(:subject)", {

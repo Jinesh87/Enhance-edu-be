@@ -1,5 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
 import {
+  resolveIncomingFiles,
+  respondWithStoredFile,
+} from "../../../common/storage/object-storage.js";
+import {
   studentClassesService,
   type UploadedHomeworkAnswerFile,
 } from "./student-classes.service.js";
@@ -98,12 +102,11 @@ class StudentClassesController {
         req.params.homeworkId as string,
         req.params.attachmentId as string,
       );
-      res.setHeader("Content-Type", attachment.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${encodeURIComponent(attachment.originalName)}"`,
-      );
-      res.status(200).send(attachment.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: attachment.storageKey,
+        mimeType: attachment.mimeType,
+        originalName: attachment.originalName,
+      });
     } catch (error) {
       next(error);
     }
@@ -131,18 +134,15 @@ class StudentClassesController {
     next: NextFunction,
   ) => {
     try {
-      const files = Array.isArray(req.files) ? req.files : [];
+      const uploads = resolveIncomingFiles(
+        Array.isArray(req.files) ? req.files : undefined,
+        req.body,
+        req.user!.id,
+      ) as UploadedHomeworkAnswerFile[];
       const result = await studentClassesService.uploadHomeworkFiles(
         req.user!.id,
         req.params.homeworkId as string,
-        files.map(
-          (file): UploadedHomeworkAnswerFile => ({
-            buffer: file.buffer,
-            originalName: file.originalname,
-            mimeType: file.mimetype,
-            size: file.size,
-          }),
-        ),
+        uploads,
       );
       res.status(201).json(result);
     } catch (error) {
@@ -199,12 +199,11 @@ class StudentClassesController {
         req.params.homeworkId as string,
         req.params.fileId as string,
       );
-      res.setHeader("Content-Type", file.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${encodeURIComponent(file.originalName)}"`,
-      );
-      res.status(200).send(file.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: file.storageKey,
+        mimeType: file.mimeType,
+        originalName: file.originalName,
+      });
     } catch (error) {
       next(error);
     }
@@ -232,18 +231,15 @@ class StudentClassesController {
     next: NextFunction,
   ) => {
     try {
-      const files = Array.isArray(req.files) ? req.files : [];
+      const uploads = resolveIncomingFiles(
+        Array.isArray(req.files) ? req.files : undefined,
+        req.body,
+        req.user!.id,
+      ) as UploadedExamFile[];
       const result = await studentEntranceExamsService.uploadAssessmentFiles(
         req.user!.id,
         req.params.assessmentId as string,
-        files.map(
-          (file): UploadedExamFile => ({
-            buffer: file.buffer,
-            originalName: file.originalname,
-            mimeType: file.mimetype,
-            size: file.size,
-          }),
-        ),
+        uploads,
       );
       res.status(201).json(result);
     } catch (error) {
@@ -291,16 +287,15 @@ class StudentClassesController {
   ) => {
     try {
       const resource = await assessmentResourceService.getForStudent(
-        req.user!.id,
         req.params.assessmentId as string,
         req.params.resourceId as string,
+        req.user!.id,
       );
-      res.setHeader("Content-Type", resource.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${encodeURIComponent(resource.originalName)}"`,
-      );
-      res.status(200).send(resource.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: resource.storageKey,
+        mimeType: resource.mimeType,
+        originalName: resource.originalName,
+      });
     } catch (error) {
       next(error);
     }
@@ -317,12 +312,11 @@ class StudentClassesController {
         String(req.params.resourceId),
         req.user!.id,
       );
-      res.setHeader("Content-Type", resource.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${encodeURIComponent(resource.originalName)}"`,
-      );
-      res.status(200).send(resource.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: resource.storageKey,
+        mimeType: resource.mimeType,
+        originalName: resource.originalName,
+      });
     } catch (error) {
       next(error);
     }
