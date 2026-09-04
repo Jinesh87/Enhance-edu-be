@@ -10,6 +10,7 @@ import {
   ensureHomeworkSchema,
   ensureInstitutionSettingSchema,
   ensureClassScheduleIndexes,
+  ensureNotificationSchema,
   ensureEnquiryConstraints,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
@@ -31,6 +32,7 @@ async function bootstrap() {
   await ensureInstitutionSettingSchema();
   await ensureHomeworkSchema();
   await ensureClassScheduleIndexes();
+  await ensureNotificationSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");
   await seedEnquiryCatalogue();

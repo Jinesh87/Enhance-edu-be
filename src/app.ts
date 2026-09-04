@@ -32,6 +32,7 @@ import guardianPortalRouter from "./modules/guardian/portal/guardian-portal.rout
 import studentClassesRouter from "./modules/student/classes/student-classes.routes.js";
 import studentEntranceExamsRouter from "./modules/student/entrance-exams/student-entrance-exams.routes.js";
 import storageRouter from "./modules/storage/storage.routes.js";
+import notificationsRouter from "./modules/notifications/notifications.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -93,6 +94,7 @@ app.use("/api/student/entrance-exams", studentEntranceExamsRouter);
 app.use("/api/storage", storageRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
 app.use("/api/guardian/portal-settings", guardianPortalRouter);
+app.use("/api/notifications", notificationsRouter);
 
 app.use(errorHandler);
 
