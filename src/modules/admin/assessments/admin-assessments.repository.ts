@@ -1,4 +1,4 @@
-import { ILike, In } from "typeorm";
+import { Between, ILike, In, LessThanOrEqual, MoreThanOrEqual } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   Assessment,
@@ -17,13 +17,18 @@ export class AdminAssessmentsRepository {
     termId?: string;
     subject?: string;
     yearGroup?: string;
+    teacherId?: string;
+    fromDate?: string;
+    toDate?: string;
     kind?: "SCHOOL" | "ENTRANCE" | "ALL";
     status?: AssessmentStatus | "ACTIVE" | "OPEN";
+    includeStudents?: boolean;
   }): Promise<{ assessments: Assessment[]; total: number }> {
     const where: Record<string, unknown> = {};
     if (filters.termId) where.termId = filters.termId;
     if (filters.subject) where.subject = filters.subject;
     if (filters.yearGroup) where.yearGroup = filters.yearGroup;
+    if (filters.teacherId) where.teacherId = filters.teacherId;
     if (filters.kind && filters.kind !== "ALL") where.kind = filters.kind;
     if (filters.status === "ACTIVE") {
       where.status = In(["SCHEDULED", "LIVE"]);
@@ -35,6 +40,15 @@ export class AdminAssessmentsRepository {
     if (filters.search) {
       where.name = ILike(`%${filters.search}%`);
     }
+    if (filters.fromDate && filters.toDate) {
+      where.assessmentDate = Between(filters.fromDate, filters.toDate);
+    } else if (filters.fromDate) {
+      where.assessmentDate = MoreThanOrEqual(filters.fromDate);
+    } else if (filters.toDate) {
+      where.assessmentDate = LessThanOrEqual(filters.toDate);
+    }
+
+    const includeStudents = filters.includeStudents !== false;
 
     const [assessments, total] = await this.assessments.findAndCount({
       where,
@@ -43,7 +57,7 @@ export class AdminAssessmentsRepository {
         term: { academicYear: true, yearLevel: true },
         classroom: true,
         teacher: true,
-        students: { student: true },
+        ...(includeStudents ? { students: { student: true } } : {}),
       },
       order: { assessmentDate: "DESC", startTime: "ASC", createdAt: "DESC" },
       skip:
