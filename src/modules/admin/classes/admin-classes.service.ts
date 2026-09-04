@@ -694,7 +694,11 @@ export class AdminClassesService {
     if (input.teacherId !== undefined) {
       const previousTeacher = cls.teacher ?? null;
       // Keep historical teacher on live/ended occurrences before changing the class.
-      await this.freezeTeacherOnLockedSessions(cls.id, previousTeacher);
+      await this.freezeTeacherOnLockedSessions(
+        cls.id,
+        previousTeacher,
+        input.teacherId || null,
+      );
 
       if (input.applyTeacherToSessionIds !== undefined) {
         await this.applySelectiveTeacherToUpcomingSessions(
@@ -857,7 +861,10 @@ export class AdminClassesService {
     teacherId?: string;
     subject?: string;
   }) {
-    const qb = AppDataSource.getRepository(Session)
+    const sessionRepo = AppDataSource.getRepository(Session);
+    const classRepo = AppDataSource.getRepository(Class);
+
+    const qb = sessionRepo
       .createQueryBuilder("session")
       .innerJoinAndSelect("session.class", "class")
       .leftJoinAndSelect("class.teacher", "classTeacher")
@@ -914,7 +921,128 @@ export class AdminClassesService {
 
     qb.orderBy("session.startAt", "ASC");
 
-    const sessionRows = await qb.getMany();
+    let sessionRows = await qb.getMany();
+
+    // Classes created via bulk schedule may have dayTime but no Session row
+    // (bulk historically skipped past/ended occurrences). Backfill those so
+    // calendar, attendance, and timetables stay consistent.
+    const classQb = classRepo
+      .createQueryBuilder("class")
+      .leftJoinAndSelect("class.teacher", "teacher")
+      .leftJoinAndSelect("class.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("class.classroom", "classroom")
+      .where("class.dayTime IS NOT NULL");
+
+    if (filters?.year != null && !Number.isNaN(filters.year)) {
+      classQb.andWhere("academicYear.year = :year", { year: filters.year });
+    }
+    if (filters?.term?.trim()) {
+      classQb.andWhere("LOWER(term.name) LIKE :term", {
+        term: `%${filters.term.trim().toLowerCase()}%`,
+      });
+    }
+    if (filters?.yearLevel?.trim()) {
+      classQb.andWhere("yearLevel.name = :yearLevel", {
+        yearLevel: filters.yearLevel.trim(),
+      });
+    }
+    if (filters?.teacherId?.trim()) {
+      classQb.andWhere("teacher.id = :teacherId", {
+        teacherId: filters.teacherId.trim(),
+      });
+    }
+    if (filters?.subject?.trim()) {
+      classQb.andWhere("class.subject = :subject", {
+        subject: filters.subject.trim(),
+      });
+    }
+
+    const matchingClasses = await classQb.getMany();
+    const existingKeys = new Set(
+      sessionRows.map(
+        (row) => `${row.classId}|${row.startAt.getTime()}`,
+      ),
+    );
+    // Also skip backfill when any session already exists for the class
+    // (one dayTime occurrence per class in this product model).
+    const classIdsWithSessions = new Set(
+      sessionRows
+        .map((row) => row.classId)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    const fromKey =
+      filters?.from && /^\d{4}-\d{2}-\d{2}$/.test(filters.from)
+        ? filters.from
+        : null;
+    const toKey =
+      filters?.to && /^\d{4}-\d{2}-\d{2}$/.test(filters.to)
+        ? filters.to
+        : null;
+
+    const toBackfill: Session[] = [];
+    for (const cls of matchingClasses) {
+      if (!cls.id || classIdsWithSessions.has(cls.id)) continue;
+      const times = parseDayTime(cls.dayTime, cls.timeZone);
+      if (!times) continue;
+
+      const localDate = calendarDateInTimeZone(times.startAt, resolveIanaTimeZone(cls.timeZone));
+      if (fromKey && localDate < fromKey) continue;
+      if (toKey && localDate > toKey) continue;
+
+      const key = `${cls.id}|${times.startAt.getTime()}`;
+      if (existingKeys.has(key)) continue;
+
+      toBackfill.push(
+        sessionRepo.create({
+          classId: cls.id,
+          startAt: times.startAt,
+          endAt: times.endAt,
+          room: cls.room || null,
+          classroomId: cls.classroomId || null,
+          teacherId: cls.teacher?.id || null,
+          gracePeriodMinutes: 25,
+        }),
+      );
+      existingKeys.add(key);
+      classIdsWithSessions.add(cls.id);
+    }
+
+    if (toBackfill.length > 0) {
+      const saved = await sessionRepo.save(toBackfill);
+      const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
+      const classStudentRepo = AppDataSource.getRepository(ClassStudent);
+      const nowMs = Date.now();
+
+      for (const session of saved) {
+        const status = sessionStatus(session.startAt, session.endAt, nowMs);
+        // Only seed attendance for sessions that still matter operationally.
+        if (status !== "UPCOMING" && status !== "LIVE") continue;
+        if (!session.classId) continue;
+
+        const enrolments = await classStudentRepo.find({
+          where: { classId: session.classId },
+        });
+        for (const enrol of enrolments) {
+          if (!isStudentAccountableForSession(session, enrol.createdAt)) {
+            continue;
+          }
+          await attendanceRepo.save(
+            attendanceRepo.create({
+              sessionId: session.id,
+              studentId: enrol.studentId,
+              status: AttendanceStatus.PENDING,
+              scannedAt: null,
+            }),
+          );
+        }
+      }
+
+      // Re-load with relations so response matches normal calendar rows.
+      sessionRows = await qb.getMany();
+    }
 
     return {
       sessions: applySequentialLessonLabels(
@@ -1630,8 +1758,8 @@ export class AdminClassesService {
   private async freezeTeacherOnLockedSessions(
     classId: string,
     previousTeacher: { id: string; fullName: string } | null,
+    newTeacherId: string | null = null,
   ) {
-    if (!previousTeacher) return;
     const sessionRepo = AppDataSource.getRepository(Session);
     const rows = await sessionRepo.find({
       where: { classId, assessmentId: IsNull() },
@@ -1641,9 +1769,21 @@ export class AdminClassesService {
     for (const row of rows) {
       const status = sessionStatus(row.startAt, row.endAt, now);
       if (status !== "LIVE" && status !== "ENDED") continue;
-      // Preserve whatever this occurrence already had; otherwise stamp class teacher.
-      if (!row.teacherId) {
-        row.teacherId = previousTeacher.id;
+
+      if (previousTeacher) {
+        // Preserve explicit ownership; otherwise stamp the outgoing teacher.
+        // Never leave locked rows attributed to the incoming teacher.
+        if (!row.teacherId || row.teacherId === newTeacherId) {
+          row.teacherId = previousTeacher.id;
+          await sessionRepo.save(row);
+        }
+        continue;
+      }
+
+      // First teacher assignment: historical rows must not belong to the new teacher.
+      if (newTeacherId && row.teacherId === newTeacherId) {
+        row.teacherId = null;
+        row.teacher = null;
         await sessionRepo.save(row);
       }
     }
