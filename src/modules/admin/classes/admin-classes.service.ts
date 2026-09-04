@@ -26,6 +26,7 @@ import {
   type ClassInput,
 } from "./admin-classes.repository.js";
 import { syncClassRosterFromEnrollments } from "../../shared/classes/sync-class-roster.js";
+import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 import { applySequentialLessonLabels } from "../../../common/utils/session-lesson-labels.js";
 
 function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Date | null {
@@ -295,6 +296,32 @@ export class AdminClassesService {
     }
   }
 
+  private durationMinutesFromDayTime(dayTime: string | null): number {
+    if (!dayTime) return 60;
+    const parts = dayTime.split(" ");
+    const startTimeStr = parts[0] || "";
+    const tIndex = startTimeStr.indexOf("T");
+    if (tIndex === -1) return 60;
+    const timeStr = startTimeStr.slice(tIndex + 1, tIndex + 6);
+    const endTimeStr = parts[1] || "";
+    if (!endTimeStr) return 60;
+    const [sh, sm] = timeStr.split(":").map(Number);
+    const [eh, em] = endTimeStr.split(":").map(Number);
+    const diff = eh * 60 + em - (sh * 60 + sm);
+    return diff > 0 ? diff : 60;
+  }
+
+  private listTermLabel(cls: Class): string {
+    if (cls.term?.academicYear && cls.term.yearLevel) {
+      return `${cls.term.name} · ${cls.term.academicYear.year} · ${cls.term.yearLevel.name}`;
+    }
+    return cls.term?.name ?? cls.termName ?? "Term 3 2026";
+  }
+
+  /**
+   * Classes table list. Prefer summaryOnly=true — returns subject/term rows only.
+   * Full class DTOs are returned only when summaryOnly is false (edit/create flows).
+   */
   async list(filters?: {
     page?: number;
     limit?: number;
@@ -302,43 +329,16 @@ export class AdminClassesService {
     year?: number;
     yearLevel?: string;
     term?: string;
+    summaryOnly?: boolean;
   }) {
-    const { classes } = await this.repo.findAll();
+    const summaryOnly = filters?.summaryOnly === true;
+    const filteredClasses = await this.repo.findFiltered({
+      search: filters?.search,
+      year: filters?.year,
+      yearLevel: filters?.yearLevel,
+      term: filters?.term,
+    });
 
-    let filteredClasses = classes;
-    if (filters?.search) {
-      const searchNeedle = filters.search.trim().toLowerCase();
-      filteredClasses = filteredClasses.filter((c) => {
-        const subject = (c.subject || "").toLowerCase();
-        return subject.includes(searchNeedle);
-      });
-    }
-
-    if (filters?.year) {
-      filteredClasses = filteredClasses.filter((c) => {
-        return c.term?.academicYear?.year === filters.year;
-      });
-    }
-
-    if (filters?.yearLevel) {
-      const lvlNeedle = filters.yearLevel.trim().toLowerCase();
-      filteredClasses = filteredClasses.filter((c) => {
-        const lvlName = c.term?.yearLevel?.name?.toLowerCase() || "";
-        return lvlName.includes(lvlNeedle);
-      });
-    }
-
-    if (filters?.term) {
-      const termNeedle = filters.term.trim().toLowerCase();
-      filteredClasses = filteredClasses.filter((c) => {
-        const tName = c.term?.name?.toLowerCase() || "";
-        return tName.includes(termNeedle);
-      });
-    }
-
-    await Promise.all(
-      filteredClasses.map((cls) => syncClassRosterFromEnrollments(cls)),
-    );
     const studentsByClassId = await this.repo.findStudentIdsByClassIds(
       filteredClasses.map((item) => item.id),
     );
@@ -348,6 +348,10 @@ export class AdminClassesService {
       {
         subject: string;
         term: string;
+        termId: string | null;
+        yearGroup: string | null;
+        academicYear: number | null;
+        classIds: string[];
         sessionCount: number;
         totalDurationMinutes: number;
         teachers: Set<string>;
@@ -358,40 +362,24 @@ export class AdminClassesService {
         endDate: Date | null;
       }
     >();
+
     for (const c of filteredClasses) {
       const subjectName = c.subject || "General";
-      const termName = c.term
-        ? c.term.academicYear && c.term.yearLevel
-          ? `${c.term.name} · ${c.term.academicYear.year} · ${c.term.yearLevel.name}`
-          : c.term.name
-        : (c.termName ?? "Term 3 2026");
+      const termName = this.listTermLabel(c);
+      const yearGroup = c.term?.yearLevel?.name ?? null;
+      const academicYear = c.term?.academicYear?.year ?? null;
       const key = `${subjectName}|${termName}`;
-
-      let durationMins = 60;
-      if (c.dayTime) {
-        const parts = c.dayTime.split(" ");
-        if (parts.length > 0) {
-          const startTimeStr = parts[0];
-          const tIndex = startTimeStr.indexOf("T");
-          if (tIndex !== -1) {
-            const timeStr = startTimeStr.slice(tIndex + 1, tIndex + 6);
-            const endTimeStr = parts[1] || "";
-            if (endTimeStr) {
-              const [sh, sm] = timeStr.split(":").map(Number);
-              const [eh, em] = endTimeStr.split(":").map(Number);
-              const diff = eh * 60 + em - (sh * 60 + sm);
-              if (diff > 0) durationMins = diff;
-            }
-          }
-        }
-      }
-
+      const durationMins = this.durationMinutesFromDayTime(c.dayTime);
       const sessionDate = parseDayTimeStart(c.dayTime, c.timeZone);
 
       if (!groupedMap.has(key)) {
         groupedMap.set(key, {
           subject: subjectName,
           term: termName,
+          termId: c.term?.id ?? null,
+          yearGroup,
+          academicYear,
+          classIds: [],
           sessionCount: 0,
           totalDurationMinutes: 0,
           teachers: new Set<string>(),
@@ -404,16 +392,14 @@ export class AdminClassesService {
       }
 
       const group = groupedMap.get(key);
-      if (!group) {
-        continue;
-      }
+      if (!group) continue;
+
+      group.classIds.push(c.id);
       group.sessionCount += 1;
       group.totalDurationMinutes += durationMins;
-      if (c.teacher?.fullName) {
-        group.teachers.add(c.teacher.fullName);
-      }
-      const enrolledStudentIds = studentsByClassId.get(c.id) ?? [];
-      for (const studentId of enrolledStudentIds) {
+      if (!group.termId && c.term?.id) group.termId = c.term.id;
+      if (c.teacher?.fullName) group.teachers.add(c.teacher.fullName);
+      for (const studentId of studentsByClassId.get(c.id) ?? []) {
         group.studentIds.add(studentId);
       }
       if (sessionDate) {
@@ -429,6 +415,10 @@ export class AdminClassesService {
     const summaries = Array.from(groupedMap.values()).map((g) => ({
       subject: g.subject,
       term: g.term,
+      termId: g.termId,
+      yearGroup: g.yearGroup,
+      academicYear: g.academicYear,
+      classIds: g.classIds,
       sessionCount: g.sessionCount,
       totalDurationMinutes: g.totalDurationMinutes,
       teachers: Array.from(g.teachers),
@@ -444,6 +434,10 @@ export class AdminClassesService {
     if (filters?.page && filters?.limit) {
       const start = (filters.page - 1) * filters.limit;
       paginated = summaries.slice(start, start + filters.limit);
+    }
+
+    if (summaryOnly) {
+      return { classes: [] as ReturnType<typeof toClassDto>[], summaries: paginated, total };
     }
 
     const graceByClassId = await this.repo.findGraceMinutesByClassIds(
@@ -578,6 +572,9 @@ export class AdminClassesService {
           where: { classId: saved.id },
         });
         for (const enrol of enrolments) {
+          if (!isStudentAccountableForSession(newSession, enrol.createdAt)) {
+            continue;
+          }
           await attendanceRepo.save(
             attendanceRepo.create({
               sessionId: newSession.id,

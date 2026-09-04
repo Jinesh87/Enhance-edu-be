@@ -5,8 +5,7 @@ import { UserRole } from "../../../common/constants/roles.js";
 import {
   buildSessionResourceKey,
   deleteObject,
-  getObjectBuffer,
-  putObject,
+  storeUploadedObject,
 } from "../../../common/storage/object-storage.js";
 import {
   ClassStudent,
@@ -15,9 +14,11 @@ import {
   SessionResource,
 } from "../../../entities/index.js";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
+import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 
 export type UploadedSessionResource = {
-  buffer: Buffer;
+  buffer?: Buffer;
+  directStorageKey?: string;
   originalName: string;
   mimeType: string;
   size: number;
@@ -120,13 +121,23 @@ export class SessionLessonService {
 
   private async assertStudentEnrolled(sessionId: string, studentUserId: string) {
     const session = await this.loadSession(sessionId);
+    if (!session.classId) {
+      throw new AppError(
+        403,
+        "You are not enrolled in this class",
+        "NOT_ENROLLED",
+      );
+    }
     const enrolled = await this.classStudents.findOne({
       where: {
-        classId: session.classId!,
+        classId: session.classId,
         studentId: studentUserId,
       },
     });
-    if (!enrolled) {
+    if (
+      !enrolled ||
+      !isStudentAccountableForSession(session, enrolled.createdAt)
+    ) {
       throw new AppError(
         403,
         "You are not enrolled in this class",
@@ -234,10 +245,12 @@ export class SessionLessonService {
         resourceId,
         fileName: upload.originalName,
       });
-      await putObject({
-        key,
-        body: upload.buffer,
+      await storeUploadedObject({
+        finalKey: key,
         contentType: upload.mimeType,
+        buffer: upload.buffer,
+        directStorageKey: upload.directStorageKey,
+        byteSize: upload.size,
       });
       created.push(
         this.resources.create({
@@ -342,9 +355,9 @@ export class SessionLessonService {
       throw new AppError(404, "Resource not found", "RESOURCE_NOT_FOUND");
     }
     return {
+      storageKey: resource.storageKey,
       originalName: resource.originalName,
       mimeType: resource.mimeType,
-      buffer: await getObjectBuffer(resource.storageKey),
     };
   }
 

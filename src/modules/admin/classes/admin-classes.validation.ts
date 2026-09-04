@@ -1,5 +1,15 @@
 import Joi from "joi";
 
+export const listClassesQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1),
+  limit: Joi.number().integer().min(1).max(500),
+  search: Joi.string().trim().max(120).allow("", null),
+  year: Joi.number().integer().min(2000).max(2100),
+  yearLevel: Joi.string().trim().max(80).allow("", null),
+  term: Joi.string().trim().max(120).allow("", null),
+  summaryOnly: Joi.boolean().truthy("true").falsy("false"),
+});
+
 export const createClassSchema = Joi.object({
   name: Joi.string().trim().max(120).allow(null, ""),
   code: Joi.string().trim().min(2).max(60).required(),

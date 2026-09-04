@@ -209,10 +209,8 @@ export class TeacherClassService {
     const subject = options.subject?.trim() || undefined;
     const now = new Date();
 
-    const classIds = (await this.repo.findClassesByTeacherId(teacherId)).map(
-      (cls) => cls.id,
-    );
-
+    // Effective teacher only: do not inherit every past session for classes
+    // this teacher currently owns (those stay with the frozen session.teacherId).
     const qb = this.sessions
       .createQueryBuilder("session")
       .leftJoinAndSelect("session.class", "class")
@@ -221,10 +219,8 @@ export class TeacherClassService {
       .leftJoinAndSelect("session.assessment", "assessment")
       .where("session.endAt < :now", { now })
       .andWhere(
-        classIds.length > 0
-          ? "(class.id IN (:...classIds) OR session.teacherId = :teacherId OR assessment.teacherId = :teacherId)"
-          : "(session.teacherId = :teacherId OR assessment.teacherId = :teacherId)",
-        { classIds, teacherId },
+        "(session.teacherId = :teacherId OR (session.teacherId IS NULL AND class.teacherId = :teacherId) OR assessment.teacherId = :teacherId)",
+        { teacherId },
       );
 
     if (subject) {
@@ -344,10 +340,10 @@ export class TeacherClassService {
   }
 
   private teacherOwnsSession(teacherId: string, session: Session): boolean {
-    if (session.teacherId === teacherId) return true;
-    if (session.class?.teacher?.id === teacherId) return true;
     if (session.assessment?.teacherId === teacherId) return true;
-    return false;
+    const effectiveTeacherId =
+      session.teacherId ?? session.class?.teacher?.id ?? null;
+    return effectiveTeacherId === teacherId;
   }
 
   private async mapSessionsWithEnrollment(sessions: Session[]) {

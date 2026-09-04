@@ -5,20 +5,24 @@ import { adminClassesService } from "./admin-classes.service.js";
 class AdminClassesController {
   list = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const page = req.query.page ? Number(req.query.page) : undefined;
-      const limit = req.query.limit ? Number(req.query.limit) : undefined;
-      const search = req.query.search ? String(req.query.search) : undefined;
-      const year = req.query.year ? Number(req.query.year) : undefined;
-      const yearLevel = req.query.yearLevel ? String(req.query.yearLevel) : undefined;
-      const term = req.query.term ? String(req.query.term) : undefined;
+      const query = req.query as {
+        page?: number;
+        limit?: number;
+        search?: string;
+        year?: number;
+        yearLevel?: string;
+        term?: string;
+        summaryOnly?: boolean;
+      };
 
       const { classes, summaries, total } = await adminClassesService.list({
-        page,
-        limit,
-        search,
-        year,
-        yearLevel,
-        term,
+        page: query.page,
+        limit: query.limit,
+        search: query.search,
+        year: query.year,
+        yearLevel: query.yearLevel,
+        term: query.term,
+        summaryOnly: query.summaryOnly === true,
       });
       res.setHeader("Cache-Control", "no-store");
       res.status(200).json({ classes, summaries, total });

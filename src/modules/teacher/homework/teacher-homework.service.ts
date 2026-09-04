@@ -5,8 +5,7 @@ import { AppError } from "../../../common/errors/AppError.js";
 import {
   buildHomeworkAttachmentKey,
   deleteObject,
-  getObjectBuffer,
-  putObject,
+  storeUploadedObject,
 } from "../../../common/storage/object-storage.js";
 import {
   termYearLevelNumber,
@@ -46,7 +45,8 @@ export type UpdateTeacherHomeworkInput = {
 };
 
 export type UploadedHomeworkAttachment = {
-  buffer: Buffer;
+  buffer?: Buffer;
+  directStorageKey?: string;
   originalName: string;
   mimeType: string;
   size: number;
@@ -471,8 +471,9 @@ export class TeacherHomeworkService {
     }
 
     return {
-      ...attachment,
-      buffer: await getObjectBuffer(attachment.storageKey),
+      storageKey: attachment.storageKey,
+      mimeType: attachment.mimeType,
+      originalName: attachment.originalName,
     };
   }
 
@@ -671,8 +672,9 @@ export class TeacherHomeworkService {
     }
 
     return {
-      ...file,
-      buffer: await getObjectBuffer(file.storageKey),
+      storageKey: file.storageKey,
+      mimeType: file.mimeType,
+      originalName: file.originalName,
     };
   }
 
@@ -842,10 +844,12 @@ export class TeacherHomeworkService {
         fileName: upload.originalName,
       });
       try {
-        await putObject({
-          key,
-          body: upload.buffer,
+        await storeUploadedObject({
+          finalKey: key,
           contentType: upload.mimeType,
+          buffer: upload.buffer,
+          directStorageKey: upload.directStorageKey,
+          byteSize: upload.size,
         });
         attachment.storageKey = key;
         await this.attachments.save(attachment);

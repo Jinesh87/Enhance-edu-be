@@ -1,4 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
+import {
+  resolveIncomingFiles,
+  respondWithStoredFile,
+} from "../../../common/storage/object-storage.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { teacherHomeworkService } from "./teacher-homework.service.js";
 
@@ -46,17 +50,16 @@ class TeacherHomeworkController {
 
   create = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const files = Array.isArray(req.files) ? req.files : [];
+      const uploads = resolveIncomingFiles(
+        Array.isArray(req.files) ? req.files : undefined,
+        req.body,
+        req.user!.id,
+      );
       const result = await teacherHomeworkService.create(
         req.user!.id,
         req.user!.role as UserRole,
         req.body,
-        files.map((file) => ({
-          buffer: file.buffer,
-          originalName: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
-        })),
+        uploads,
       );
       res.status(201).json(result);
     } catch (error) {
@@ -66,18 +69,17 @@ class TeacherHomeworkController {
 
   update = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const files = Array.isArray(req.files) ? req.files : [];
+      const uploads = resolveIncomingFiles(
+        Array.isArray(req.files) ? req.files : undefined,
+        req.body,
+        req.user!.id,
+      );
       const result = await teacherHomeworkService.update(
         req.user!.id,
         req.user!.role as UserRole,
         req.params.homeworkId as string,
         req.body,
-        files.map((file) => ({
-          buffer: file.buffer,
-          originalName: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
-        })),
+        uploads,
       );
       res.status(200).json(result);
     } catch (error) {
@@ -110,12 +112,11 @@ class TeacherHomeworkController {
         req.params.homeworkId as string,
         req.params.attachmentId as string,
       );
-      res.setHeader("Content-Type", attachment.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${encodeURIComponent(attachment.originalName)}"`,
-      );
-      res.status(200).send(attachment.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: attachment.storageKey,
+        mimeType: attachment.mimeType,
+        originalName: attachment.originalName,
+      });
     } catch (error) {
       next(error);
     }
@@ -164,12 +165,12 @@ class TeacherHomeworkController {
         req.params.submissionId as string,
         req.params.fileId as string,
       );
-      res.setHeader("Content-Type", file.mimeType);
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${encodeURIComponent(file.originalName)}"`,
-      );
-      res.status(200).send(file.buffer);
+      await respondWithStoredFile(res, {
+        storageKey: file.storageKey,
+        mimeType: file.mimeType,
+        originalName: file.originalName,
+        inline: false,
+      });
     } catch (error) {
       next(error);
     }

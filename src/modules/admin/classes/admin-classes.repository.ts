@@ -22,6 +22,7 @@ import {
   Task,
   Holiday,
 } from "../../../entities/index.js";
+import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 
 export type ClassInput = {
   name?: string;
@@ -63,6 +64,44 @@ export class AdminClassesRepository {
     }
     const [classes, total] = await this.classes.findAndCount(findOptions);
     return { classes, total };
+  }
+
+  /** Filtered class rows for list/summary — relations needed for grouping only. */
+  async findFiltered(filters?: {
+    search?: string;
+    year?: number;
+    yearLevel?: string;
+    term?: string;
+  }): Promise<Class[]> {
+    const qb = this.classes
+      .createQueryBuilder("cls")
+      .leftJoinAndSelect("cls.teacher", "teacher")
+      .leftJoinAndSelect("cls.term", "term")
+      .leftJoinAndSelect("term.academicYear", "academicYear")
+      .leftJoinAndSelect("term.yearLevel", "yearLevel")
+      .leftJoinAndSelect("cls.classroom", "classroom")
+      .orderBy("cls.createdAt", "DESC");
+
+    if (filters?.search?.trim()) {
+      qb.andWhere("LOWER(COALESCE(cls.subject, '')) LIKE :search", {
+        search: `%${filters.search.trim().toLowerCase()}%`,
+      });
+    }
+    if (filters?.year) {
+      qb.andWhere("academicYear.year = :year", { year: filters.year });
+    }
+    if (filters?.yearLevel?.trim()) {
+      qb.andWhere("LOWER(COALESCE(yearLevel.name, '')) LIKE :yearLevel", {
+        yearLevel: `%${filters.yearLevel.trim().toLowerCase()}%`,
+      });
+    }
+    if (filters?.term?.trim()) {
+      qb.andWhere("LOWER(COALESCE(term.name, '')) LIKE :term", {
+        term: `%${filters.term.trim().toLowerCase()}%`,
+      });
+    }
+
+    return qb.getMany();
   }
 
   async findById(id: string): Promise<Class | null> {
@@ -544,6 +583,7 @@ export class AdminClassesRepository {
             where: { classId: s.classId },
           });
           for (const enrol of enrolments) {
+            if (!isStudentAccountableForSession(s, enrol.createdAt)) continue;
             const existing = await attendanceRepo.findOne({
               where: { sessionId: s.id, studentId: enrol.studentId },
             });

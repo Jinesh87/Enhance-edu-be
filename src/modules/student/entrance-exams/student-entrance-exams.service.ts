@@ -18,7 +18,7 @@ import {
 import {
   buildAssessmentSubmissionKey,
   deleteObject,
-  putObject,
+  storeUploadedObject,
 } from "../../../common/storage/object-storage.js";
 import { enqueueOcrJob } from "../../../common/queues/ocr-queue.js";
 import {
@@ -26,7 +26,8 @@ import {
 } from "../../admin/assessments/assessment-session-sync.service.js";
 
 export type UploadedExamFile = {
-  buffer: Buffer;
+  buffer?: Buffer;
+  directStorageKey?: string;
   originalName: string;
   mimeType: string;
   size: number;
@@ -520,10 +521,12 @@ class StudentEntranceExamsService {
         submissionId: submission.id,
         fileName: upload.originalName,
       });
-      await putObject({
-        key,
-        body: upload.buffer,
+      await storeUploadedObject({
+        finalKey: key,
         contentType: upload.mimeType,
+        buffer: upload.buffer,
+        directStorageKey: upload.directStorageKey,
+        byteSize: upload.size,
       });
 
       const row = await this.files.save(

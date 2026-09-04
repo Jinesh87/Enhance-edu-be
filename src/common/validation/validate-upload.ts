@@ -323,3 +323,26 @@ export async function assertValidUploadBuffer(input: ValidateUploadInput) {
   }
   return result.mimeType;
 }
+
+/** Metadata-only check for presigned (direct) uploads — no buffer available yet. */
+export function assertPresignUploadMeta(input: {
+  originalName: string;
+  mimeType: string;
+  size?: number;
+}): { mimeType: string } {
+  const nameCheck = validateFilename(input.originalName);
+  if (nameCheck && !nameCheck.valid) {
+    throw new AppError(400, nameCheck.error, "INVALID_UPLOAD");
+  }
+  const mime = (input.mimeType || "").toLowerCase().trim();
+  if (isBlockedMime(mime) || !ALLOWED_MIME_TYPES.has(mime)) {
+    throw new AppError(400, UNSUPPORTED_TYPE_MESSAGE, "INVALID_UPLOAD");
+  }
+  if (input.size != null) {
+    const sizeCheck = validateSize(input.size, mime);
+    if (!sizeCheck.valid) {
+      throw new AppError(400, sizeCheck.error, "INVALID_UPLOAD");
+    }
+  }
+  return { mimeType: mime };
+}

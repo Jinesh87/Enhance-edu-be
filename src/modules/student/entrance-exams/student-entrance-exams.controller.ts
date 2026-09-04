@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { resolveIncomingFiles } from "../../../common/storage/object-storage.js";
 import { studentEntranceExamsService } from "./student-entrance-exams.service.js";
 
 class StudentEntranceExamsController {
@@ -25,16 +26,15 @@ class StudentEntranceExamsController {
 
   upload = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      const uploads = resolveIncomingFiles(
+        req.files as Express.Multer.File[] | undefined,
+        req.body,
+        req.user!.id,
+      );
       const data = await studentEntranceExamsService.uploadFiles(
         req.user!.id,
         String(req.params.assessmentId),
-        files.map((file) => ({
-          buffer: file.buffer,
-          originalName: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
-        })),
+        uploads,
       );
       res.status(200).json(data);
     } catch (error) {
