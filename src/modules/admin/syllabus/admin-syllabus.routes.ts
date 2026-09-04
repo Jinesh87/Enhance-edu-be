@@ -71,6 +71,11 @@ adminSyllabusRouter.post(
   upload.array("files", 20),
   adminSyllabusController.addDocuments,
 );
+adminSyllabusRouter.post(
+  "/:id/reindex-coach",
+  validate(syllabusIdParamsSchema, "params"),
+  adminSyllabusController.reindexForCoach,
+);
 adminSyllabusRouter.delete(
   "/:id/documents/:documentId",
   validate(syllabusDocumentParamsSchema, "params"),

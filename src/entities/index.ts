@@ -65,4 +65,7 @@ export * from "./HomeworkSubmissionFile.js";
 export * from "./Syllabus.js";
 export * from "./SyllabusDocument.js";
 export * from "./SyllabusSkill.js";
+export * from "./SyllabusChunk.js";
+export * from "./CoachThread.js";
+export * from "./CoachMessage.js";
 export * from "./Notification.js";

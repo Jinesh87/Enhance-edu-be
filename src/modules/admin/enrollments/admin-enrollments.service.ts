@@ -29,6 +29,10 @@ import type { EnrollmentSnapshot } from "../../../entities/PendingEnrollment.js"
 import { emailService } from "../../email/email.service.js";
 import type { EmailAttachment, InvitationEnrollmentDetails } from "../../email/email.service.js";
 import {
+  notifyStudentUsers,
+  notifyUsers,
+} from "../../notifications/domain-notifications.js";
+import {
   enrollmentTimetableService,
   type TimetableEnrollmentInput,
 } from "../../shared/timetable/enrollment-timetable.service.js";
@@ -636,6 +640,13 @@ export class AdminEnrollmentsService {
         );
       }
 
+      void this.notifyEnrollmentAccepted({
+        pending,
+        student: result.student,
+        enrollmentId: result.enrollment.id,
+        guardianName: guardian.fullName,
+      });
+
       return result;
     }
 
@@ -682,6 +693,13 @@ export class AdminEnrollmentsService {
         pending.termId,
       ]);
     }
+
+    void this.notifyEnrollmentAccepted({
+      pending,
+      student: result.student,
+      enrollmentId: result.enrollment.id,
+      guardianName: guardian.fullName,
+    });
 
     return result;
   }
@@ -1623,6 +1641,13 @@ export class AdminEnrollmentsService {
     pending.fulfilledEnrollmentId = enrollment.id;
     await this.pendingEnrollments.save(pending);
 
+    void this.notifyEnrollmentAccepted({
+      pending,
+      student: enrollment.student,
+      enrollmentId: enrollment.id,
+      guardianName: pending.guardian?.fullName ?? "Guardian",
+    });
+
     return { enrollment, student: enrollment.student };
   }
 
@@ -1830,6 +1855,61 @@ export class AdminEnrollmentsService {
     );
 
     return { invitationToken, emailSent: true as const };
+  }
+
+  private async notifyEnrollmentAccepted(input: {
+    pending: PendingEnrollment;
+    student:
+      | Pick<Student, "id" | "fullName">
+      | { id: string; fullName: string; userId?: string | null }
+      | null
+      | undefined;
+    enrollmentId: string;
+    guardianName: string;
+  }) {
+    const studentName =
+      input.student?.fullName?.trim() ||
+      input.pending.studentFullName.trim() ||
+      "Student";
+    const isModification = Boolean(input.pending.replacesEnrollmentId);
+    const adminTitle = isModification
+      ? "Enrolment change accepted"
+      : "Enrolment accepted";
+    const adminBody = `${input.guardianName} accepted ${
+      isModification ? "an enrolment change" : "enrolment"
+    } for ${studentName}.`;
+
+    const adminId = input.pending.createdByUserId;
+    if (adminId) {
+      await notifyUsers([
+        {
+          userId: adminId,
+          type: "ENROLLMENT_ACCEPTED",
+          title: adminTitle,
+          body: adminBody,
+          data: {
+            enrollmentId: input.enrollmentId,
+            pendingEnrollmentId: input.pending.id,
+            studentId: input.student?.id ?? input.pending.fulfilledStudentId,
+            href: `/admin/enrolments/${input.enrollmentId}`,
+          },
+        },
+      ]);
+    }
+
+    if (input.student?.id) {
+      await notifyStudentUsers([input.student.id], () => ({
+        type: "ENROLLMENT_ACCEPTED",
+        title: isModification ? "Your enrolment was updated" : "You're enrolled",
+        body: isModification
+          ? `${input.guardianName} accepted your enrolment update.`
+          : `${input.guardianName} accepted your enrolment.`,
+        data: {
+          enrollmentId: input.enrollmentId,
+          href: "/student",
+        },
+      }));
+    }
   }
 }
 

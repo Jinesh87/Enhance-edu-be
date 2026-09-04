@@ -24,6 +24,10 @@ import {
   TeacherSubject,
   Term,
 } from "../../../entities/index.js";
+import {
+  homeworkNotificationPayload,
+  notifyStudentUsers,
+} from "../../notifications/domain-notifications.js";
 
 export type CreateTeacherHomeworkInput = {
   title: string;
@@ -328,6 +332,15 @@ export class TeacherHomeworkService {
       await this.homework.remove(homework);
       throw error;
     }
+
+    void notifyStudentUsers(studentIds, () =>
+      homeworkNotificationPayload({
+        homeworkId: homework.id,
+        title: homework.title,
+        subjectName: subject.name,
+        dueDate: String(homework.dueDate).slice(0, 10),
+      }),
+    );
 
     const saved = await this.homework.findOneOrFail({
       where: { id: homework.id },

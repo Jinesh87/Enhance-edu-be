@@ -16,6 +16,7 @@ import {
   Term,
   YearLevel,
 } from "../../../entities/index.js";
+import { syllabusIngestService } from "../../coach/syllabus-ingest.service.js";
 
 export type SyllabusSkillInput = {
   name: string;
@@ -267,6 +268,7 @@ export class AdminSyllabusService {
       recordLabel: dto.title,
       after: syllabusSnapshot(saved),
     });
+    syllabusIngestService.scheduleReindex(dto.id);
     return dto;
   }
 
@@ -339,6 +341,7 @@ export class AdminSyllabusService {
       before: diff.before ?? before,
       after: diff.after ?? syllabusSnapshot(saved),
     });
+    syllabusIngestService.scheduleReindex(dto.id);
     return dto;
   }
 
@@ -351,6 +354,7 @@ export class AdminSyllabusService {
     }
 
     await this.syllabi.remove(syllabus);
+    await syllabusIngestService.deleteChunksForSyllabus(id).catch(() => undefined);
     await writeAuditLog({
       actorUserId: actorId,
       action: "DELETED",
@@ -398,6 +402,7 @@ export class AdminSyllabusService {
         });
         document.storageKey = key;
         await this.documents.save(document);
+        syllabusIngestService.scheduleIndexDocument(document.id);
       } catch (error) {
         await this.documents.remove(document);
         throw error;
@@ -417,6 +422,9 @@ export class AdminSyllabusService {
     }
 
     await deleteObject(document.storageKey).catch(() => undefined);
+    await syllabusIngestService
+      .deleteChunksForDocument(document.id)
+      .catch(() => undefined);
     await this.documents.remove(document);
 
     await writeAuditLog({
@@ -427,6 +435,12 @@ export class AdminSyllabusService {
       recordLabel: document.originalName,
       before: { syllabusId, originalName: document.originalName },
     });
+  }
+
+  async reindexForCoach(syllabusId: string) {
+    await this.findSyllabusOrThrow(syllabusId);
+    await syllabusIngestService.enqueueReindex(syllabusId);
+    return { queued: true as const };
   }
 
   async getDocumentFile(syllabusId: string, documentId: string) {

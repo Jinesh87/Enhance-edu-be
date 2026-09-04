@@ -46,4 +46,9 @@ export const env = {
     1,
     Number(process.env.OCR_WORKER_CONCURRENCY ?? 3) || 3,
   ),
+  /** Max syllabus ingest (embed) jobs processed in parallel by the worker. */
+  SYLLABUS_INGEST_WORKER_CONCURRENCY: Math.max(
+    1,
+    Number(process.env.SYLLABUS_INGEST_WORKER_CONCURRENCY ?? 2) || 2,
+  ),
 };

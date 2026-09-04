@@ -117,6 +117,17 @@ class AdminSyllabusController {
       next(error);
     }
   };
+
+  reindexForCoach = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await adminSyllabusService.reindexForCoach(
+        req.params.id as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const adminSyllabusController = new AdminSyllabusController();

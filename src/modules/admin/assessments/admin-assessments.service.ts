@@ -29,6 +29,10 @@ import {
   assessmentScheduleWindow,
   assessmentSessionSyncService,
 } from "./assessment-session-sync.service.js";
+import {
+  assessmentNotificationPayload,
+  notifyStudentUsers,
+} from "../../notifications/domain-notifications.js";
 
 export type AssessmentInput = {
   name: string;
@@ -927,6 +931,17 @@ export class AdminAssessmentsService {
     const saved = await this.repo.save(created);
     await this.repo.replaceStudents(saved.id, studentIds);
     await assessmentSessionSyncService.syncFromAssessment(saved.id);
+    if (studentIds.length > 0) {
+      void notifyStudentUsers(studentIds, () =>
+        assessmentNotificationPayload({
+          assessmentId: saved.id,
+          name: saved.name,
+          subject: saved.subject,
+          assessmentDate: String(saved.assessmentDate).slice(0, 10),
+          kind: saved.kind,
+        }),
+      );
+    }
     return this.getById(saved.id);
   }
 
@@ -1091,6 +1106,20 @@ export class AdminAssessmentsService {
     await this.repo.save(assessment);
     await this.repo.replaceStudents(id, studentIds);
     await assessmentSessionSyncService.syncFromAssessment(id);
+
+    const newlyAdded = studentIds.filter((sid) => !existingStudentIds.includes(sid));
+    if (newlyAdded.length > 0) {
+      void notifyStudentUsers(newlyAdded, () =>
+        assessmentNotificationPayload({
+          assessmentId: assessment.id,
+          name: assessment.name,
+          subject: assessment.subject,
+          assessmentDate: String(assessment.assessmentDate).slice(0, 10),
+          kind: assessment.kind,
+        }),
+      );
+    }
+
     return this.getById(id);
   }
 

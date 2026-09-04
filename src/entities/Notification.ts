@@ -14,6 +14,9 @@ import { User } from "./User.js";
 export const NOTIFICATION_TYPES = [
   "SESSION_UPDATED",
   "SESSION_DELETED",
+  "ENROLLMENT_ACCEPTED",
+  "ASSESSMENT_CREATED",
+  "HOMEWORK_CREATED",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

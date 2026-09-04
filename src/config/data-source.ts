@@ -47,10 +47,14 @@ import {
   Syllabus,
   SyllabusDocument,
   SyllabusSkill,
+  SyllabusChunk,
+  CoachThread,
+  CoachMessage,
   Notification,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
+import { logger } from "./logger.js";
 
 function postgresOptions() {
   return {
@@ -475,6 +479,111 @@ export async function ensureEnquiryConstraints() {
   `);
 }
 
+/**
+ * Coach RAG tables + pgvector extension.
+ * Embedding column is managed in SQL (TypeORM has no first-class vector type).
+ * Falls back to embeddingJson (jsonb) when pgvector is unavailable.
+ */
+export async function ensureCoachSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+
+  let hasVector = false;
+  try {
+    await bootstrap.query(`CREATE EXTENSION IF NOT EXISTS vector`);
+    hasVector = true;
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "pgvector unavailable — Coach will use jsonb embeddings (install pgvector/pgvector image for better retrieval)",
+    );
+  }
+
+  const [{ studentsTable, syllabiTable }] = await bootstrap.query(`
+    SELECT
+      to_regclass('public.students') IS NOT NULL AS "studentsTable",
+      to_regclass('public.syllabi') IS NOT NULL AS "syllabiTable"
+  `);
+  if (!studentsTable || !syllabiTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS syllabus_chunks (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "syllabusId" uuid NOT NULL REFERENCES syllabi(id) ON DELETE CASCADE,
+      "subjectId" uuid NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      "documentId" uuid REFERENCES syllabus_documents(id) ON DELETE CASCADE,
+      "sourceType" varchar(40) NOT NULL,
+      "sourceLabel" varchar(120),
+      "chunkIndex" integer NOT NULL,
+      "content" text NOT NULL,
+      "embeddingJson" jsonb,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE syllabus_chunks
+      ADD COLUMN IF NOT EXISTS "embeddingJson" jsonb;
+    CREATE INDEX IF NOT EXISTS "IDX_syllabus_chunks_syllabusId"
+      ON syllabus_chunks ("syllabusId");
+    CREATE INDEX IF NOT EXISTS "IDX_syllabus_chunks_subjectId"
+      ON syllabus_chunks ("subjectId");
+    CREATE INDEX IF NOT EXISTS "IDX_syllabus_chunks_documentId"
+      ON syllabus_chunks ("documentId");
+    CREATE INDEX IF NOT EXISTS "IDX_syllabus_chunks_source"
+      ON syllabus_chunks ("syllabusId", "sourceType", "chunkIndex");
+
+    CREATE TABLE IF NOT EXISTS coach_threads (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "studentId" uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      "title" varchar(200),
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_coach_threads_studentId"
+      ON coach_threads ("studentId");
+
+    CREATE TABLE IF NOT EXISTS coach_messages (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "threadId" uuid NOT NULL REFERENCES coach_threads(id) ON DELETE CASCADE,
+      "role" varchar(20) NOT NULL,
+      "content" text NOT NULL,
+      "sources" jsonb,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_coach_messages_threadId"
+      ON coach_messages ("threadId");
+    CREATE INDEX IF NOT EXISTS "IDX_coach_messages_threadId_createdAt"
+      ON coach_messages ("threadId", "createdAt");
+  `);
+
+  if (hasVector) {
+    await bootstrap.query(`
+      ALTER TABLE syllabus_chunks
+        ADD COLUMN IF NOT EXISTS "embedding" vector(1536);
+    `);
+    try {
+      await bootstrap.query(`
+        CREATE INDEX IF NOT EXISTS "IDX_syllabus_chunks_embedding_hnsw"
+          ON syllabus_chunks
+          USING hnsw ("embedding" vector_cosine_ops);
+      `);
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "Could not create HNSW index on syllabus_chunks.embedding",
+      );
+    }
+  }
+
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -527,6 +636,9 @@ export const AppDataSource = new DataSource({
     Syllabus,
     SyllabusDocument,
     SyllabusSkill,
+    SyllabusChunk,
+    CoachThread,
+    CoachMessage,
     Notification,
   ],
   migrations: [],
