@@ -1,6 +1,18 @@
 import type { Request, Response } from "express";
 import { settingsService } from "./settings.service.js";
 import { logger } from "../../config/logger.js";
+import { openAiUsageService } from "../../common/ai/openai-usage.service.js";
+
+function parseOptionalDate(value: unknown, endOfDay = false): Date | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const raw = value.trim();
+  const date = new Date(raw.length === 10 ? `${raw}T00:00:00.000Z` : raw);
+  if (Number.isNaN(date.getTime())) return undefined;
+  if (endOfDay && raw.length === 10) {
+    date.setUTCHours(23, 59, 59, 999);
+  }
+  return date;
+}
 
 export class SettingsController {
   async getInstitutionSettings(req: Request, res: Response): Promise<void> {
@@ -119,6 +131,31 @@ export class SettingsController {
     );
 
     res.json(config);
+  }
+
+  async getOpenAiUsageSummary(req: Request, res: Response): Promise<void> {
+    const summary = await openAiUsageService.getSummary({
+      from: parseOptionalDate(req.query.from),
+      to: parseOptionalDate(req.query.to, true),
+    });
+    res.json(summary);
+  }
+
+  async listOpenAiUsage(req: Request, res: Response): Promise<void> {
+    const status =
+      req.query.status === "success" || req.query.status === "error"
+        ? req.query.status
+        : undefined;
+    const data = await openAiUsageService.list({
+      from: parseOptionalDate(req.query.from),
+      to: parseOptionalDate(req.query.to, true),
+      feature:
+        typeof req.query.feature === "string" ? req.query.feature : undefined,
+      status,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json(data);
   }
 }
 

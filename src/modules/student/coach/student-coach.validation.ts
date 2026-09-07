@@ -4,3 +4,11 @@ export const sendCoachMessageSchema = Joi.object({
   content: Joi.string().trim().min(1).max(4000).required(),
   threadId: Joi.string().uuid().allow(null).optional(),
 });
+
+export const coachConversationQuerySchema = Joi.object({
+  threadId: Joi.string().uuid().optional(),
+});
+
+export const coachThreadIdParamsSchema = Joi.object({
+  threadId: Joi.string().uuid().required(),
+});

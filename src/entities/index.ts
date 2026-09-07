@@ -69,3 +69,4 @@ export * from "./SyllabusChunk.js";
 export * from "./CoachThread.js";
 export * from "./CoachMessage.js";
 export * from "./Notification.js";
+export * from "./OpenAiUsageLog.js";

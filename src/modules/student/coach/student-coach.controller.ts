@@ -4,7 +4,12 @@ import { studentCoachService } from "./student-coach.service.js";
 class StudentCoachController {
   getConversation = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const data = await studentCoachService.getConversation(req.user!.id);
+      const threadId =
+        typeof req.query.threadId === "string" ? req.query.threadId : null;
+      const data = await studentCoachService.getConversation(
+        req.user!.id,
+        threadId,
+      );
       res.status(200).json(data);
     } catch (error) {
       next(error);
@@ -24,6 +29,18 @@ class StudentCoachController {
     try {
       const data = await studentCoachService.createThread(req.user!.id);
       res.status(201).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteThread = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await studentCoachService.deleteThread(
+        req.user!.id,
+        req.params.threadId as string,
+      );
+      res.status(200).json(data);
     } catch (error) {
       next(error);
     }

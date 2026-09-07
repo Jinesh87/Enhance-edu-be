@@ -11,6 +11,7 @@ import {
   ensureInstitutionSettingSchema,
   ensureClassScheduleIndexes,
   ensureNotificationSchema,
+  ensureOpenAiUsageSchema,
   ensureCoachSchema,
   ensureEnquiryConstraints,
 } from "./config/data-source.js";
@@ -35,6 +36,7 @@ async function bootstrap() {
   await ensureHomeworkSchema();
   await ensureClassScheduleIndexes();
   await ensureNotificationSchema();
+  await ensureOpenAiUsageSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");
   await ensureCoachSchema();

@@ -2,9 +2,9 @@ import { In } from "typeorm";
 import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import {
   CHAT_MODEL,
+  createChatCompletion,
   embedText,
   embeddingToPgVector,
-  getOpenAIClient,
 } from "../../../common/ai/openai-client.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { AppDataSource } from "../../../config/data-source.js";
@@ -135,10 +135,15 @@ export class StudentCoachService {
   private async retrieveChunks(
     question: string,
     syllabusIds: string[],
+    userId?: string,
   ): Promise<RetrievedChunk[]> {
     if (syllabusIds.length === 0) return [];
 
-    const embedding = await embedText(question);
+    const embedding = await embedText(question, {
+      feature: "coach_retrieval",
+      userId,
+      metadata: { syllabusCount: syllabusIds.length },
+    });
 
     if (await hasPgVector()) {
       try {
@@ -207,12 +212,23 @@ export class StudentCoachService {
       }));
   }
 
-  async getConversation(userId: string) {
+  async getConversation(userId: string, threadId?: string | null) {
     const student = await this.requireStudent(userId);
-    const thread = await this.threads.findOne({
-      where: { studentId: student.id },
-      order: { updatedAt: "DESC" },
-    });
+
+    let thread: CoachThread | null = null;
+    if (threadId) {
+      thread = await this.threads.findOne({
+        where: { id: threadId, studentId: student.id },
+      });
+      if (!thread) {
+        throw new AppError(404, "Chat not found", "COACH_THREAD_NOT_FOUND");
+      }
+    } else {
+      thread = await this.threads.findOne({
+        where: { studentId: student.id },
+        order: { updatedAt: "DESC" },
+      });
+    }
 
     if (!thread) {
       return { thread: null, messages: [] as ReturnType<typeof toMessageDto>[] };
@@ -247,6 +263,28 @@ export class StudentCoachService {
     });
     await this.threads.save(thread);
     return { thread: toThreadDto(thread), messages: [] as ReturnType<typeof toMessageDto>[] };
+  }
+
+  async deleteThread(userId: string, threadId: string) {
+    const student = await this.requireStudent(userId);
+    const thread = await this.threads.findOne({
+      where: { id: threadId, studentId: student.id },
+    });
+    if (!thread) {
+      throw new AppError(404, "Chat not found", "COACH_THREAD_NOT_FOUND");
+    }
+
+    await this.threads.remove(thread);
+
+    const next = await this.threads.findOne({
+      where: { studentId: student.id },
+      order: { updatedAt: "DESC" },
+    });
+
+    return {
+      deletedId: threadId,
+      nextThreadId: next?.id ?? null,
+    };
   }
 
   async sendMessage(
@@ -291,7 +329,7 @@ export class StudentCoachService {
     const syllabusIds = await this.enrolledSyllabusIds(student.id);
     let chunks: RetrievedChunk[] = [];
     try {
-      chunks = await this.retrieveChunks(content, syllabusIds);
+      chunks = await this.retrieveChunks(content, syllabusIds, userId);
     } catch (error) {
       throw new AppError(
         503,
@@ -331,22 +369,31 @@ export class StudentCoachService {
     ].join("\n");
 
     const prior = history.filter((msg) => msg.id !== userMessage.id);
-    const openai = await getOpenAIClient();
-    const completion = await openai.chat.completions.create({
-      model: CHAT_MODEL,
-      temperature: 0.3,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...prior.map((msg) => ({
-          role:
-            msg.role === "assistant"
-              ? ("assistant" as const)
-              : ("user" as const),
-          content: msg.content,
-        })),
-        { role: "user" as const, content },
-      ],
-    });
+    const completion = await createChatCompletion(
+      {
+        model: CHAT_MODEL,
+        temperature: 0.3,
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...prior.map((msg) => ({
+            role:
+              msg.role === "assistant"
+                ? ("assistant" as const)
+                : ("user" as const),
+            content: msg.content,
+          })),
+          { role: "user" as const, content },
+        ],
+      },
+      {
+        feature: "coach_chat",
+        userId,
+        metadata: {
+          threadId: thread.id,
+          chunkCount: chunks.length,
+        },
+      },
+    );
 
     const replyText =
       completion.choices[0]?.message?.content?.trim() ||

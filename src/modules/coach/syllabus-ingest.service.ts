@@ -85,7 +85,16 @@ async function insertChunks(chunks: PendingChunk[]) {
 
   for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
     const batch = chunks.slice(i, i + EMBED_BATCH);
-    const embeddings = await embedTexts(batch.map((row) => row.content));
+    const embeddings = await embedTexts(
+      batch.map((row) => row.content),
+      {
+        feature: "syllabus_embed",
+        metadata: {
+          batchSize: batch.length,
+          syllabusId: batch[0]?.syllabusId,
+        },
+      },
+    );
 
     for (let j = 0; j < batch.length; j++) {
       const row = batch[j]!;
