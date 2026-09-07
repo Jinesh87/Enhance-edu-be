@@ -24,3 +24,12 @@ export const updateOpenAiSettingSchema = Joi.object({
 export const updateNotificationSettingSchema = Joi.object({
   sessionChangeEmailNotificationsEnabled: Joi.boolean().required(),
 });
+
+export const openAiUsageQuerySchema = Joi.object({
+  from: Joi.string().trim().max(40).optional(),
+  to: Joi.string().trim().max(40).optional(),
+  feature: Joi.string().trim().max(80).allow("").optional(),
+  status: Joi.string().valid("success", "error").optional(),
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(100).optional(),
+});

@@ -14,6 +14,7 @@ import {
   updateGuardianPortalSettingSchema,
   updateOpenAiSettingSchema,
   updateNotificationSettingSchema,
+  openAiUsageQuerySchema,
 } from "./settings.validation.js";
 import {
   createHolidaySchema,
@@ -102,6 +103,20 @@ router.put(
   "/openai",
   validate(updateOpenAiSettingSchema, "body"),
   (req, res) => void settingsController.updateOpenAiSettings(req, res),
+);
+
+router.get(
+  "/openai/usage/summary",
+  authorize(UserRole.SUPER_ADMIN),
+  validate(openAiUsageQuerySchema, "query"),
+  (req, res) => void settingsController.getOpenAiUsageSummary(req, res),
+);
+
+router.get(
+  "/openai/usage",
+  authorize(UserRole.SUPER_ADMIN),
+  validate(openAiUsageQuerySchema, "query"),
+  (req, res) => void settingsController.listOpenAiUsage(req, res),
 );
 
 router.get(

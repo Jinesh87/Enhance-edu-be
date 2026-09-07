@@ -1,7 +1,7 @@
 services:
   db:
     profiles: [local]
-    image: postgres:18.4-alpine
+    image: pgvector/pgvector:pg18
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-edu}

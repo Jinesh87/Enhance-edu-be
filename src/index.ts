@@ -11,6 +11,8 @@ import {
   ensureInstitutionSettingSchema,
   ensureClassScheduleIndexes,
   ensureNotificationSchema,
+  ensureOpenAiUsageSchema,
+  ensureCoachSchema,
   ensureEnquiryConstraints,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
@@ -20,6 +22,7 @@ import { seedEnquiryCatalogue } from "./seeder/seed-enquiry-catalogue.js";
 import { adminTasksService } from "./modules/admin/tasks/admin-tasks.service.js";
 import { adminAssessmentsService } from "./modules/admin/assessments/admin-assessments.service.js";
 import { startOcrWorker } from "./common/queues/ocr-queue.js";
+import { startSyllabusIngestWorker } from "./common/queues/syllabus-ingest-queue.js";
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
 const ASSESSMENT_STATUS_SYNC_MS = 60_000;
@@ -33,14 +36,17 @@ async function bootstrap() {
   await ensureHomeworkSchema();
   await ensureClassScheduleIndexes();
   await ensureNotificationSchema();
+  await ensureOpenAiUsageSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");
+  await ensureCoachSchema();
   await seedEnquiryCatalogue();
   await ensureEnquiryConstraints();
 
   await connectRedis();
   await seedSuperAdmin();
   startOcrWorker();
+  startSyllabusIngestWorker();
 
   app.listen(port, "0.0.0.0", () => {
     logger.info({ port }, "API listening");
