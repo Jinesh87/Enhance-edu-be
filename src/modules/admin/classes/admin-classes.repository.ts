@@ -574,10 +574,9 @@ export class AdminClassesRepository {
         }
       }
 
-      // Generate upcoming sessions for saved classes
+      // Generate sessions for saved classes (past and upcoming)
       const sessionsToCreate: Session[] = [];
 
-      const nowMs = now.getTime();
       const remainingSessionKeys = new Set<string>();
       const existingSessionsAfterDedup = await sessionRepo.find({
         where: { classId: In(refreshedClasses.map((c) => c.id)), assessmentId: IsNull() },
@@ -608,11 +607,9 @@ export class AdminClassesRepository {
           if (existingStarts?.has(startAt.getTime())) {
             continue;
           }
-          // Only generate occurrences that have not started yet.
-          if (
-            sessionStatus(startAt, endAt, nowMs) === "UPCOMING" &&
-            !remainingSessionKeys.has(sessionKey)
-          ) {
+          // Persist every scheduled occurrence (including past/ended) so
+          // calendar and historical attendance stay consistent.
+          if (!remainingSessionKeys.has(sessionKey)) {
             const termGrace =
               typeof gracePeriodMinutes === "number" ? gracePeriodMinutes : 25;
             sessionsToCreate.push(
@@ -638,8 +635,11 @@ export class AdminClassesRepository {
 
       if (sessionsToCreate.length > 0) {
         const savedSessions = await sessionRepo.save(sessionsToCreate);
+        const nowMsForAttendance = Date.now();
         for (const s of savedSessions) {
           if (!s.classId) continue;
+          const status = sessionStatus(s.startAt, s.endAt, nowMsForAttendance);
+          if (status !== "UPCOMING" && status !== "LIVE") continue;
           const enrolments = await classStudentRepo.find({
             where: { classId: s.classId },
           });

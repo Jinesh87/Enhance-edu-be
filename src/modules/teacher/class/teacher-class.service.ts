@@ -5,6 +5,7 @@ import {
   dayRangeInTimeZone,
 } from "../../../common/utils/timezone.js";
 import { buildScheduleSlotKey } from "../../../common/utils/schedule-slot.js";
+import { sessionStatus } from "../../../common/utils/session-status.js";
 import {
   addCalendarDays,
   buildTeacherUpcomingRanges,
@@ -209,8 +210,8 @@ export class TeacherClassService {
     const subject = options.subject?.trim() || undefined;
     const now = new Date();
 
-    // Effective teacher only: do not inherit every past session for classes
-    // this teacher currently owns (those stay with the frozen session.teacherId).
+    // Past history is ownership-based only. Do not inherit via class.teacherId,
+    // otherwise a newly assigned teacher sees every ended session on that class.
     const qb = this.sessions
       .createQueryBuilder("session")
       .leftJoinAndSelect("session.class", "class")
@@ -219,7 +220,7 @@ export class TeacherClassService {
       .leftJoinAndSelect("session.assessment", "assessment")
       .where("session.endAt < :now", { now })
       .andWhere(
-        "(session.teacherId = :teacherId OR (session.teacherId IS NULL AND class.teacherId = :teacherId) OR assessment.teacherId = :teacherId)",
+        "(session.teacherId = :teacherId OR assessment.teacherId = :teacherId)",
         { teacherId },
       );
 
@@ -341,9 +342,12 @@ export class TeacherClassService {
 
   private teacherOwnsSession(teacherId: string, session: Session): boolean {
     if (session.assessment?.teacherId === teacherId) return true;
-    const effectiveTeacherId =
-      session.teacherId ?? session.class?.teacher?.id ?? null;
-    return effectiveTeacherId === teacherId;
+    if (session.teacherId === teacherId) return true;
+    // Ended sessions are ownership-based only (frozen session.teacherId).
+    // Upcoming/live may still inherit the current class teacher.
+    const status = sessionStatus(session.startAt, session.endAt);
+    if (status === "ENDED") return false;
+    return (session.class?.teacher?.id ?? null) === teacherId;
   }
 
   private async mapSessionsWithEnrollment(sessions: Session[]) {
@@ -416,9 +420,15 @@ export class TeacherClassService {
         : [];
 
     const filteredClassSessions = classSessions.filter((session) => {
-      const sessionTeacherId =
-        session.teacherId ?? session.class?.teacher?.id ?? null;
-      if (sessionTeacherId && sessionTeacherId !== teacherId) return false;
+      const status = sessionStatus(session.startAt, session.endAt);
+      if (status === "ENDED") {
+        // Past occurrences stay with the frozen session teacher only.
+        if (session.teacherId !== teacherId) return false;
+      } else {
+        const sessionTeacherId =
+          session.teacherId ?? session.class?.teacher?.id ?? null;
+        if (sessionTeacherId && sessionTeacherId !== teacherId) return false;
+      }
       if (!subject) return true;
       return (
         session.class?.subject?.trim().toLowerCase() === subject.toLowerCase()
