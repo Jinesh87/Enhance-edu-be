@@ -305,6 +305,7 @@ export async function getTodayTimetable(
     .leftJoinAndSelect("session.class", "class")
     .leftJoinAndSelect("class.term", "term")
     .leftJoinAndSelect("term.yearLevel", "yearLevel")
+    .leftJoinAndSelect("term.academicYear", "academicYear")
     .leftJoinAndSelect("session.teacher", "sessionTeacher")
     .leftJoinAndSelect("class.teacher", "classTeacher")
     .leftJoinAndSelect("session.classroom", "classroom")
@@ -339,6 +340,10 @@ export async function getTodayTimetable(
       className: session.class?.name ?? null,
       subject: session.class?.subject ?? null,
       room: session.classroom?.name ?? session.room ?? session.class?.room ?? null,
+      term: session.class?.term?.name ?? session.class?.termName ?? null,
+      academicYear: session.class?.term?.academicYear
+        ? String(session.class.term.academicYear.year)
+        : null,
       yearLevel: session.class?.term?.yearLevel?.name ?? null,
       teacherAssigned: teacher,
       // Local wall-clock times only — never raw UTC ISO for display.
