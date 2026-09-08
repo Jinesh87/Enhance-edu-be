@@ -68,5 +68,8 @@ export * from "./SyllabusSkill.js";
 export * from "./SyllabusChunk.js";
 export * from "./CoachThread.js";
 export * from "./CoachMessage.js";
+export * from "./AdminAiThread.js";
+export * from "./AdminAiMessage.js";
+export * from "./AdminAiAuditLog.js";
 export * from "./Notification.js";
 export * from "./OpenAiUsageLog.js";

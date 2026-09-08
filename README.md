@@ -58,6 +58,52 @@ Invite body: `fullName`, `preferredName?`, `email`, `mobile?`, `role`, `employme
 
 Invite/resend responses include `invitationToken` for testing without email configured.
 
+## Admin AI
+
+Isolated from the student AI Coach. Read-only tools + draft text only. No shared conversation tables.
+
+### Enable / disable
+
+```
+ADMIN_AI_ENABLED=true
+ADMIN_AI_MAX_MESSAGE_CHARS=4000
+ADMIN_AI_RATE_LIMIT_PER_MIN=20
+ADMIN_AI_RATE_LIMIT_PER_DAY=200
+```
+
+Set `ADMIN_AI_ENABLED=false` to hard-disable. Uses the same OpenAI key as Coach (`institution_settings`).
+
+### Roles
+
+- API: `SUPER_ADMIN` and `OFFICE_STAFF` only (`/api/admin/ai/*`)
+- Tool access for `OFFICE_STAFF` is gated by module permissions (`attendance`, `classes`, `enquiries`, `enrolments`, `syllabus`, `tasks`)
+- `STAFF` / `STUDENT` / `GUARDIAN` cannot call Admin AI endpoints
+
+### Retention
+
+Conversations are soft-deleted (`deletedAt`). Audit events store metadata only (tools, scope, document IDs) — not raw student PII payloads.
+
+### Allowed tools
+
+Configured in `src/modules/admin/ai/tools.ts` (allowlist). Examples: attendance summary, low-attendance classes, timetable, homework, enquiry pipeline, pending enrolments, open tasks, syllabus document search, draft context.
+
+### Known limitations
+
+- No overdue-fee ledger, parent-feedback, or notice publish/send from chat
+- Document mode searches indexed syllabus content only
+- Responses are request/response (not streamed) in v1
+
+### API
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/api/admin/ai/threads` |
+| `POST` | `/api/admin/ai/threads` |
+| `GET` | `/api/admin/ai/threads/:threadId` |
+| `PATCH` | `/api/admin/ai/threads/:threadId` |
+| `DELETE` | `/api/admin/ai/threads/:threadId` |
+| `POST` | `/api/admin/ai/messages` |
+
 ## Email Configuration (Super Admin only)
 
 | Method | Path | Notes |

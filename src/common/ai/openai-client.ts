@@ -86,19 +86,29 @@ export async function createChatCompletion(
     model?: string;
     temperature?: number;
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+    tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
+    tool_choice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
+    max_tokens?: number;
   },
   context?: OpenAiCallContext,
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const model = params.model ?? CHAT_MODEL;
   const feature = context?.feature ?? "chat";
   const client = await getOpenAIClient();
+  const timeoutMs = feature === "admin_ai_chat" ? 90_000 : 60_000;
 
   try {
-    const completion = await client.chat.completions.create({
-      model,
-      temperature: params.temperature,
-      messages: params.messages,
-    });
+    const completion = await client.chat.completions.create(
+      {
+        model,
+        temperature: params.temperature,
+        messages: params.messages,
+        tools: params.tools,
+        tool_choice: params.tool_choice,
+        max_tokens: params.max_tokens,
+      },
+      { timeout: timeoutMs },
+    );
 
     const usage = completion.usage;
     await recordOpenAiUsage({

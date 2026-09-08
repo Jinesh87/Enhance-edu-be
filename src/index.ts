@@ -13,6 +13,7 @@ import {
   ensureNotificationSchema,
   ensureOpenAiUsageSchema,
   ensureCoachSchema,
+  ensureAdminAiSchema,
   ensureEnquiryConstraints,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
@@ -40,6 +41,7 @@ async function bootstrap() {
   await AppDataSource.initialize();
   logger.info("Database connected");
   await ensureCoachSchema();
+  await ensureAdminAiSchema();
   await seedEnquiryCatalogue();
   await ensureEnquiryConstraints();
 

@@ -53,4 +53,19 @@ export const env = {
     1,
     Number(process.env.SYLLABUS_INGEST_WORKER_CONCURRENCY ?? 2) || 2,
   ),
+  /** Admin AI assistant (isolated from student Coach). */
+  ADMIN_AI_ENABLED:
+    (process.env.ADMIN_AI_ENABLED ?? "true").toLowerCase() !== "false",
+  ADMIN_AI_MAX_MESSAGE_CHARS: Math.max(
+    200,
+    Number(process.env.ADMIN_AI_MAX_MESSAGE_CHARS ?? 4000) || 4000,
+  ),
+  ADMIN_AI_RATE_LIMIT_PER_MIN: Math.max(
+    1,
+    Number(process.env.ADMIN_AI_RATE_LIMIT_PER_MIN ?? 20) || 20,
+  ),
+  ADMIN_AI_RATE_LIMIT_PER_DAY: Math.max(
+    1,
+    Number(process.env.ADMIN_AI_RATE_LIMIT_PER_DAY ?? 200) || 200,
+  ),
 };

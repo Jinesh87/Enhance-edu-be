@@ -50,6 +50,9 @@ import {
   SyllabusChunk,
   CoachThread,
   CoachMessage,
+  AdminAiThread,
+  AdminAiMessage,
+  AdminAiAuditLog,
   Notification,
   OpenAiUsageLog,
 } from "../entities/index.js";
@@ -696,6 +699,78 @@ export async function ensureCoachSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureAdminAiSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+
+  const [{ usersTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.users') IS NOT NULL AS "usersTable"
+  `);
+  if (!usersTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS admin_ai_threads (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "ownerUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "title" varchar(200),
+      "lastMessageAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      "deletedAt" timestamptz
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_threads_ownerUserId"
+      ON admin_ai_threads ("ownerUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_threads_owner_updated"
+      ON admin_ai_threads ("ownerUserId", "updatedAt");
+
+    CREATE TABLE IF NOT EXISTS admin_ai_messages (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "threadId" uuid NOT NULL REFERENCES admin_ai_threads(id) ON DELETE CASCADE,
+      "role" varchar(20) NOT NULL,
+      "content" text NOT NULL,
+      "status" varchar(20) NOT NULL DEFAULT 'COMPLETE',
+      "mode" varchar(20),
+      "sources" jsonb,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_messages_threadId"
+      ON admin_ai_messages ("threadId");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_messages_thread_created"
+      ON admin_ai_messages ("threadId", "createdAt");
+
+    CREATE TABLE IF NOT EXISTS admin_ai_audit_logs (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "requestId" varchar(64) NOT NULL,
+      "actorUserId" uuid NOT NULL,
+      "actorRole" varchar(40) NOT NULL,
+      "conversationId" uuid,
+      "eventType" varchar(60) NOT NULL,
+      "mode" varchar(20),
+      "toolNames" jsonb,
+      "scopeMetadata" jsonb,
+      "documentIds" jsonb,
+      "resultStatus" varchar(40) NOT NULL,
+      "errorCode" varchar(80),
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_audit_createdAt"
+      ON admin_ai_audit_logs ("createdAt");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_audit_actor_created"
+      ON admin_ai_audit_logs ("actorUserId", "createdAt");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_audit_requestId"
+      ON admin_ai_audit_logs ("requestId");
+  `);
+
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -751,6 +826,9 @@ export const AppDataSource = new DataSource({
     SyllabusChunk,
     CoachThread,
     CoachMessage,
+    AdminAiThread,
+    AdminAiMessage,
+    AdminAiAuditLog,
     Notification,
     OpenAiUsageLog,
   ],
