@@ -19,6 +19,7 @@ const router = Router();
 
 router.use(authenticate, authorize(UserRole.STUDENT));
 
+router.get("/holidays", studentClassesController.listHolidays);
 router.get("/sessions/subjects", studentClassesController.getSessionSubjects);
 router.get(
   "/sessions/upcoming",

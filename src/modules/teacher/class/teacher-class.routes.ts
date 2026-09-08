@@ -19,6 +19,12 @@ router.get(
 );
 
 router.get(
+  "/tutor/holidays",
+  staffOnly,
+  teacherClassController.listHolidays,
+);
+
+router.get(
   "/tutor/sessions/subjects",
   staffOnly,
   teacherClassController.getTeacherSessionSubjects,

@@ -13,8 +13,18 @@ import {
 } from "../entrance-exams/student-entrance-exams.service.js";
 import { assessmentResourceService } from "../../shared/assessments/assessment-resource.service.js";
 import { sessionLessonService } from "../../shared/sessions/session-lesson.service.js";
+import { holidaysService } from "../../settings/holidays.service.js";
 
 class StudentClassesController {
+  listHolidays = async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const holidays = await holidaysService.list();
+      res.status(200).json({ holidays });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   getSessionSubjects = async (
     req: Request,
     res: Response,
