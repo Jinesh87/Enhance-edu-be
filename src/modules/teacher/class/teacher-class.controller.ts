@@ -1,7 +1,17 @@
 import { NextFunction, Request, Response } from "express";
 import { teacherClassService } from "./teacher-class.service.js";
+import { holidaysService } from "../../settings/holidays.service.js";
 
 class TeacherClassController {
+  async listHolidays(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const holidays = await holidaysService.list();
+      res.status(200).json({ holidays });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getTeacherDashboard(req: Request, res: Response, next: NextFunction) {
     try {
       const teacherId = req.user!.id;
