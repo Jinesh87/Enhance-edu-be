@@ -824,6 +824,7 @@ export async function ensureLearningSchema() {
       "difficulty" varchar(20) NOT NULL DEFAULT 'medium',
       "itemCount" int NOT NULL DEFAULT 8,
       "marksPerQuestion" numeric(6,2) NOT NULL DEFAULT 1,
+      "dueAt" timestamptz,
       "status" varchar(20) NOT NULL DEFAULT 'DRAFT',
       "publishedAt" timestamptz,
       "createdAt" timestamptz NOT NULL DEFAULT now(),
@@ -831,6 +832,7 @@ export async function ensureLearningSchema() {
     );
     ALTER TABLE learning_sets ADD COLUMN IF NOT EXISTS "termId" uuid;
     ALTER TABLE learning_sets ADD COLUMN IF NOT EXISTS "yearGroup" varchar(80) DEFAULT '';
+    ALTER TABLE learning_sets ADD COLUMN IF NOT EXISTS "dueAt" timestamptz;
     DO $$ BEGIN
       IF EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -845,6 +847,7 @@ export async function ensureLearningSchema() {
     CREATE INDEX IF NOT EXISTS "IDX_learning_sets_termId" ON learning_sets ("termId");
     CREATE INDEX IF NOT EXISTS "IDX_learning_sets_subjectId" ON learning_sets ("subjectId");
     CREATE INDEX IF NOT EXISTS "IDX_learning_sets_status" ON learning_sets ("status");
+    CREATE INDEX IF NOT EXISTS "IDX_learning_sets_dueAt" ON learning_sets ("dueAt");
 
     CREATE TABLE IF NOT EXISTS learning_flashcards (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

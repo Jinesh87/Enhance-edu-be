@@ -181,6 +181,7 @@ export class StudentLearningService {
         marksPerQuestion: mpq,
         totalMarks: isQuiz ? actualItemCount * mpq : null,
         publishedAt: set.publishedAt?.toISOString() ?? null,
+        dueAt: isQuiz ? set.dueAt?.toISOString() ?? null : null,
         status: set.status,
         myBestAttempt: isQuiz
           ? this.mapBestAttempt(bestAttempts.get(set.id) ?? null)
@@ -261,6 +262,7 @@ export class StudentLearningService {
           totalMarks: questions.length * mpq,
           totalQuestions: questions.length,
           status: set.status,
+          dueAt: set.dueAt?.toISOString() ?? null,
           myBestAttempt: this.mapBestAttempt(best),
           myPendingAttempt: this.mapPendingAttempt(pending),
           myRank,
@@ -343,6 +345,14 @@ export class StudentLearningService {
           startedAt: incomplete.startedAt.toISOString(),
         },
       };
+    }
+
+    if (set.dueAt && set.dueAt.getTime() < Date.now()) {
+      throw new AppError(
+        400,
+        "This quiz is past its due date",
+        "QUIZ_CLOSED",
+      );
     }
 
     const totalQuestions = await this.repo.countQuizQuestions(setId);

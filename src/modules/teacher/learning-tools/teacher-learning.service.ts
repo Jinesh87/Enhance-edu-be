@@ -20,6 +20,11 @@ import {
   yearLevelsCompatible,
 } from "../../../common/utils/year-level.js";
 import {
+  DEFAULT_CLASS_TIMEZONE,
+  resolveIanaTimeZone,
+  zonedWallTimeToUtc,
+} from "../../../common/utils/timezone.js";
+import {
   Enrollment,
   LearningFlashcard,
   LearningFlashcardProgress,
@@ -48,6 +53,58 @@ import {
 
 function isStaff(role: UserRole) {
   return role === UserRole.STAFF;
+}
+
+/** Combine YYYY-MM-DD + HH:mm in class timezone into a UTC Date. */
+function parseDueAt(
+  dueDate?: string | null,
+  dueTime?: string | null,
+  timeZone: string = DEFAULT_CLASS_TIMEZONE,
+): Date | null {
+  const date = dueDate?.trim();
+  const time = dueTime?.trim();
+  if (!date || !time) return null;
+  const dateParts = date.split("-").map(Number);
+  const timeParts = time.split(":").map(Number);
+  if (dateParts.length !== 3 || timeParts.length < 2) {
+    throw new AppError(400, "Invalid due date or time", "INVALID_DUE_AT");
+  }
+  const [year, month, day] = dateParts;
+  const [hour, minute] = timeParts;
+  if (
+    ![year, month, day, hour, minute].every((n) => Number.isFinite(n))
+  ) {
+    throw new AppError(400, "Invalid due date or time", "INVALID_DUE_AT");
+  }
+  const parsed = zonedWallTimeToUtc(
+    { year, month, day, hour, minute, second: 0 },
+    resolveIanaTimeZone(timeZone),
+  );
+  if (Number.isNaN(parsed.getTime())) {
+    throw new AppError(400, "Invalid due date or time", "INVALID_DUE_AT");
+  }
+  return parsed;
+}
+
+function dueAtPartsInClassTz(dueAt: Date) {
+  const tz = resolveIanaTimeZone(DEFAULT_CLASS_TIMEZONE);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(dueAt);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "0";
+  let hour = Number(value("hour"));
+  if (hour === 24) hour = 0;
+  return {
+    dueDate: `${value("year")}-${value("month")}-${value("day")}`,
+    dueTime: `${String(hour).padStart(2, "0")}:${value("minute")}`,
+  };
 }
 
 function isAdmin(role: UserRole) {
@@ -277,7 +334,14 @@ export class TeacherLearningService {
   async list(
     userId: string,
     role: UserRole,
-    filters: { subjectId?: string; termId?: string; status?: string } = {},
+    filters: {
+      subjectId?: string;
+      termId?: string;
+      status?: string;
+      academicYear?: string;
+      yearGroup?: string;
+      generationType?: string;
+    } = {},
   ) {
     const qb = this.sets
       .createQueryBuilder("set")
@@ -303,6 +367,24 @@ export class TeacherLearningService {
     if (filters.status) {
       qb.andWhere("set.status = :status", { status: filters.status });
     }
+    if (filters.generationType) {
+      qb.andWhere("set.generationType = :generationType", {
+        generationType: filters.generationType,
+      });
+    }
+    if (filters.yearGroup?.trim()) {
+      qb.andWhere("LOWER(set.yearGroup) = LOWER(:yearGroup)", {
+        yearGroup: filters.yearGroup.trim(),
+      });
+    }
+    if (filters.academicYear?.trim()) {
+      const year = Number(filters.academicYear);
+      if (Number.isFinite(year)) {
+        qb.andWhere("academicYear.year = :academicYear", {
+          academicYear: year,
+        });
+      }
+    }
 
     const rows = await qb.getMany();
     const dtos = await Promise.all(rows.map((row) => this.toSetSummary(row)));
@@ -327,6 +409,8 @@ export class TeacherLearningService {
       itemCount?: number;
       marksPerQuestion?: number;
       forceOcr?: boolean;
+      dueDate?: string | null;
+      dueTime?: string | null;
     },
     upload: IncomingStoredFile | null,
   ) {
@@ -344,6 +428,18 @@ export class TeacherLearningService {
     const buffer = upload.buffer;
     if (!buffer) {
       throw new AppError(400, "Upload buffer missing", "INVALID_UPLOAD");
+    }
+
+    const dueAt =
+      input.generationType === "quiz"
+        ? parseDueAt(input.dueDate, input.dueTime)
+        : null;
+    if (input.generationType === "quiz" && !dueAt) {
+      throw new AppError(
+        400,
+        "Due date and time are required for quizzes",
+        "DUE_REQUIRED",
+      );
     }
 
     const extracted = await extractLearningPdfText(buffer, {
@@ -384,6 +480,7 @@ export class TeacherLearningService {
         difficulty: input.difficulty ?? "medium",
         itemCount: input.itemCount ?? LEARNING_DEFAULT_ITEMS,
         marksPerQuestion: String(input.marksPerQuestion ?? 1),
+        dueAt,
         status: "DRAFT",
       }),
     );
@@ -404,6 +501,8 @@ export class TeacherLearningService {
       difficulty?: LearningDifficulty;
       itemCount?: number;
       marksPerQuestion?: number;
+      dueDate?: string | null;
+      dueTime?: string | null;
     },
   ) {
     const set = await this.getOwnedSet(userId, role, setId);
@@ -415,6 +514,30 @@ export class TeacherLearningService {
     if (input.itemCount !== undefined) set.itemCount = input.itemCount;
     if (input.marksPerQuestion !== undefined) {
       set.marksPerQuestion = String(input.marksPerQuestion);
+    }
+    if (set.generationType === "quiz") {
+      if (input.dueDate !== undefined || input.dueTime !== undefined) {
+        const existing = set.dueAt ? dueAtPartsInClassTz(set.dueAt) : null;
+        const nextDate =
+          input.dueDate !== undefined && input.dueDate !== null && input.dueDate !== ""
+            ? String(input.dueDate)
+            : (existing?.dueDate ?? "");
+        const nextTime =
+          input.dueTime !== undefined && input.dueTime !== null && input.dueTime !== ""
+            ? String(input.dueTime)
+            : (existing?.dueTime ?? "");
+        const parsed = parseDueAt(nextDate, nextTime);
+        if (!parsed) {
+          throw new AppError(
+            400,
+            "Due date and time are required for quizzes",
+            "DUE_REQUIRED",
+          );
+        }
+        set.dueAt = parsed;
+      }
+    } else {
+      set.dueAt = null;
     }
     await this.sets.save(set);
     return { learningSet: await this.toSetDetail(set) };
@@ -1189,6 +1312,7 @@ export class TeacherLearningService {
       marksPerQuestion: mpq,
       totalMarks: set.generationType === "quiz" ? count * mpq : null,
       status: set.status,
+      dueAt: set.dueAt?.toISOString() ?? null,
       publishedAt: set.publishedAt?.toISOString() ?? null,
       sourceDocument: toSourceDto(set.sourceDocument),
       createdAt: set.createdAt.toISOString(),

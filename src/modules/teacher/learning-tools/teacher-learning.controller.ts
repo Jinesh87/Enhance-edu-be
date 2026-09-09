@@ -26,18 +26,23 @@ class TeacherLearningController {
 
   list = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const q = req.query;
       const result = await teacherLearningService.list(
         req.user!.id,
         req.user!.role as UserRole,
         {
           subjectId:
-            typeof req.query.subjectId === "string"
-              ? req.query.subjectId
+            typeof q.subjectId === "string" ? q.subjectId : undefined,
+          termId: typeof q.termId === "string" ? q.termId : undefined,
+          status: typeof q.status === "string" ? q.status : undefined,
+          academicYear:
+            typeof q.academicYear === "string" ? q.academicYear : undefined,
+          yearGroup:
+            typeof q.yearGroup === "string" ? q.yearGroup : undefined,
+          generationType:
+            typeof q.generationType === "string"
+              ? q.generationType
               : undefined,
-          termId:
-            typeof req.query.termId === "string" ? req.query.termId : undefined,
-          status:
-            typeof req.query.status === "string" ? req.query.status : undefined,
         },
       );
       res.status(200).json(result);
@@ -83,6 +88,10 @@ class TeacherLearningController {
             ? Number(req.body.marksPerQuestion)
             : undefined,
           forceOcr: parseBool(req.body.forceOcr),
+          dueDate:
+            typeof req.body.dueDate === "string" ? req.body.dueDate : undefined,
+          dueTime:
+            typeof req.body.dueTime === "string" ? req.body.dueTime : undefined,
         },
         uploads[0] ?? null,
       );
