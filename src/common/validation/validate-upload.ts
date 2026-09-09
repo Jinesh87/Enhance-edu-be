@@ -116,7 +116,11 @@ function validateSize(size: number, mimeType: string): ValidateUploadResult {
   if (size === 0) {
     return invalid("This file is empty. Please select a valid file.");
   }
-  if (size < MIN_FILE_BYTES) {
+
+  const isPdf = mimeType === "application/pdf";
+  // Small single-page text PDFs are often under 10KB; only reject empty files.
+  // Content emptiness is validated later during text extraction.
+  if (!isPdf && size < MIN_FILE_BYTES) {
     return invalid("File is too small/large. Minimum size is 10KB.");
   }
 

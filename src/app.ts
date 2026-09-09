@@ -15,6 +15,7 @@ import teacherClassRouter from "./modules/teacher/class/teacher-class.routes.js"
 import teacherSessionLessonRouter from "./modules/teacher/sessions/teacher-session-lesson.routes.js";
 import teacherAssessmentResourcesRouter from "./modules/teacher/assessments/teacher-assessment-resources.routes.js";
 import teacherHomeworkRouter from "./modules/teacher/homework/teacher-homework.routes.js";
+import teacherLearningRouter from "./modules/teacher/learning-tools/teacher-learning.routes.js";
 import adminAttendanceRouter from "./modules/admin/attendance/admin-attendance.routes.js";
 import adminTasksRouter from "./modules/admin/tasks/admin-tasks.routes.js";
 import adminSubjectsRouter from "./modules/admin/subjects/admin-subjects.routes.js";
@@ -32,6 +33,7 @@ import guardianPortalRouter from "./modules/guardian/portal/guardian-portal.rout
 import studentClassesRouter from "./modules/student/classes/student-classes.routes.js";
 import studentEntranceExamsRouter from "./modules/student/entrance-exams/student-entrance-exams.routes.js";
 import studentCoachRouter from "./modules/student/coach/student-coach.routes.js";
+import studentLearningRouter from "./modules/student/learning/student-learning.routes.js";
 import adminAiRouter from "./modules/admin/ai/admin-ai.routes.js";
 import storageRouter from "./modules/storage/storage.routes.js";
 import notificationsRouter from "./modules/notifications/notifications.routes.js";
@@ -77,6 +79,7 @@ attendanceRouter.use(teacherClassRouter);
 attendanceRouter.use(teacherSessionLessonRouter);
 attendanceRouter.use(teacherAssessmentResourcesRouter);
 attendanceRouter.use(teacherHomeworkRouter);
+attendanceRouter.use(teacherLearningRouter);
 attendanceRouter.use(adminAttendanceRouter);
 
 app.use("/api/attendance", attendanceRouter);
@@ -94,6 +97,7 @@ app.use("/api/audit-logs", adminAuditRouter);
 app.use("/api/student", studentClassesRouter);
 app.use("/api/student/entrance-exams", studentEntranceExamsRouter);
 app.use("/api/student/coach", studentCoachRouter);
+app.use("/api/student/learning", studentLearningRouter);
 app.use("/api/admin/ai", adminAiRouter);
 app.use("/api/storage", storageRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);

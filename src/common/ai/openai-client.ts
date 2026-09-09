@@ -89,13 +89,17 @@ export async function createChatCompletion(
     tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
     tool_choice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
     max_tokens?: number;
+    response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"];
   },
   context?: OpenAiCallContext,
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const model = params.model ?? CHAT_MODEL;
   const feature = context?.feature ?? "chat";
   const client = await getOpenAIClient();
-  const timeoutMs = feature === "admin_ai_chat" ? 90_000 : 60_000;
+  const timeoutMs =
+    feature === "admin_ai_chat" || feature === "learning_generate"
+      ? 90_000
+      : 60_000;
 
   try {
     const completion = await client.chat.completions.create(
@@ -106,6 +110,7 @@ export async function createChatCompletion(
         tools: params.tools,
         tool_choice: params.tool_choice,
         max_tokens: params.max_tokens,
+        response_format: params.response_format,
       },
       { timeout: timeoutMs },
     );
