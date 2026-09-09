@@ -15,6 +15,7 @@ import {
   ensureCoachSchema,
   ensureAdminAiSchema,
   ensureEnquiryConstraints,
+  ensureLearningSchema,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
 import { connectRedis } from "./config/redis.js";
@@ -42,6 +43,7 @@ async function bootstrap() {
   logger.info("Database connected");
   await ensureCoachSchema();
   await ensureAdminAiSchema();
+  await ensureLearningSchema();
   await seedEnquiryCatalogue();
   await ensureEnquiryConstraints();
 

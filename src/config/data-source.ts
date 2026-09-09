@@ -55,6 +55,15 @@ import {
   AdminAiAuditLog,
   Notification,
   OpenAiUsageLog,
+  LearningSourceDocument,
+  LearningSet,
+  LearningFlashcard,
+  LearningQuizQuestion,
+  LearningQuizOption,
+  LearningRevisionQuestion,
+  LearningQuizAttempt,
+  LearningQuizAnswer,
+  LearningFlashcardProgress,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -771,6 +780,170 @@ export async function ensureAdminAiSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureLearningSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+
+  const [{ usersTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.users') IS NOT NULL AS "usersTable"
+  `);
+  if (!usersTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS learning_source_documents (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "storageKey" varchar(512) NOT NULL,
+      "originalName" varchar(255) NOT NULL,
+      "mimeType" varchar(120) NOT NULL,
+      "byteSize" int NOT NULL,
+      "extractedText" text,
+      "extractionMethod" varchar(40),
+      "uploadedById" uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_source_uploadedById"
+      ON learning_source_documents ("uploadedById");
+
+    CREATE TABLE IF NOT EXISTS learning_sets (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "title" varchar(160) NOT NULL,
+      "subjectId" uuid NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+      "termId" uuid REFERENCES terms(id) ON DELETE RESTRICT,
+      "yearGroup" varchar(80) NOT NULL DEFAULT '',
+      "teacherId" uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      "sourceDocumentId" uuid REFERENCES learning_source_documents(id) ON DELETE SET NULL,
+      "generationType" varchar(20) NOT NULL,
+      "difficulty" varchar(20) NOT NULL DEFAULT 'medium',
+      "itemCount" int NOT NULL DEFAULT 8,
+      "marksPerQuestion" numeric(6,2) NOT NULL DEFAULT 1,
+      "status" varchar(20) NOT NULL DEFAULT 'DRAFT',
+      "publishedAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE learning_sets ADD COLUMN IF NOT EXISTS "termId" uuid;
+    ALTER TABLE learning_sets ADD COLUMN IF NOT EXISTS "yearGroup" varchar(80) DEFAULT '';
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'learning_sets'
+          AND column_name = 'classId'
+      ) THEN
+        ALTER TABLE learning_sets ALTER COLUMN "classId" DROP NOT NULL;
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS "IDX_learning_sets_teacherId" ON learning_sets ("teacherId");
+    CREATE INDEX IF NOT EXISTS "IDX_learning_sets_termId" ON learning_sets ("termId");
+    CREATE INDEX IF NOT EXISTS "IDX_learning_sets_subjectId" ON learning_sets ("subjectId");
+    CREATE INDEX IF NOT EXISTS "IDX_learning_sets_status" ON learning_sets ("status");
+
+    CREATE TABLE IF NOT EXISTS learning_flashcards (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "learningSetId" uuid NOT NULL REFERENCES learning_sets(id) ON DELETE CASCADE,
+      "front" text NOT NULL,
+      "back" text NOT NULL,
+      "position" int NOT NULL DEFAULT 0,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_flashcards_set"
+      ON learning_flashcards ("learningSetId");
+
+    CREATE TABLE IF NOT EXISTS learning_quiz_questions (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "learningSetId" uuid NOT NULL REFERENCES learning_sets(id) ON DELETE CASCADE,
+      "question" text NOT NULL,
+      "explanation" text,
+      "position" int NOT NULL DEFAULT 0,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_quiz_questions_set"
+      ON learning_quiz_questions ("learningSetId");
+
+    CREATE TABLE IF NOT EXISTS learning_quiz_options (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "questionId" uuid NOT NULL REFERENCES learning_quiz_questions(id) ON DELETE CASCADE,
+      "text" text NOT NULL,
+      "isCorrect" boolean NOT NULL DEFAULT false,
+      "position" int NOT NULL DEFAULT 0,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_quiz_options_question"
+      ON learning_quiz_options ("questionId");
+
+    CREATE TABLE IF NOT EXISTS learning_revision_questions (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "learningSetId" uuid NOT NULL REFERENCES learning_sets(id) ON DELETE CASCADE,
+      "question" text NOT NULL,
+      "answer" text NOT NULL,
+      "position" int NOT NULL DEFAULT 0,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_revision_set"
+      ON learning_revision_questions ("learningSetId");
+
+    CREATE TABLE IF NOT EXISTS learning_quiz_attempts (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "learningSetId" uuid NOT NULL REFERENCES learning_sets(id) ON DELETE CASCADE,
+      "studentId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "score" numeric(8,2) NOT NULL DEFAULT 0,
+      "totalMarks" numeric(8,2) NOT NULL DEFAULT 0,
+      "correctCount" int NOT NULL DEFAULT 0,
+      "totalQuestions" int NOT NULL DEFAULT 0,
+      "percentage" numeric(5,2),
+      "startedAt" timestamptz NOT NULL,
+      "completedAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_quiz_attempts_set"
+      ON learning_quiz_attempts ("learningSetId");
+    CREATE INDEX IF NOT EXISTS "IDX_learning_quiz_attempts_student"
+      ON learning_quiz_attempts ("studentId");
+    ALTER TABLE learning_quiz_attempts
+      ADD COLUMN IF NOT EXISTS "reviewSnapshot" jsonb;
+
+    CREATE TABLE IF NOT EXISTS learning_quiz_answers (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "attemptId" uuid NOT NULL REFERENCES learning_quiz_attempts(id) ON DELETE CASCADE,
+      "questionId" uuid NOT NULL REFERENCES learning_quiz_questions(id) ON DELETE CASCADE,
+      "selectedOptionId" uuid REFERENCES learning_quiz_options(id) ON DELETE SET NULL,
+      "isCorrect" boolean NOT NULL DEFAULT false,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      UNIQUE ("attemptId", "questionId")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_quiz_answers_attempt"
+      ON learning_quiz_answers ("attemptId");
+
+    CREATE TABLE IF NOT EXISTS learning_flashcard_progress (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "studentId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "flashcardId" uuid NOT NULL REFERENCES learning_flashcards(id) ON DELETE CASCADE,
+      "status" varchar(20) NOT NULL,
+      "lastReviewedAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      UNIQUE ("studentId", "flashcardId")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_learning_flashcard_progress_student"
+      ON learning_flashcard_progress ("studentId");
+  `);
+
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -831,6 +1004,15 @@ export const AppDataSource = new DataSource({
     AdminAiAuditLog,
     Notification,
     OpenAiUsageLog,
+    LearningSourceDocument,
+    LearningSet,
+    LearningFlashcard,
+    LearningQuizQuestion,
+    LearningQuizOption,
+    LearningRevisionQuestion,
+    LearningQuizAttempt,
+    LearningQuizAnswer,
+    LearningFlashcardProgress,
   ],
   migrations: [],
   subscribers: [],
