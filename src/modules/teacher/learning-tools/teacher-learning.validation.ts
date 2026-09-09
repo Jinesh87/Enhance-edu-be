@@ -27,6 +27,34 @@ export const createLearningSetSchema = Joi.object({
     .default(LEARNING_DEFAULT_ITEMS),
   marksPerQuestion: Joi.number().min(0.5).max(100).default(1),
   forceOcr: Joi.boolean().truthy("true").falsy("false").default(false),
+  dueDate: Joi.when("generationType", {
+    is: "quiz",
+    then: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        "string.pattern.base": "dueDate must be YYYY-MM-DD",
+        "any.required": "Due date is required for quizzes",
+      }),
+    otherwise: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .allow("", null),
+  }),
+  dueTime: Joi.when("generationType", {
+    is: "quiz",
+    then: Joi.string()
+      .pattern(/^\d{2}:\d{2}$/)
+      .required()
+      .messages({
+        "string.pattern.base": "dueTime must be HH:mm",
+        "any.required": "Due time is required for quizzes",
+      }),
+    otherwise: Joi.string()
+      .pattern(/^\d{2}:\d{2}$/)
+      .optional()
+      .allow("", null),
+  }),
 });
 
 export const updateLearningSetSchema = Joi.object({
@@ -40,6 +68,14 @@ export const updateLearningSetSchema = Joi.object({
     .max(LEARNING_MAX_ITEMS)
     .optional(),
   marksPerQuestion: Joi.number().min(0.5).max(100).optional(),
+  dueDate: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .allow("", null),
+  dueTime: Joi.string()
+    .pattern(/^\d{2}:\d{2}$/)
+    .optional()
+    .allow("", null),
 }).min(1);
 
 export const generateLearningSetSchema = Joi.object({
