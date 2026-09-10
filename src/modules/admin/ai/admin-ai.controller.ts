@@ -78,6 +78,55 @@ class AdminAiController {
     }
   };
 
+  listMemories = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await adminAiService.listMemories(req.user!.id);
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteMemory = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await adminAiService.deleteMemory(
+        req.user!.id,
+        req.params.memoryId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  downloadReport = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await adminAiService.downloadReport(
+        req.user!.id,
+        req.params.reportId as string,
+        res,
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  confirmGenerateReport = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.confirmGenerateReport(
+        req.user!.id,
+        req.params.draftId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   sendMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await adminAiService.sendMessage(req.user!.id, {
