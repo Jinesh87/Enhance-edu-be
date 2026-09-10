@@ -103,19 +103,95 @@ export async function getLowAttendanceClasses(
 
   return {
     data: sanitizeToolPayload({
+      entity: "low_attendance_class",
       thresholdPercent: threshold,
       startDate: start.toISOString().slice(0, 10),
       endDate: end.toISOString().slice(0, 10),
       classes,
+      columns: ["Class", "Subject", "Attendance Rate"],
+      responseHint:
+        "Entity is classes with low attendance. Table: Class | Subject | Attendance Rate. Do NOT list students from this tool.",
     }),
     sources: [
       {
         kind: "database",
         label: "Class attendance",
-          detail: `Below ${threshold}% · ${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
+        detail: `Below ${threshold}% · ${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
       },
     ],
     actions: [openPageAction("attendance", "View Attendance")],
+  };
+}
+
+/**
+ * Students whose present/late rate is below threshold in the date range.
+ * Use for "students with low attendance" — not class aggregates.
+ */
+export async function getLowAttendanceStudents(
+  actor: AdminAiActor,
+  args: {
+    threshold?: number;
+    startDate?: string;
+    endDate?: string;
+    subject?: string;
+  },
+): Promise<ToolResult> {
+  assertAdminAiModule(actor, "attendance");
+  const threshold = Math.min(100, Math.max(1, Number(args.threshold) || 80));
+  const subject = args.subject?.trim() || null;
+  const { start, end, endExclusive } = clampRange(args.startDate, args.endDate);
+
+  const rows = await adminAiRepository.getLowAttendanceStudentAggregates(
+    start,
+    endExclusive,
+    { thresholdPercent: threshold, subject, limit: MAX_ROWS },
+  );
+
+  const students = rows.map((row) => {
+    const total = Number(row.totalRecords) || 0;
+    const present = Number(row.presentOrLate) || 0;
+    const rate = total > 0 ? (present / total) * 100 : 0;
+    return {
+      studentName: String(row.studentName ?? "Unknown"),
+      subject: row.primarySubject ? String(row.primarySubject) : null,
+      className: row.primaryClassName ? String(row.primaryClassName) : null,
+      sessionsMarked: total,
+      presentOrLate: present,
+      attendanceRatePercent: Number(rate.toFixed(1)),
+    };
+  });
+
+  const actions = [openPageAction("attendance", "View Attendance")];
+  if (rows.length === 1) {
+    actions.unshift(
+      openPageAction("person", "View Student", { id: rows[0]!.studentId }),
+    );
+  }
+
+  return {
+    data: sanitizeToolPayload({
+      entity: "low_attendance_student",
+      thresholdPercent: threshold,
+      subjectFilter: subject,
+      startDate: start.toISOString().slice(0, 10),
+      endDate: end.toISOString().slice(0, 10),
+      studentCount: students.length,
+      students,
+      columns: ["Student", "Subject", "Class", "Attendance Rate", "Present/Sessions"],
+      exactNote: students.length
+        ? null
+        : `No students below ${threshold}% attendance for the selected period.`,
+      responseHint:
+        "Entity is students with low attendance. Table: Student | Subject | Class | Attendance Rate | Present/Sessions. Never use class-only tools for this question. No emails, phones, or IDs.",
+    }),
+    sources: [
+      {
+        kind: "database",
+        label: "Student attendance",
+        detail: `Below ${threshold}% · ${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
+      },
+    ],
+    actions,
   };
 }
 

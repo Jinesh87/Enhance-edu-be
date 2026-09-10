@@ -7,6 +7,9 @@ import {
 import { validate } from "../../../common/middleware/validate.js";
 import { adminAiController } from "./admin-ai.controller.js";
 import {
+  adminAiDraftIdParamsSchema,
+  adminAiMemoryIdParamsSchema,
+  adminAiReportIdParamsSchema,
   adminAiThreadIdParamsSchema,
   listAdminAiThreadsQuerySchema,
   sendAdminAiMessageSchema,
@@ -34,6 +37,22 @@ router.delete(
   "/threads/:threadId",
   validate(adminAiThreadIdParamsSchema, "params"),
   adminAiController.deleteThread,
+);
+router.get("/memories", adminAiController.listMemories);
+router.delete(
+  "/memories/:memoryId",
+  validate(adminAiMemoryIdParamsSchema, "params"),
+  adminAiController.deleteMemory,
+);
+router.post(
+  "/reports/drafts/:draftId/generate",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  adminAiController.confirmGenerateReport,
+);
+router.get(
+  "/reports/:reportId/download",
+  validate(adminAiReportIdParamsSchema, "params"),
+  adminAiController.downloadReport,
 );
 router.post(
   "/messages",

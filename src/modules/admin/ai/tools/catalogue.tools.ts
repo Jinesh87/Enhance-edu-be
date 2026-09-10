@@ -542,6 +542,48 @@ export async function listTerms(
   };
 }
 
+function peopleRoleLabel(role: UserRole): string {
+  switch (role) {
+    case UserRole.SUPER_ADMIN:
+      return "Application Owner";
+    case UserRole.OFFICE_STAFF:
+      return "Staff";
+    case UserRole.STAFF:
+      return "Teacher";
+    case UserRole.STUDENT:
+      return "Student";
+    case UserRole.GUARDIAN:
+      return "Guardian";
+    default:
+      return role;
+  }
+}
+
+function resolvePeopleRoleFilter(roleRaw: string | null): UserRole | null {
+  if (!roleRaw) return null;
+  // Product mapping (matches People page): Staff = OFFICE_STAFF, Teacher = STAFF.
+  const aliases: Record<string, UserRole> = {
+    SUPER_ADMIN: UserRole.SUPER_ADMIN,
+    ADMIN: UserRole.SUPER_ADMIN,
+    APPLICATION_OWNER: UserRole.SUPER_ADMIN,
+    OFFICE_STAFF: UserRole.OFFICE_STAFF,
+    OFFICE: UserRole.OFFICE_STAFF,
+    STAFF: UserRole.OFFICE_STAFF,
+    STAFFS: UserRole.OFFICE_STAFF,
+    TEACHER: UserRole.STAFF,
+    TEACHERS: UserRole.STAFF,
+    TUTOR: UserRole.STAFF,
+    TUTORS: UserRole.STAFF,
+    STUDENT: UserRole.STUDENT,
+    STUDENTS: UserRole.STUDENT,
+    GUARDIAN: UserRole.GUARDIAN,
+    GUARDIANS: UserRole.GUARDIAN,
+    PARENT: UserRole.GUARDIAN,
+    PARENTS: UserRole.GUARDIAN,
+  };
+  return aliases[roleRaw] ?? null;
+}
+
 export async function searchPeople(
   actor: AdminAiActor,
   args: { name?: string; role?: string; status?: string },
@@ -551,25 +593,11 @@ export async function searchPeople(
   const name = args.name?.trim() || null;
   const roleRaw = args.role?.trim().toUpperCase().replace(/\s+/g, "_") || null;
   const statusRaw = args.status?.trim().toUpperCase() || null;
-
-  const roleAliases: Record<string, UserRole> = {
-    SUPER_ADMIN: UserRole.SUPER_ADMIN,
-    ADMIN: UserRole.SUPER_ADMIN,
-    OFFICE_STAFF: UserRole.OFFICE_STAFF,
-    OFFICE: UserRole.OFFICE_STAFF,
-    STAFF: UserRole.STAFF,
-    TEACHER: UserRole.STAFF,
-    TEACHERS: UserRole.STAFF,
-    STUDENT: UserRole.STUDENT,
-    STUDENTS: UserRole.STUDENT,
-    GUARDIAN: UserRole.GUARDIAN,
-    GUARDIANS: UserRole.GUARDIAN,
-    PARENT: UserRole.GUARDIAN,
-  };
+  const roleFilter = resolvePeopleRoleFilter(roleRaw);
 
   const people = await adminAiRepository.findPeople({
     name,
-    role: roleRaw && roleAliases[roleRaw] ? roleAliases[roleRaw] : null,
+    role: roleFilter,
     status:
       statusRaw && Object.values(UserStatus).includes(statusRaw as UserStatus)
         ? (statusRaw as UserStatus)
@@ -577,7 +605,7 @@ export async function searchPeople(
   });
   const rows = people.slice(0, LIST_MAX_ROWS).map((person) => ({
     name: person.fullName,
-    role: person.role,
+    role: peopleRoleLabel(person.role),
     status: person.status,
   }));
 
@@ -588,8 +616,7 @@ export async function searchPeople(
     openPageAction("people", "Open People", {
       filters: {
         search: name,
-        role:
-          roleRaw && roleAliases[roleRaw] ? roleAliases[roleRaw] : undefined,
+        role: roleFilter ?? undefined,
       },
     }),
   ];
@@ -612,9 +639,11 @@ export async function searchPeople(
       truncated: people.length > LIST_MAX_ROWS,
       people: rows,
       columns: ["Name", "Role", "Status"],
+      roleNote:
+        "Role labels: Teacher (tutors), Staff (office), Guardian, Student, Application Owner. Do not show raw enum codes.",
       exactNote: rows.length ? null : `No people found for ${filterLabel}.`,
       responseHint:
-        "Entity is people. Table: Name | Role | Status. Never show emails, phones, usernames used as secrets, or IDs.",
+        "Entity is people. Table: Name | Role | Status. Use the role labels exactly as given (Teacher/Staff/Guardian). Never show emails, phones, or IDs.",
     }),
     sources: [
       {

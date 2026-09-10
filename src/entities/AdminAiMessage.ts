@@ -18,12 +18,24 @@ export type AdminAiSource = {
   kind: "database" | "document" | "draft" | "action";
   label: string;
   detail?: string | null;
-  /** Present when kind is "action". Never shown as a citation. */
+  /** Present when kind is "action" and type is OPEN_PAGE. */
   openPage?: {
     type: "OPEN_PAGE";
     resource: string;
     id?: string | null;
     filters?: Record<string, string>;
+    label: string;
+  } | null;
+  /** Present when kind is "action" and type is DOWNLOAD_REPORT. */
+  downloadReport?: {
+    type: "DOWNLOAD_REPORT";
+    reportId: string;
+    label: string;
+  } | null;
+  /** Present when kind is "action" and type is GENERATE_REPORT. */
+  generateReport?: {
+    type: "GENERATE_REPORT";
+    draftId: string;
     label: string;
   } | null;
 };

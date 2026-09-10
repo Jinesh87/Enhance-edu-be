@@ -22,11 +22,30 @@ export type AdminAiOpenPageAction = {
   label: string;
 };
 
+/** Download action — reportId only; FE fetches PDF via API. */
+export type AdminAiDownloadReportAction = {
+  type: "DOWNLOAD_REPORT";
+  reportId: string;
+  label: string;
+};
+
+/** Confirm PDF generation from a preview draft. */
+export type AdminAiGenerateReportAction = {
+  type: "GENERATE_REPORT";
+  draftId: string;
+  label: string;
+};
+
+export type AdminAiUiAction =
+  | AdminAiOpenPageAction
+  | AdminAiDownloadReportAction
+  | AdminAiGenerateReportAction;
+
 export type ToolResult = {
   data: unknown;
   sources: AdminAiSource[];
-  /** Allowlisted page actions for the UI (not shown to the model). */
-  actions?: AdminAiOpenPageAction[];
+  /** Allowlisted UI actions (not shown to the model as URLs). */
+  actions?: AdminAiUiAction[];
   documentIds?: string[];
 };
 
@@ -55,7 +74,43 @@ export function openPageAction(
   };
 }
 
-export function actionSource(action: AdminAiOpenPageAction): AdminAiSource {
+export function downloadReportAction(
+  reportId: string,
+  label = "Download PDF",
+): AdminAiDownloadReportAction {
+  return {
+    type: "DOWNLOAD_REPORT",
+    reportId: reportId.trim(),
+    label,
+  };
+}
+
+export function generateReportAction(
+  draftId: string,
+  label = "Generate PDF",
+): AdminAiGenerateReportAction {
+  return {
+    type: "GENERATE_REPORT",
+    draftId: draftId.trim(),
+    label,
+  };
+}
+
+export function actionSource(action: AdminAiUiAction): AdminAiSource {
+  if (action.type === "DOWNLOAD_REPORT") {
+    return {
+      kind: "action",
+      label: action.label,
+      downloadReport: action,
+    };
+  }
+  if (action.type === "GENERATE_REPORT") {
+    return {
+      kind: "action",
+      label: action.label,
+      generateReport: action,
+    };
+  }
   return {
     kind: "action",
     label: action.label,
