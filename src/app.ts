@@ -16,6 +16,7 @@ import teacherSessionLessonRouter from "./modules/teacher/sessions/teacher-sessi
 import teacherAssessmentResourcesRouter from "./modules/teacher/assessments/teacher-assessment-resources.routes.js";
 import teacherHomeworkRouter from "./modules/teacher/homework/teacher-homework.routes.js";
 import teacherLearningRouter from "./modules/teacher/learning-tools/teacher-learning.routes.js";
+import teacherCoachRouter from "./modules/teacher/coach/teacher-coach.routes.js";
 import adminAttendanceRouter from "./modules/admin/attendance/admin-attendance.routes.js";
 import adminTasksRouter from "./modules/admin/tasks/admin-tasks.routes.js";
 import adminSubjectsRouter from "./modules/admin/subjects/admin-subjects.routes.js";
@@ -94,6 +95,7 @@ app.use("/api/enrollments", adminEnrollmentsRouter);
 app.use("/api/classes", adminClassesRouter);
 app.use("/api/assessments", adminAssessmentsRouter);
 app.use("/api/teacher/assessments", teacherAssessmentsRouter);
+app.use("/api/teacher/coach", teacherCoachRouter);
 app.use("/api/audit-logs", adminAuditRouter);
 app.use("/api/student", studentClassesRouter);
 app.use("/api/student/entrance-exams", studentEntranceExamsRouter);

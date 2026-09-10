@@ -52,6 +52,8 @@ import {
   CoachMessage,
   GuardianCoachThread,
   GuardianCoachMessage,
+  TeacherCoachThread,
+  TeacherCoachMessage,
   StudentKnowledgeChunk,
   AdminAiThread,
   AdminAiMessage,
@@ -709,6 +711,31 @@ export async function ensureCoachSchema() {
     -- TypeORM synchronize may create this table first without embedding columns.
     ALTER TABLE student_knowledge_chunks
       ADD COLUMN IF NOT EXISTS "embeddingJson" jsonb;
+
+    CREATE TABLE IF NOT EXISTS teacher_coach_threads (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "ownerUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "title" varchar(200),
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_teacher_coach_threads_ownerUserId"
+      ON teacher_coach_threads ("ownerUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_teacher_coach_threads_owner_updated"
+      ON teacher_coach_threads ("ownerUserId", "updatedAt");
+
+    CREATE TABLE IF NOT EXISTS teacher_coach_messages (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "threadId" uuid NOT NULL REFERENCES teacher_coach_threads(id) ON DELETE CASCADE,
+      "role" varchar(20) NOT NULL,
+      "content" text NOT NULL,
+      "sources" jsonb,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_teacher_coach_messages_threadId"
+      ON teacher_coach_messages ("threadId");
+    CREATE INDEX IF NOT EXISTS "IDX_teacher_coach_messages_thread_created"
+      ON teacher_coach_messages ("threadId", "createdAt");
   `);
 
   if (hasVector) {
@@ -1046,6 +1073,8 @@ export const AppDataSource = new DataSource({
     CoachMessage,
     GuardianCoachThread,
     GuardianCoachMessage,
+    TeacherCoachThread,
+    TeacherCoachMessage,
     StudentKnowledgeChunk,
     AdminAiThread,
     AdminAiMessage,

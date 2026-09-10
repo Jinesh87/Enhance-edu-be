@@ -70,6 +70,8 @@ export * from "./CoachThread.js";
 export * from "./CoachMessage.js";
 export * from "./GuardianCoachThread.js";
 export * from "./GuardianCoachMessage.js";
+export * from "./TeacherCoachThread.js";
+export * from "./TeacherCoachMessage.js";
 export * from "./StudentKnowledgeChunk.js";
 export * from "./AdminAiThread.js";
 export * from "./AdminAiMessage.js";
