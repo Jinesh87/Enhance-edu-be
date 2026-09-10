@@ -8,10 +8,104 @@ const SENSITIVE_PATTERNS: Array<{ re: RegExp; replace: string }> = [
     replace: "[REDACTED_CARD]",
   },
   {
-    re: /\b(?:password|api[_-]?key|secret|token)\s*[:=]\s*\S+/gi,
+    re: /\b(?:password|api[_-]?key|secret|token|bearer|jwt)\s*[:=]\s*\S+/gi,
     replace: "[REDACTED_SECRET]",
   },
+  {
+    re: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+    replace: "[REDACTED_EMAIL]",
+  },
 ];
+
+/** Exact keys (alphanumeric-normalised) never forwarded to the LLM. */
+const SENSITIVE_KEY_EXACT = new Set([
+  "email",
+  "mobile",
+  "phone",
+  "telephone",
+  "phonenumber",
+  "address",
+  "street",
+  "suburb",
+  "city",
+  "postcode",
+  "postalcode",
+  "dob",
+  "dateofbirth",
+  "birthdate",
+  "guardianemail",
+  "guardianphone",
+  "guardianmobile",
+  "guardiancontact",
+  "cookie",
+  "cookies",
+  "authorization",
+  "credential",
+  "credentials",
+  "apikey",
+  "apisecret",
+  "accesskey",
+  "secretkey",
+  "privatekey",
+  "refreshtoken",
+  "accesstoken",
+  "resettoken",
+  "sessiontoken",
+  "jwttoken",
+  "passwordhash",
+  "hashedpassword",
+  "password",
+  "bankaccount",
+  "accountnumber",
+  "bsb",
+  "iban",
+  "swift",
+  "cardnumber",
+  "cvv",
+  "cvc",
+  "fee",
+  "fees",
+  "feeamount",
+  "balance",
+  "payment",
+  "invoice",
+  "before",
+  "after",
+  "smtp",
+  "connectionstring",
+  "databaseurl",
+]);
+
+/** Substring matches on normalised keys — keep narrow to avoid stripping safe fields. */
+const SENSITIVE_KEY_INCLUDES = [
+  "password",
+  "aadhaar",
+  "aadhar",
+  "secret",
+  "apikey",
+  "credential",
+  "cookie",
+  "authorization",
+  "privatekey",
+  "refreshtoken",
+  "accesstoken",
+  "resettoken",
+  "sessiontoken",
+  "connectionstring",
+  "databaseurl",
+  "bankaccount",
+  "cardnumber",
+];
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (SENSITIVE_KEY_EXACT.has(lower)) return true;
+  if (SENSITIVE_KEY_INCLUDES.some((part) => lower.includes(part))) return true;
+  // Phone / email / fee variants (e.g. studentEmail, homePhone, tuitionFee)
+  if (/(^|.)(email|phone|mobile|telephone)$/.test(lower)) return true;
+  if (lower.endsWith("fee") || lower.endsWith("fees")) return true;
+  return false;
+}
 
 export function sanitizeAdminAiText(input: string, maxChars: number): string {
   let text = input.replace(/\0/g, "").trim();
@@ -40,19 +134,7 @@ export function sanitizeToolPayload(
   if (typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      const lower = key.toLowerCase();
-      if (
-        lower.includes("password") ||
-        lower.includes("aadhaar") ||
-        lower.includes("token") ||
-        lower.includes("secret") ||
-        lower.includes("apiKey".toLowerCase()) ||
-        lower === "mobile" ||
-        lower === "email" ||
-        lower === "address"
-      ) {
-        continue;
-      }
+      if (isSensitiveKey(key)) continue;
       out[key] = sanitizeToolPayload(nested, depth + 1);
     }
     return out;

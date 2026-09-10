@@ -22,6 +22,7 @@ import {
   formatLocalSessionTime,
   formatLocalTime12h,
   formatWallClock12h,
+  openPageAction,
   weekdayFromDayTime,
   type ToolResult,
 } from "../tool-helpers.js";
@@ -66,6 +67,7 @@ export async function getAttendanceSummary(
         detail: `${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
       },
     ],
+    actions: [openPageAction("attendance", "View Attendance")],
   };
 }
 
@@ -110,9 +112,10 @@ export async function getLowAttendanceClasses(
       {
         kind: "database",
         label: "Class attendance",
-        detail: `Below ${threshold}% · ${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
+          detail: `Below ${threshold}% · ${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
       },
     ],
+    actions: [openPageAction("attendance", "View Attendance")],
   };
 }
 
@@ -171,6 +174,14 @@ export async function getTodayTimetable(
         label: "Class timetable",
         detail: yearLevel ? `${label} · ${yearLevel}` : label,
       },
+    ],
+    actions: [
+      openPageAction("calendar", "Open Calendar", {
+        filters: {
+          yearLevel,
+          year: items[0]?.academicYear ?? undefined,
+        },
+      }),
     ],
   };
 }
@@ -255,6 +266,14 @@ export async function getTermClassSchedule(
         detail: [term, yearLevel, academicYear].filter(Boolean).join(" · ") || "All scheduled classes",
       },
     ],
+    actions: [
+      openPageAction("calendar", "Open Calendar", {
+        filters: { yearLevel, year: academicYear },
+      }),
+      openPageAction("classes", "Open Classes", {
+        filters: { yearLevel, year: academicYear, term },
+      }),
+    ],
   };
 }
 
@@ -297,6 +316,11 @@ export async function getTodaysAbsences(
         label: "Attendance absences",
         detail: yearLevel ? `${label} · ${yearLevel}` : label,
       },
+    ],
+    actions: [
+      openPageAction("attendance", "View Attendance", {
+        filters: { yearLevel },
+      }),
     ],
   };
 }
@@ -376,6 +400,14 @@ export async function getClassRoster(
         label: "Class enrolment roster",
         detail: [yearLevel, subjectOrClass].filter(Boolean).join(" · ") || "Filtered classes",
       },
+    ],
+    actions: [
+      openPageAction("classes", "Open Classes", {
+        filters: { yearLevel },
+      }),
+      openPageAction("enrolments", "Open Enrolments", {
+        filters: { yearLevel },
+      }),
     ],
   };
 }
@@ -469,5 +501,6 @@ export async function getHolidays(
           "All holidays",
       },
     ],
+    actions: [openPageAction("holidays", "Open Holidays")],
   };
 }

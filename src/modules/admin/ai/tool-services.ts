@@ -28,11 +28,13 @@ export {
   listAssessments,
   listSessions,
   searchChangeHistory,
+  listHomework,
   getPendingHomeworkSummary,
   getAcademicPerformanceSummary,
   getEnquiryPipelineSummary,
   getPendingEnrollmentSummary,
   getOpenTasksSummary,
+  getOpsSnapshot,
 } from "./tools/ops.tools.js";
 
 export {

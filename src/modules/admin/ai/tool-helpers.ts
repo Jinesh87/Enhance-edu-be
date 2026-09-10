@@ -13,6 +13,57 @@ export const MAX_RANGE_DAYS = 62;
 export const MAX_ROWS = 40;
 export const LIST_MAX_ROWS = 60;
 
+/** Structured deep-link metadata. Never sent to the LLM as free-form URLs. */
+export type AdminAiOpenPageAction = {
+  type: "OPEN_PAGE";
+  resource: string;
+  id?: string | null;
+  filters?: Record<string, string>;
+  label: string;
+};
+
+export type ToolResult = {
+  data: unknown;
+  sources: AdminAiSource[];
+  /** Allowlisted page actions for the UI (not shown to the model). */
+  actions?: AdminAiOpenPageAction[];
+  documentIds?: string[];
+};
+
+export function openPageAction(
+  resource: string,
+  label: string,
+  options?: {
+    id?: string | null;
+    filters?: Record<string, string | null | undefined>;
+  },
+): AdminAiOpenPageAction {
+  const filters: Record<string, string> = {};
+  if (options?.filters) {
+    for (const [key, value] of Object.entries(options.filters)) {
+      if (typeof value === "string" && value.trim()) {
+        filters[key] = value.trim();
+      }
+    }
+  }
+  return {
+    type: "OPEN_PAGE",
+    resource,
+    id: options?.id?.trim() ? options.id.trim() : null,
+    filters,
+    label,
+  };
+}
+
+export function actionSource(action: AdminAiOpenPageAction): AdminAiSource {
+  return {
+    kind: "action",
+    label: action.label,
+    openPage: action,
+  };
+}
+
+
 export function parseDateOnly(value: string | undefined, fallback: Date): Date {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return fallback;
   const d = new Date(`${value}T00:00:00.000Z`);
@@ -145,12 +196,6 @@ export function formatLocalSessionTime(
     timeZone: tz,
   };
 }
-
-export type ToolResult = {
-  data: unknown;
-  sources: AdminAiSource[];
-  documentIds?: string[];
-};
 
 export function formatHolidayDate(value: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);

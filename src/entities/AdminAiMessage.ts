@@ -15,9 +15,17 @@ export type AdminAiMessageStatus = "COMPLETE" | "FAILED";
 export type AdminAiMode = "DATA" | "DOCUMENT" | "DRAFT" | "GENERAL";
 
 export type AdminAiSource = {
-  kind: "database" | "document" | "draft";
+  kind: "database" | "document" | "draft" | "action";
   label: string;
   detail?: string | null;
+  /** Present when kind is "action". Never shown as a citation. */
+  openPage?: {
+    type: "OPEN_PAGE";
+    resource: string;
+    id?: string | null;
+    filters?: Record<string, string>;
+    label: string;
+  } | null;
 };
 
 @Entity("admin_ai_messages")

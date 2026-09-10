@@ -28,6 +28,7 @@ import {
   executeAdminAiTool,
   inferModeFromTools,
 } from "./tools.js";
+import { actionSource } from "./tool-helpers.js";
 
 const HISTORY_LIMIT = 12;
 const MAX_TOOL_ROUNDS = 3;
@@ -45,13 +46,21 @@ function toThreadDto(thread: AdminAiThread, preview?: string | null) {
 }
 
 function toMessageDto(message: AdminAiMessage) {
+  const allSources = message.sources ?? [];
+  const actions = allSources
+    .filter((source) => source.kind === "action" && source.openPage)
+    .map((source) => source.openPage!)
+    .slice(0, 8);
+  const sources = allSources.filter((source) => source.kind !== "action");
+
   return {
     id: message.id,
     role: message.role,
     content: message.content,
     status: message.status,
     mode: message.mode,
-    sources: message.sources,
+    sources: sources.length ? sources : null,
+    actions: actions.length ? actions : null,
     createdAt: message.createdAt.toISOString(),
   };
 }
@@ -60,12 +69,15 @@ function mergeSources(parts: AdminAiSource[]): AdminAiSource[] {
   const seen = new Set<string>();
   const out: AdminAiSource[] = [];
   for (const source of parts) {
-    const key = `${source.kind}|${source.label}|${source.detail ?? ""}`;
+    const key =
+      source.kind === "action" && source.openPage
+        ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
+        : `${source.kind}|${source.label}|${source.detail ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(source);
   }
-  return out.slice(0, 12);
+  return out.slice(0, 20);
 }
 
 export class AdminAiService {
@@ -343,6 +355,11 @@ export class AdminAiService {
               call.function.arguments,
             );
             collectedSources.push(...result.sources);
+            if (result.actions?.length) {
+              collectedSources.push(
+                ...result.actions.map((action) => actionSource(action)),
+              );
+            }
             if (result.documentIds?.length) {
               documentIds.push(...result.documentIds);
             }
@@ -599,6 +616,11 @@ export class AdminAiService {
               call.function.arguments,
             );
             collectedSources.push(...result.sources);
+            if (result.actions?.length) {
+              collectedSources.push(
+                ...result.actions.map((action) => actionSource(action)),
+              );
+            }
             if (result.documentIds?.length) {
               documentIds.push(...result.documentIds);
             }

@@ -1,6 +1,7 @@
 import {
   calendarDateInTimeZone,
 } from "../../../../common/utils/timezone.js";
+import { UserRole } from "../../../../common/constants/roles.js";
 import {
   assertAdminAiModule,
   type AdminAiActor,
@@ -12,6 +13,7 @@ import {
   clampRange,
   dayBoundsInClassTz,
   formatLocalSessionTime,
+  openPageAction,
   type ToolResult,
 } from "../tool-helpers.js";
 
@@ -56,6 +58,7 @@ export async function searchEnrolments(
     term: string | null;
     subjects: string;
   }> = [];
+  const enrolmentIds: string[] = [];
 
   const enrolmentFilters = {
     studentName,
@@ -84,6 +87,7 @@ export async function searchEnrolments(
         term: enrollment.term?.name ?? null,
         subjects: subjectNames.join(", ") || "—",
       });
+      enrolmentIds.push(enrollment.id);
     }
   }
 
@@ -119,6 +123,17 @@ export async function searchEnrolments(
       .filter(Boolean)
       .join(", ") || "enrolments";
 
+  const actions = [
+    openPageAction("enrolments", "Open Enrolments", {
+      filters: { search: studentName, yearLevel },
+    }),
+  ];
+  if (enrolmentIds.length === 1 && rows.length === 1) {
+    actions.unshift(
+      openPageAction("enrolment", "Open Enrolment", { id: enrolmentIds[0] }),
+    );
+  }
+
   return {
     data: sanitizeToolPayload({
       entity: "enrolment",
@@ -140,6 +155,7 @@ export async function searchEnrolments(
         detail: filterLabel,
       },
     ],
+    actions,
   };
 }
 
@@ -201,6 +217,22 @@ export async function searchEnquiries(
       .filter(Boolean)
       .join(", ") || "enquiries";
 
+  const enquiryIds = [...seen];
+  const actions = [
+    openPageAction("enquiries", "Open Enquiries", {
+      filters: {
+        search: studentName || guardianName,
+        yearLevel,
+        subject,
+      },
+    }),
+  ];
+  if (enquiryIds.length === 1 && rows.length === 1) {
+    actions.unshift(
+      openPageAction("enquiry", "Open Enquiry", { id: enquiryIds[0] }),
+    );
+  }
+
   return {
     data: sanitizeToolPayload({
       entity: "enquiry",
@@ -222,6 +254,7 @@ export async function searchEnquiries(
         detail: filterLabel,
       },
     ],
+    actions,
   };
 }
 
@@ -257,17 +290,24 @@ export async function listOpenTasks(
     };
   });
 
+  const truncated = tasks.length > LIST_MAX_ROWS;
+  const exactOpenTotal =
+    status === "OPEN" && !studentName
+      ? await adminAiRepository.countOpenTasks()
+      : null;
+
   return {
     data: sanitizeToolPayload({
       entity: "task",
       matchLevel: rows.length ? "exact" : "none",
-      taskCount: rows.length,
-      truncated: tasks.length > LIST_MAX_ROWS,
+      returnedCount: rows.length,
+      totalMatched: exactOpenTotal ?? (truncated ? null : rows.length),
+      truncated,
       tasks: rows,
       columns: ["Task", "Student", "Status", "Due", "Class"],
       exactNote: rows.length ? null : "No matching tasks.",
       responseHint:
-        "Entity is tasks. Table: Task | Student | Status | Due | Class. Keep short. No IDs.",
+        "Entity is tasks. Table: Task | Student | Status | Due | Class. Prefer totalMatched for counts when present. Keep short. No IDs.",
     }),
     sources: [
       {
@@ -276,6 +316,7 @@ export async function listOpenTasks(
         detail: status,
       },
     ],
+    actions: [openPageAction("tasks", "Open Tasks")],
   };
 }
 
@@ -319,6 +360,25 @@ export async function listAssessments(
     [name, subject, yearLevel, term, status].filter(Boolean).join(", ") ||
     "assessments";
 
+  const actions = [
+    openPageAction("assessments", "Open Assessments", {
+      filters: {
+        yearLevel,
+        term,
+        year: assessments[0]?.term?.academicYear
+          ? String(assessments[0].term.academicYear.year)
+          : undefined,
+      },
+    }),
+  ];
+  if (assessments.length === 1) {
+    actions.unshift(
+      openPageAction("assessment", "Open Assessment", {
+        id: assessments[0]!.id,
+      }),
+    );
+  }
+
   return {
     data: sanitizeToolPayload({
       entity: "assessment",
@@ -340,6 +400,7 @@ export async function listAssessments(
         detail: filterLabel,
       },
     ],
+    actions,
   };
 }
 
@@ -439,6 +500,11 @@ export async function listSessions(
         detail: label,
       },
     ],
+    actions: [
+      openPageAction("calendar", "Open Calendar", {
+        filters: { yearLevel },
+      }),
+    ],
   };
 }
 
@@ -501,6 +567,78 @@ export async function searchChangeHistory(
         detail: `Last ${days} days`,
       },
     ],
+    actions: [openPageAction("change-history", "Open Change History")],
+  };
+}
+
+export async function listHomework(
+  actor: AdminAiActor,
+  args: {
+    startDate?: string;
+    endDate?: string;
+    subject?: string;
+    title?: string;
+    yearLevel?: string;
+  },
+): Promise<ToolResult> {
+  assertAdminAiModule(actor, "classes");
+
+  const { start, end } = clampRange(args.startDate, args.endDate);
+  const startStr = start.toISOString().slice(0, 10);
+  const endStr = end.toISOString().slice(0, 10);
+  const subject = args.subject?.trim() || null;
+  const title = args.title?.trim() || null;
+  const yearLevel = args.yearLevel?.trim() || null;
+
+  const { items, totalMatched } = await adminAiRepository.findHomeworkList({
+    startStr,
+    endStr,
+    subject,
+    title,
+    yearGroup: yearLevel,
+    take: LIST_MAX_ROWS,
+  });
+
+  const rows = items.map((h) => ({
+    title: h.title,
+    dueDate: h.dueDate,
+    subject: h.subject?.name ?? null,
+    yearLevel: h.yearGroup || null,
+  }));
+
+  const filterLabel =
+    [title, subject, yearLevel, `${startStr}–${endStr}`]
+      .filter(Boolean)
+      .join(", ") || "homework";
+
+  return {
+    data: sanitizeToolPayload({
+      entity: "homework",
+      matchLevel: rows.length ? "exact" : "none",
+      dateRange: `${startStr}–${endStr}`,
+      returnedCount: rows.length,
+      totalMatched,
+      truncated: totalMatched > rows.length,
+      homework: rows,
+      columns: ["Title", "Due", "Subject", "Year"],
+      exactNote: rows.length
+        ? null
+        : `No homework found for ${filterLabel}.`,
+      responseHint:
+        "Entity is homework. Table: Title | Due | Subject | Year. Use totalMatched for counts. No descriptions, marks, fees, or student lists.",
+    }),
+    sources: [
+      {
+        kind: "database",
+        label: "Homework",
+        detail: filterLabel,
+      },
+    ],
+    actions: [
+      openPageAction("homework", "Open Homework", {
+        filters: { yearLevel },
+      }),
+    ],
   };
 }
 
@@ -513,22 +651,25 @@ export async function getPendingHomeworkSummary(
   const startStr = start.toISOString().slice(0, 10);
   const endStr = end.toISOString().slice(0, 10);
 
-  const homework = await adminAiRepository.findHomeworkInDateRange(
-    startStr,
-    endStr,
-  );
+  const { items: homework, totalMatched } =
+    await adminAiRepository.findHomeworkList({
+      startStr,
+      endStr,
+      take: LIST_MAX_ROWS,
+    });
 
   const homeworkIds = homework.map((h) => h.id);
   if (homeworkIds.length === 0) {
     return {
-      data: {
+      data: sanitizeToolPayload({
         startDate: startStr,
         endDate: endStr,
         homeworkCount: 0,
+        totalMatched: 0,
         assignedStudents: 0,
         submittedCount: 0,
         pendingCount: 0,
-      },
+      }),
       sources: [
         {
           kind: "database",
@@ -536,6 +677,7 @@ export async function getPendingHomeworkSummary(
           detail: `${startStr}–${endStr}`,
         },
       ],
+      actions: [openPageAction("homework", "Open Homework")],
     };
   }
 
@@ -548,9 +690,13 @@ export async function getPendingHomeworkSummary(
       startDate: startStr,
       endDate: endStr,
       homeworkCount: homework.length,
+      totalMatched,
+      truncated: totalMatched > homework.length,
       assignedStudents: assigned,
       submittedCount: submitted,
       pendingCount: Math.max(0, assigned - submitted),
+      note:
+        "Submission counts cover the returned homework rows only when the list is truncated.",
       items: homework.slice(0, 15).map((h) => ({
         title: h.title,
         dueDate: h.dueDate,
@@ -564,6 +710,7 @@ export async function getPendingHomeworkSummary(
         detail: `${startStr}–${endStr}`,
       },
     ],
+    actions: [openPageAction("homework", "Open Homework")],
   };
 }
 
@@ -626,6 +773,7 @@ export async function getEnquiryPipelineSummary(
         detail: "Aggregate by stage",
       },
     ],
+    actions: [openPageAction("enquiries", "Open Enquiries")],
   };
 }
 
@@ -649,6 +797,7 @@ export async function getPendingEnrollmentSummary(
         detail: "Status = PENDING",
       },
     ],
+    actions: [openPageAction("enrolments", "Open Enrolments")],
   };
 }
 
@@ -656,16 +805,133 @@ export async function getOpenTasksSummary(
   actor: AdminAiActor,
 ): Promise<ToolResult> {
   assertAdminAiModule(actor, "tasks");
-  const openCount = await adminAiRepository.countOpenTasks();
+  const [openCount, overdueCount] = await Promise.all([
+    adminAiRepository.countOpenTasks(),
+    adminAiRepository.countOverdueOpenTasks(),
+  ]);
 
   return {
-    data: sanitizeToolPayload({ openTaskCount: openCount }),
+    data: sanitizeToolPayload({
+      openTaskCount: openCount,
+      overdueOpenTaskCount: overdueCount,
+      responseHint:
+        "Short counts only. Prefer overdueOpenTaskCount when the user asks about overdue tasks.",
+    }),
     sources: [
       {
         kind: "database",
         label: "Admin tasks",
-        detail: "OPEN tasks",
+        detail: "OPEN + overdue",
       },
+    ],
+    actions: [openPageAction("tasks", "Open Tasks")],
+  };
+}
+
+/**
+ * Compact read-only ops KPIs for dashboard-style questions.
+ * Aggregates only — no PII, fees, or credentials.
+ */
+export async function getOpsSnapshot(
+  actor: AdminAiActor,
+): Promise<ToolResult> {
+  assertAdminAiModule(actor, "classes");
+
+  const week = clampRange(undefined, undefined);
+  const day = dayBoundsInClassTz();
+
+  const [
+    openTasks,
+    overdueTasks,
+    pendingEnrolments,
+    activeEnrolments,
+    activeStudents,
+    activeStaff,
+    classCount,
+    enquiryStages,
+    attendanceRows,
+    absences,
+  ] = await Promise.all([
+    adminAiRepository.countOpenTasks(),
+    adminAiRepository.countOverdueOpenTasks(),
+    adminAiRepository.countPendingEnrollments(),
+    adminAiRepository.countActiveEnrollments(),
+    adminAiRepository.countActiveUsersByRole(UserRole.STUDENT),
+    adminAiRepository.countActiveUsersByRole(UserRole.STAFF),
+    adminAiRepository.countClasses(),
+    adminAiRepository.getEnquiryPipelineAggregates(),
+    adminAiRepository.getAttendanceStatusCounts(week.start, week.endExclusive),
+    adminAiRepository.findTodaysAbsences(day.start, day.end, null),
+  ]);
+
+  const attendanceByStatus: Record<string, number> = {};
+  let attendanceTotal = 0;
+  for (const row of attendanceRows) {
+    const count = Number(row.count) || 0;
+    attendanceByStatus[row.status] = count;
+    attendanceTotal += count;
+  }
+  const presentOrLate =
+    (attendanceByStatus.PRESENT ?? 0) + (attendanceByStatus.LATE ?? 0);
+  const attendanceRate =
+    attendanceTotal > 0
+      ? Number(((presentOrLate / attendanceTotal) * 100).toFixed(1))
+      : null;
+
+  const openEnquiries = enquiryStages
+    .filter((row) => row.stageKind === "OPEN")
+    .reduce((sum, row) => sum + (Number(row.count) || 0), 0);
+
+  return {
+    data: sanitizeToolPayload({
+      entity: "ops_snapshot",
+      asOfDate: day.label,
+      people: {
+        activeStudents,
+        activeStaffTeachers: activeStaff,
+      },
+      classes: {
+        classCount,
+      },
+      enrolments: {
+        activeEnrolments,
+        pendingEnrolments,
+      },
+      enquiries: {
+        openEnquiries,
+      },
+      tasks: {
+        openTasks,
+        overdueOpenTasks: overdueTasks,
+      },
+      attendanceLast7Days: {
+        totalRecords: attendanceTotal,
+        byStatus: attendanceByStatus,
+        presentOrLateRatePercent: attendanceRate,
+      },
+      absencesToday: {
+        count: absences.length,
+        date: day.label,
+        truncated: absences.length >= 60,
+      },
+      unavailable: [
+        "Fee / payment ledgers are not available via Admin AI.",
+        "WWCC / compliance credentials are not available via Admin AI.",
+      ],
+      responseHint:
+        "Short KPI summary for dashboard-style questions. Use exact numbers. Do not invent fees or credentials. Mention absencesToday only if relevant.",
+    }),
+    sources: [
+      {
+        kind: "database",
+        label: "Ops snapshot",
+        detail: "Aggregates only",
+      },
+    ],
+    actions: [
+      openPageAction("dashboard", "Open Dashboard"),
+      openPageAction("tasks", "Open Tasks"),
+      openPageAction("attendance", "Open Attendance"),
     ],
   };
 }
