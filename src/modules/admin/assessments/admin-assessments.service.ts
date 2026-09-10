@@ -1476,6 +1476,24 @@ export class AdminAssessmentsService {
     submission.markNotes = input.markNotes?.trim() || null;
     await AppDataSource.getRepository(AssessmentSubmission).save(submission);
 
+    try {
+      const {
+        queueStudentKnowledgeIngest,
+        studentKnowledgeIngestService,
+      } = await import("../../coach/student-knowledge-ingest.service.js");
+      queueStudentKnowledgeIngest(
+        () =>
+          studentKnowledgeIngestService.upsertAssessmentForUser(
+            studentId,
+            assessmentId,
+            actor.id,
+          ),
+        "assessment-mark",
+      );
+    } catch {
+      /* optional ingest */
+    }
+
     if (assessment.kind === "ENTRANCE") {
       const cutOff = marksNumber(assessment.cutOffMarks);
       if (cutOff != null) {

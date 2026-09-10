@@ -395,6 +395,24 @@ export class AdminAttendanceService {
     }
 
     await AppDataSource.getRepository(AttendanceRecord).save(record);
+
+    try {
+      const {
+        queueStudentKnowledgeIngest,
+        studentKnowledgeIngestService,
+      } = await import("../../coach/student-knowledge-ingest.service.js");
+      queueStudentKnowledgeIngest(
+        () =>
+          studentKnowledgeIngestService.upsertAttendanceForUser(
+            record.studentId,
+            record.sessionId,
+          ),
+        "admin-absence-update",
+      );
+    } catch {
+      /* optional */
+    }
+
     return this.toAbsenceDto(record);
   }
 

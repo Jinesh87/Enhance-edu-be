@@ -328,13 +328,35 @@ export class AttendanceRepository {
   ): Promise<AttendanceRecord> {
     const record = this.attendance.create(data);
 
-    return this.attendance.save(record);
+    const saved = await this.attendance.save(record);
+    this.queueAttendanceKnowledge(saved);
+    return saved;
   }
 
   async saveAttendanceRecord(
     record: AttendanceRecord,
   ): Promise<AttendanceRecord> {
-    return this.attendance.save(record);
+    const saved = await this.attendance.save(record);
+    this.queueAttendanceKnowledge(saved);
+    return saved;
+  }
+
+  private queueAttendanceKnowledge(record: AttendanceRecord) {
+    if (!record.studentId || !record.sessionId) return;
+    void import("../../coach/student-knowledge-ingest.service.js")
+      .then(({ queueStudentKnowledgeIngest, studentKnowledgeIngestService }) => {
+        queueStudentKnowledgeIngest(
+          () =>
+            studentKnowledgeIngestService.upsertAttendanceForUser(
+              record.studentId,
+              record.sessionId,
+            ),
+          "attendance-upsert",
+        );
+      })
+      .catch(() => {
+        /* optional */
+      });
   }
 
   async findUnresolvedAbsences(
