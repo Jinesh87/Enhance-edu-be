@@ -83,6 +83,10 @@ export class LearningSet {
   @Column({ type: "numeric", precision: 6, scale: 2, default: 1 })
   marksPerQuestion!: string;
 
+  /** Quiz deadline (null for flashcards/revision, or unset quiz). */
+  @Column({ type: "timestamptz", nullable: true })
+  dueAt!: Date | null;
+
   @Column({ type: "varchar", length: 20, default: "DRAFT" })
   @Index()
   status!: LearningSetStatus;
