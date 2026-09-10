@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import {
   CHAT_MODEL,
   createChatCompletion,
+  streamChatCompletion,
 } from "../../../common/ai/openai-client.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { AppDataSource } from "../../../config/data-source.js";
@@ -394,6 +395,284 @@ export class AdminAiService {
         "Admin AI is temporarily unavailable.",
         "ADMIN_AI_UNAVAILABLE",
       );
+    }
+  }
+
+  /**
+   * Same orchestration as sendMessage, but streams the final answer over SSE.
+   * Tool rounds stream internally; content deltas are only emitted for the
+   * final assistant text (when there are no tool_calls).
+   */
+  async sendMessageStream(
+    userId: string,
+    input: { content: string; threadId?: string | null },
+    emit: (event: string, data: unknown) => void,
+    signal?: AbortSignal,
+  ) {
+    const requestId = crypto.randomUUID();
+    const actor = await this.requireActor(userId);
+    await assertAdminAiRateLimit(actor.id);
+
+    const content = sanitizeAdminAiText(
+      input.content,
+      env.ADMIN_AI_MAX_MESSAGE_CHARS,
+    );
+    if (!content) {
+      throw new AppError(400, "Message is required", "VALIDATION_ERROR");
+    }
+
+    let thread: AdminAiThread;
+    if (input.threadId) {
+      thread = await this.requireOwnedThread(actor.id, input.threadId);
+    } else {
+      thread = this.threads.create({
+        ownerUserId: actor.id,
+        title: content.slice(0, 80),
+        lastMessageAt: null,
+      });
+      await this.threads.save(thread);
+    }
+
+    if (!thread.title) {
+      thread.title = content.slice(0, 80);
+      await this.threads.save(thread);
+    }
+
+    const userMessage = this.messages.create({
+      threadId: thread.id,
+      role: "user",
+      content,
+      status: "COMPLETE",
+      mode: null,
+      sources: null,
+    });
+    await this.messages.save(userMessage);
+
+    await writeAdminAiAudit({
+      requestId,
+      actor,
+      conversationId: thread.id,
+      eventType: "AI_REQUEST_CREATED",
+      resultStatus: "started",
+    });
+
+    emit("meta", {
+      requestId,
+      thread: toThreadDto(thread),
+      userMessage: toMessageDto(userMessage),
+    });
+    emit("status", { phase: "thinking" });
+
+    const history = await this.messages.find({
+      where: { threadId: thread.id },
+      order: { createdAt: "DESC" },
+      take: HISTORY_LIMIT,
+    });
+    history.reverse();
+
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: ADMIN_AI_SYSTEM_PROMPT },
+      ...history
+        .filter(
+          (msg) =>
+            msg.id !== userMessage.id && msg.status === "COMPLETE",
+        )
+        .map((msg) => ({
+          role:
+            msg.role === "assistant"
+              ? ("assistant" as const)
+              : ("user" as const),
+          content: msg.content,
+        })),
+      { role: "user", content },
+    ];
+
+    const toolNames: string[] = [];
+    const collectedSources: AdminAiSource[] = [];
+    const documentIds: string[] = [];
+
+    const isAborted = () => Boolean(signal?.aborted);
+
+    try {
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+        if (isAborted()) {
+          const abortError = new Error("Aborted");
+          abortError.name = "AbortError";
+          throw abortError;
+        }
+
+        let emittedText = false;
+        const streamed = await streamChatCompletion(
+          {
+            model: CHAT_MODEL,
+            temperature: 0.2,
+            max_tokens: MAX_COMPLETION_TOKENS,
+            messages,
+            tools: ADMIN_AI_TOOL_DEFINITIONS,
+            tool_choice: "auto",
+          },
+          {
+            feature: "admin_ai_chat",
+            userId: actor.id,
+            metadata: {
+              requestId,
+              threadId: thread.id,
+              round,
+              streamed: true,
+            },
+          },
+          {
+            signal,
+            onDelta: (text) => {
+              emittedText = true;
+              emit("delta", { text });
+            },
+          },
+        );
+
+        const toolCalls = streamed.toolCalls;
+        if (toolCalls.length === 0) {
+          const replyText =
+            streamed.content.trim() ||
+            "I could not find authorized data for that request.";
+          const mode = inferModeFromTools(toolNames) as AdminAiMode;
+          const sources = mergeSources(collectedSources);
+
+          const assistantMessage = this.messages.create({
+            threadId: thread.id,
+            role: "assistant",
+            content: replyText,
+            status: "COMPLETE",
+            mode,
+            sources: sources.length ? sources : null,
+          });
+          await this.messages.save(assistantMessage);
+
+          thread.lastMessageAt = new Date();
+          thread.updatedAt = new Date();
+          await this.threads.save(thread);
+
+          await writeAdminAiAudit({
+            requestId,
+            actor,
+            conversationId: thread.id,
+            eventType: "AI_REQUEST_COMPLETED",
+            mode,
+            toolNames,
+            scopeMetadata: { sourceCount: sources.length },
+            documentIds: documentIds.length ? documentIds : null,
+            resultStatus: "success",
+          });
+
+          emit("done", {
+            requestId,
+            thread: toThreadDto(thread, previewForSidebar(replyText)),
+            userMessage: toMessageDto(userMessage),
+            assistantMessage: toMessageDto(assistantMessage),
+          });
+          return;
+        }
+
+        if (emittedText) {
+          emit("clear", {});
+        }
+
+        const names = toolCalls
+          .filter((call) => call.type === "function")
+          .map((call) => call.function.name);
+        emit("status", { phase: "tools", tools: names });
+
+        messages.push({
+          role: "assistant",
+          content: streamed.content || null,
+          tool_calls: toolCalls,
+        });
+
+        for (const call of toolCalls) {
+          if (call.type !== "function") continue;
+          const name = call.function.name;
+          toolNames.push(name);
+          try {
+            const result = await executeAdminAiTool(
+              actor,
+              name,
+              call.function.arguments,
+            );
+            collectedSources.push(...result.sources);
+            if (result.documentIds?.length) {
+              documentIds.push(...result.documentIds);
+            }
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: JSON.stringify(result.data),
+            });
+          } catch (error) {
+            const message =
+              error instanceof AppError &&
+              error.code === "ADMIN_AI_MODULE_FORBIDDEN"
+                ? "You do not have permission to access this information."
+                : "I could not find authorized data for that request.";
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: JSON.stringify({ error: message }),
+            });
+          }
+        }
+      }
+
+      throw new AppError(
+        503,
+        "Admin AI is temporarily unavailable.",
+        "ADMIN_AI_TOOL_LIMIT",
+      );
+    } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") {
+        try {
+          userMessage.status = "FAILED";
+          await this.messages.save(userMessage);
+        } catch {
+          /* best-effort */
+        }
+        await writeAdminAiAudit({
+          requestId,
+          actor,
+          conversationId: thread.id,
+          eventType: "AI_REQUEST_FAILED",
+          toolNames,
+          resultStatus: "failure",
+          errorCode: "ADMIN_AI_ABORTED",
+        });
+        return;
+      }
+
+      try {
+        userMessage.status = "FAILED";
+        await this.messages.save(userMessage);
+      } catch {
+        /* best-effort status update */
+      }
+
+      await writeAdminAiAudit({
+        requestId,
+        actor,
+        conversationId: thread.id,
+        eventType: "AI_REQUEST_FAILED",
+        toolNames,
+        resultStatus: "failure",
+        errorCode:
+          error instanceof AppError ? error.code : "ADMIN_AI_UNAVAILABLE",
+      });
+
+      emit("error", {
+        message:
+          error instanceof AppError
+            ? error.message
+            : "Admin AI is temporarily unavailable.",
+        code:
+          error instanceof AppError ? error.code : "ADMIN_AI_UNAVAILABLE",
+      });
     }
   }
 }

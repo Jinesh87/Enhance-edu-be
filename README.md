@@ -85,24 +85,25 @@ Conversations are soft-deleted (`deletedAt`). Audit events store metadata only (
 
 ### Allowed tools
 
-Configured in `src/modules/admin/ai/tools.ts` (allowlist). Examples: attendance summary, low-attendance classes, timetable, homework, enquiry pipeline, pending enrolments, open tasks, syllabus document search, draft context.
+Configured in `src/modules/admin/ai/tools.ts` (allowlist). Search/list: teachers, students, classes, subjects, terms, enrolments, enquiries, tasks, assessments, sessions, people, classrooms, syllabi, change history, settings summary, AI usage (Super Admin). Also: attendance, timetable, homework, pipeline summaries, syllabus RAG, draft context.
 
 ### Known limitations
 
 - No overdue-fee ledger, parent-feedback, or notice publish/send from chat
 - Document mode searches indexed syllabus content only
-- Responses are request/response (not streamed) in v1
+- Chat UI uses SSE streaming (`POST /messages/stream`); non-stream `POST /messages` remains available
 
 ### API
 
-| Method | Path |
-| --- | --- |
-| `GET` | `/api/admin/ai/threads` |
-| `POST` | `/api/admin/ai/threads` |
-| `GET` | `/api/admin/ai/threads/:threadId` |
-| `PATCH` | `/api/admin/ai/threads/:threadId` |
-| `DELETE` | `/api/admin/ai/threads/:threadId` |
-| `POST` | `/api/admin/ai/messages` |
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET` | `/api/admin/ai/threads` | |
+| `POST` | `/api/admin/ai/threads` | |
+| `GET` | `/api/admin/ai/threads/:threadId` | |
+| `PATCH` | `/api/admin/ai/threads/:threadId` | Documented; not implemented |
+| `DELETE` | `/api/admin/ai/threads/:threadId` | Soft delete |
+| `POST` | `/api/admin/ai/messages` | Non-stream JSON |
+| `POST` | `/api/admin/ai/messages/stream` | SSE: `meta`, `status`, `delta`, `clear`, `done`, `error` |
 
 ## Email Configuration (Super Admin only)
 
