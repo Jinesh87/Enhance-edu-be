@@ -40,5 +40,10 @@ router.post(
   validate(sendAdminAiMessageSchema),
   adminAiController.sendMessage,
 );
+router.post(
+  "/messages/stream",
+  validate(sendAdminAiMessageSchema),
+  adminAiController.sendMessageStream,
+);
 
 export default router;

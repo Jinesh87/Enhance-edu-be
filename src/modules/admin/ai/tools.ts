@@ -12,10 +12,26 @@ import {
   getOpenTasksSummary,
   getPendingEnrollmentSummary,
   getPendingHomeworkSummary,
+  getHolidays,
   getTermClassSchedule,
   getTodaysAbsences,
   getTodayTimetable,
-  getHolidays,
+  listAssessments,
+  listClassrooms,
+  listOpenTasks,
+  listSessions,
+  listSubjects,
+  listSyllabi,
+  listTerms,
+  searchChangeHistory,
+  searchClasses,
+  searchEnquiries,
+  searchEnrolments,
+  searchPeople,
+  searchStudents,
+  searchTeachers,
+  getAiUsageSummary,
+  getInstitutionSettingsSummary,
   type ToolResult,
 } from "./tool-services.js";
 
@@ -75,7 +91,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "getTermClassSchedule",
         description:
-          "Weekly class timetable for a term from the class schedule (e.g. Term 1, Term 2). Use this when the user asks for a term timetable, Term 1/Term 2 classes, or schedule by weekday.",
+          "Weekly class timetable for a term from the class schedule (e.g. Term 1, Term 2). Use this when the user asks for a term timetable, Term 1/Term 2 classes, or schedule by weekday. Do NOT use this to list teachers by subject — use searchTeachers.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -86,6 +102,321 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
             },
             yearLevel: { type: "string" },
             academicYear: { type: "string", description: "e.g. 2026" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchTeachers",
+        description:
+          "List unique assigned teachers (not sessions). Use for 'list teachers', 'Biology teachers', 'who teaches Maths'. Apply only filters the user stated. Returns Teacher/Subject/Year/Term rows deduped by assignment. Excludes unassigned. Does not expand into days/times.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subject: {
+              type: "string",
+              description: "Subject or class name hint, e.g. Biology",
+            },
+            teacherName: {
+              type: "string",
+              description: "Teacher name filter when known",
+            },
+            yearLevel: {
+              type: "string",
+              description: "Only if the user specified a year level",
+            },
+            term: {
+              type: "string",
+              description: "Only if the user specified a term",
+            },
+            academicYear: {
+              type: "string",
+              description: "Only if the user specified an academic year",
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchStudents",
+        description:
+          "List unique enrolled students (ACTIVE enrolments). Use for 'list all students', 'Year 1 Biology students', student name lookup. Apply only filters the user stated. Returns Student/Year/Term/Subjects. Not session rows.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            studentName: { type: "string" },
+            subject: { type: "string" },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            academicYear: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchClasses",
+        description:
+          "List unique classes (not timetable sessions). Use for 'list Biology classes', 'Term 2 classes'. Returns Class/Subject/Year/Term/Teacher.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subject: { type: "string" },
+            className: { type: "string" },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            academicYear: { type: "string" },
+            teacherName: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listSubjects",
+        description:
+          "List subjects in the catalogue. Use for 'list all subjects', 'subjects for Year 1'.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            name: { type: "string" },
+            yearLevel: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listTerms",
+        description:
+          "List academic terms with dates. Use for 'list terms', 'Term 2 dates', 'terms for Year 1'.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            term: { type: "string" },
+            yearLevel: { type: "string" },
+            academicYear: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchEnrolments",
+        description:
+          "List enrolments (ACTIVE and/or PENDING). Use for 'list enrolments', 'pending enrolments', 'enrolments for Year 1'. No fees or contact details.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            studentName: { type: "string" },
+            status: {
+              type: "string",
+              description: "ACTIVE, PENDING, or ALL",
+            },
+            subject: { type: "string" },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            academicYear: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchEnquiries",
+        description:
+          "List enquiries by student/guardian/stage/subject. Use for 'list enquiries', 'enquiries in Trial stage'. Never returns emails or phones.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            studentName: { type: "string" },
+            guardianName: { type: "string" },
+            stage: { type: "string" },
+            subject: { type: "string" },
+            yearLevel: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listOpenTasks",
+        description:
+          "List admin tasks (default OPEN). Use for 'list open tasks', 'absence chase tasks'. Not just a count.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            status: {
+              type: "string",
+              description: "OPEN, DONE, or ALL (default OPEN)",
+            },
+            studentName: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listAssessments",
+        description:
+          "List assessments (not student marks). Use for 'list assessments', 'upcoming Biology assessments'.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subject: { type: "string" },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            status: { type: "string" },
+            name: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listSessions",
+        description:
+          "List class/assessment sessions for a date range (default today, max 14 days). Use only when the user asks for sessions or a day/week timetable of occurrences — not for listing classes or teachers.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            startDate: { type: "string", description: "YYYY-MM-DD" },
+            endDate: { type: "string", description: "YYYY-MM-DD" },
+            yearLevel: { type: "string" },
+            subject: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchPeople",
+        description:
+          "List people (staff, office, guardians, students as users). Name | Role | Status only. Never returns email or phone.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            name: { type: "string" },
+            role: {
+              type: "string",
+              description: "SUPER_ADMIN, OFFICE_STAFF, STAFF, STUDENT, GUARDIAN",
+            },
+            status: {
+              type: "string",
+              description: "ACTIVE, INVITED, DEACTIVATED",
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listClassrooms",
+        description: "List classrooms/rooms in the catalogue.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            name: { type: "string" },
+            activeOnly: { type: "boolean" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listSyllabi",
+        description:
+          "List syllabus catalogue entries (titles/subjects). For document content search use searchAuthorizedSyllabusDocuments.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subject: { type: "string" },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            academicYear: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchChangeHistory",
+        description:
+          "Recent change-history / audit entries (who changed what). Metadata only, no full before/after dumps.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            recordType: { type: "string" },
+            actorName: { type: "string" },
+            action: {
+              type: "string",
+              description: "CREATED, EDITED, DELETED, APPROVED, EXPORTED, DENIED",
+            },
+            days: {
+              type: "number",
+              description: "Lookback days (default 7, max 90)",
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "getInstitutionSettingsSummary",
+        description:
+          "Non-secret institution settings flags (2FA, sandbox, guardian portal, OpenAI configured yes/no). Never returns API keys.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "getAiUsageSummary",
+        description:
+          "OpenAI usage/cost summary. SUPER_ADMIN only. Use for AI spend/usage questions.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            days: {
+              type: "number",
+              description: "Lookback days (default 30, max 90)",
+            },
           },
         },
       },
@@ -302,6 +633,111 @@ export async function executeAdminAiTool(
         term: asString(args.term),
         yearLevel: asString(args.yearLevel),
         academicYear: asString(args.academicYear),
+      });
+    case "searchTeachers":
+      return searchTeachers(actor, {
+        subject: asString(args.subject),
+        teacherName: asString(args.teacherName),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        academicYear: asString(args.academicYear),
+      });
+    case "searchStudents":
+      return searchStudents(actor, {
+        studentName: asString(args.studentName),
+        subject: asString(args.subject),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        academicYear: asString(args.academicYear),
+      });
+    case "searchClasses":
+      return searchClasses(actor, {
+        subject: asString(args.subject),
+        className: asString(args.className),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        academicYear: asString(args.academicYear),
+        teacherName: asString(args.teacherName),
+      });
+    case "listSubjects":
+      return listSubjects(actor, {
+        name: asString(args.name),
+        yearLevel: asString(args.yearLevel),
+      });
+    case "listTerms":
+      return listTerms(actor, {
+        term: asString(args.term),
+        yearLevel: asString(args.yearLevel),
+        academicYear: asString(args.academicYear),
+      });
+    case "searchEnrolments":
+      return searchEnrolments(actor, {
+        studentName: asString(args.studentName),
+        status: asString(args.status),
+        subject: asString(args.subject),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        academicYear: asString(args.academicYear),
+      });
+    case "searchEnquiries":
+      return searchEnquiries(actor, {
+        studentName: asString(args.studentName),
+        guardianName: asString(args.guardianName),
+        stage: asString(args.stage),
+        subject: asString(args.subject),
+        yearLevel: asString(args.yearLevel),
+      });
+    case "listOpenTasks":
+      return listOpenTasks(actor, {
+        status: asString(args.status),
+        studentName: asString(args.studentName),
+      });
+    case "listAssessments":
+      return listAssessments(actor, {
+        subject: asString(args.subject),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        status: asString(args.status),
+        name: asString(args.name),
+      });
+    case "listSessions":
+      return listSessions(actor, {
+        startDate: asString(args.startDate),
+        endDate: asString(args.endDate),
+        yearLevel: asString(args.yearLevel),
+        subject: asString(args.subject),
+      });
+    case "searchPeople":
+      return searchPeople(actor, {
+        name: asString(args.name),
+        role: asString(args.role),
+        status: asString(args.status),
+      });
+    case "listClassrooms":
+      return listClassrooms(actor, {
+        name: asString(args.name),
+        activeOnly:
+          typeof args.activeOnly === "boolean" ? args.activeOnly : undefined,
+      });
+    case "listSyllabi":
+      return listSyllabi(actor, {
+        subject: asString(args.subject),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        academicYear: asString(args.academicYear),
+      });
+    case "searchChangeHistory":
+      return searchChangeHistory(actor, {
+        recordType: asString(args.recordType),
+        actorName: asString(args.actorName),
+        action: asString(args.action),
+        days: asNumber(args.days),
+      });
+    case "getInstitutionSettingsSummary":
+      return getInstitutionSettingsSummary(actor);
+    case "getAiUsageSummary":
+      return getAiUsageSummary(actor, {
+        days: asNumber(args.days),
       });
     case "getTodaysAbsences":
       return getTodaysAbsences(actor, {
