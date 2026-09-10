@@ -36,10 +36,18 @@ export type AdminAiGenerateReportAction = {
   label: string;
 };
 
+/** Focus chat composer so the user can refine the preview before PDF. */
+export type AdminAiAdjustReportAction = {
+  type: "ADJUST_REPORT";
+  draftId: string;
+  label: string;
+};
+
 export type AdminAiUiAction =
   | AdminAiOpenPageAction
   | AdminAiDownloadReportAction
-  | AdminAiGenerateReportAction;
+  | AdminAiGenerateReportAction
+  | AdminAiAdjustReportAction;
 
 export type ToolResult = {
   data: unknown;
@@ -96,6 +104,17 @@ export function generateReportAction(
   };
 }
 
+export function adjustReportAction(
+  draftId: string,
+  label = "Adjust preview",
+): AdminAiAdjustReportAction {
+  return {
+    type: "ADJUST_REPORT",
+    draftId: draftId.trim(),
+    label,
+  };
+}
+
 export function actionSource(action: AdminAiUiAction): AdminAiSource {
   if (action.type === "DOWNLOAD_REPORT") {
     return {
@@ -109,6 +128,13 @@ export function actionSource(action: AdminAiUiAction): AdminAiSource {
       kind: "action",
       label: action.label,
       generateReport: action,
+    };
+  }
+  if (action.type === "ADJUST_REPORT") {
+    return {
+      kind: "action",
+      label: action.label,
+      adjustReport: action,
     };
   }
   return {

@@ -38,6 +38,12 @@ export type AdminAiSource = {
     draftId: string;
     label: string;
   } | null;
+  /** Present when kind is "action" and type is ADJUST_REPORT. */
+  adjustReport?: {
+    type: "ADJUST_REPORT";
+    draftId: string;
+    label: string;
+  } | null;
 };
 
 @Entity("admin_ai_messages")

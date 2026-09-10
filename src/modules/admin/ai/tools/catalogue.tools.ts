@@ -643,7 +643,7 @@ export async function searchPeople(
         "Role labels: Teacher (tutors), Staff (office), Guardian, Student, Application Owner. Do not show raw enum codes.",
       exactNote: rows.length ? null : `No people found for ${filterLabel}.`,
       responseHint:
-        "Entity is people. Table: Name | Role | Status. Use the role labels exactly as given (Teacher/Staff/Guardian). Never show emails, phones, or IDs.",
+        "Entity is people. Table: Name | Role | Status. Use the role labels exactly as given (Teacher/Staff/Guardian). For list-all-teachers answers this is the correct full directory (assigned or not). Never show emails, phones, or IDs. Never mention Generate PDF.",
     }),
     sources: [
       {

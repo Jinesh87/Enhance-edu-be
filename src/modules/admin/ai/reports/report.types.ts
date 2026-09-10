@@ -26,6 +26,8 @@ export type AdminAiReportFilters = {
   threshold?: number | null;
   status?: string | null;
   academicYear?: string | null;
+  /** Optional person name scope (student / enquiry student). */
+  studentName?: string | null;
 };
 
 export type ReportTablePayload = {
@@ -36,7 +38,60 @@ export type ReportTablePayload = {
   rows: string[][];
   truncated: boolean;
   totalMatched?: number;
+  /** All safe columns that can be selected for this report type. */
+  availableColumns?: string[];
 };
+
+/** Requests that must never appear as report columns. */
+export function isBlockedReportColumnRequest(raw: string): boolean {
+  const value = raw.trim().toLowerCase();
+  if (!value) return false;
+  return (
+    /\b(email|e-mail|phone|mobile|telephone|password|passwd|secret|token|api\s*key|fee|fees|tuition|address|street|suburb|postcode|postal|dob|date\s*of\s*birth|ssn|passport|credit\s*card|bank)\b/i.test(
+      value,
+    ) || value.includes("@")
+  );
+}
+
+/** Map user/LLM column phrases onto allowlisted column labels. */
+export function resolveReportColumnLabel(
+  requested: string,
+  available: string[],
+): string | null {
+  const raw = requested.trim().toLowerCase();
+  if (!raw || !available.length) return null;
+
+  const exact = available.find((col) => col.toLowerCase() === raw);
+  if (exact) return exact;
+
+  const synonyms: Record<string, string[]> = {
+    guardian: ["guardian", "guardians", "guardian details", "guardian name", "parent", "parents", "parent name", "carer"],
+    student: ["student", "students", "student name", "learner"],
+    subjects: ["subjects", "subject", "courses"],
+    status: ["status", "enrolment status", "enrollment status"],
+    year: ["year", "year level", "grade"],
+    term: ["term", "semester"],
+    owner: ["owner", "assigned to", "staff owner"],
+    stage: ["stage", "pipeline stage"],
+    rate: ["rate", "attendance rate", "attendance %", "percent"],
+    class: ["class", "class name"],
+    teacher: ["teacher", "tutor"],
+    task: ["task", "tasks", "title"],
+    due: ["due", "due date"],
+  };
+
+  for (const col of available) {
+    const key = col.toLowerCase();
+    const aliasList = synonyms[key] ?? [];
+    if (aliasList.some((alias) => raw === alias || raw.includes(alias))) {
+      return col;
+    }
+    if (raw.includes(key) || key.includes(raw)) {
+      return col;
+    }
+  }
+  return null;
+}
 
 export const REPORT_MODULE: Record<AdminAiReportType, AdminModuleId> = {
   ATTENDANCE_SUMMARY: "attendance",
