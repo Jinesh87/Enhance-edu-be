@@ -50,6 +50,9 @@ import {
   SyllabusChunk,
   CoachThread,
   CoachMessage,
+  GuardianCoachThread,
+  GuardianCoachMessage,
+  StudentKnowledgeChunk,
   AdminAiThread,
   AdminAiMessage,
   AdminAiAuditLog,
@@ -684,6 +687,28 @@ export async function ensureCoachSchema() {
       ON coach_messages ("threadId");
     CREATE INDEX IF NOT EXISTS "IDX_coach_messages_threadId_createdAt"
       ON coach_messages ("threadId", "createdAt");
+
+    CREATE TABLE IF NOT EXISTS student_knowledge_chunks (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "studentId" uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      "sourceType" varchar(40) NOT NULL,
+      "sourceId" varchar(120) NOT NULL,
+      "sourceLabel" varchar(160),
+      "content" text NOT NULL,
+      "occurredOn" date,
+      "embeddingJson" jsonb,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      UNIQUE ("studentId", "sourceType", "sourceId")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_student_knowledge_chunks_studentId"
+      ON student_knowledge_chunks ("studentId");
+    CREATE INDEX IF NOT EXISTS "IDX_student_knowledge_chunks_student_updated"
+      ON student_knowledge_chunks ("studentId", "updatedAt");
+
+    -- TypeORM synchronize may create this table first without embedding columns.
+    ALTER TABLE student_knowledge_chunks
+      ADD COLUMN IF NOT EXISTS "embeddingJson" jsonb;
   `);
 
   if (hasVector) {
@@ -701,6 +726,23 @@ export async function ensureCoachSchema() {
       logger.warn(
         { err: error },
         "Could not create HNSW index on syllabus_chunks.embedding",
+      );
+    }
+
+    await bootstrap.query(`
+      ALTER TABLE student_knowledge_chunks
+        ADD COLUMN IF NOT EXISTS "embedding" vector(1536);
+    `);
+    try {
+      await bootstrap.query(`
+        CREATE INDEX IF NOT EXISTS "IDX_student_knowledge_chunks_embedding_hnsw"
+          ON student_knowledge_chunks
+          USING hnsw ("embedding" vector_cosine_ops);
+      `);
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "Could not create HNSW index on student_knowledge_chunks.embedding",
       );
     }
   }
@@ -1002,6 +1044,9 @@ export const AppDataSource = new DataSource({
     SyllabusChunk,
     CoachThread,
     CoachMessage,
+    GuardianCoachThread,
+    GuardianCoachMessage,
+    StudentKnowledgeChunk,
     AdminAiThread,
     AdminAiMessage,
     AdminAiAuditLog,

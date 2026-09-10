@@ -30,6 +30,7 @@ import adminAuditRouter from "./modules/admin/audit/admin-audit.routes.js";
 import adminEnquiriesRouter from "./modules/admin/enquiries/admin-enquiries.routes.js";
 import guardianStudentsRouter from "./modules/guardian/students/guardian-students.routes.js";
 import guardianPortalRouter from "./modules/guardian/portal/guardian-portal.routes.js";
+import guardianCoachRouter from "./modules/guardian/coach/guardian-coach.routes.js";
 import studentClassesRouter from "./modules/student/classes/student-classes.routes.js";
 import studentEntranceExamsRouter from "./modules/student/entrance-exams/student-entrance-exams.routes.js";
 import studentCoachRouter from "./modules/student/coach/student-coach.routes.js";
@@ -102,6 +103,7 @@ app.use("/api/admin/ai", adminAiRouter);
 app.use("/api/storage", storageRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
 app.use("/api/guardian/portal-settings", guardianPortalRouter);
+app.use("/api/guardian/coach", guardianCoachRouter);
 app.use("/api/notifications", notificationsRouter);
 
 app.use(errorHandler);
