@@ -9,6 +9,7 @@ import {
   getDraftContext,
   getEnquiryPipelineSummary,
   getLowAttendanceClasses,
+  getLowAttendanceStudents,
   getOpenTasksSummary,
   getOpsSnapshot,
   getPendingEnrollmentSummary,
@@ -34,6 +35,10 @@ import {
   searchTeachers,
   getAiUsageSummary,
   getInstitutionSettingsSummary,
+  saveUserMemory,
+  generateReport,
+  previewReport,
+  updateReportPreview,
   type ToolResult,
 } from "./tool-services.js";
 
@@ -60,7 +65,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "getLowAttendanceClasses",
         description:
-          "Classes with attendance rate below a threshold for a date range.",
+          "Classes (not students) with attendance rate below a threshold. Use only when the user asks about low-attendance classes. For students with low attendance, use getLowAttendanceStudents.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -68,6 +73,30 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
             threshold: { type: "number" },
             startDate: { type: "string" },
             endDate: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "getLowAttendanceStudents",
+        description:
+          "Students with attendance rate below a threshold for a date range. Use for 'students with low attendance', 'who has poor attendance', optional subject filter. Returns Student/Subject/Class/Rate rows. Do NOT use getLowAttendanceClasses for student questions.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            threshold: {
+              type: "number",
+              description: "Percent threshold, default 80",
+            },
+            startDate: { type: "string", description: "YYYY-MM-DD" },
+            endDate: { type: "string", description: "YYYY-MM-DD" },
+            subject: {
+              type: "string",
+              description: "Optional subject or class name filter",
+            },
           },
         },
       },
@@ -317,7 +346,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "searchPeople",
         description:
-          "List people (staff, office, guardians, students as users). Name | Role | Status only. Never returns email or phone.",
+          "List people directory rows. Role filter words: staff/staffs → office Staff; teacher/teachers → Teacher; guardian/parent → Guardian; student → Student. Returns Name | Role label | Status. Role labels are Teacher, Staff, Guardian, Student, Application Owner — never raw STAFF enums. For assigned teaching roster prefer searchTeachers.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -325,7 +354,8 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
             name: { type: "string" },
             role: {
               type: "string",
-              description: "SUPER_ADMIN, OFFICE_STAFF, STAFF, STUDENT, GUARDIAN",
+              description:
+                "staff, teacher, guardian, student, office, or SUPER_ADMIN",
             },
             status: {
               type: "string",
@@ -602,6 +632,154 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "saveUserMemory",
+        description:
+          "Save a scoped preference ONLY when the user explicitly asks to remember something (e.g. 'Remember that I mainly manage Year 10 Maths'). Never auto-save. Use kind=default_filter only if they explicitly ask to always default a view. Store short safe preferences only — never passwords, emails, phones, student PII, medical or financial data.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["content"],
+          properties: {
+            content: {
+              type: "string",
+              description: "Short preference text to remember",
+            },
+            kind: {
+              type: "string",
+              description:
+                "preference (default) or default_filter (only when user said always default…)",
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "previewReport",
+        description:
+          "Build a report preview (table in chat + Generate PDF button). Does NOT create a PDF. Use for build/generate/export/report requests. Allowlisted reportType: ATTENDANCE_SUMMARY, LOW_ATTENDANCE_STUDENTS, LOW_ATTENDANCE_CLASSES, ENROLMENTS, ENQUIRIES, ASSESSMENTS, TIMETABLE, TASKS. Pass only filters the user stated. Never invent URLs or claim the PDF is ready.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["reportType"],
+          properties: {
+            reportType: {
+              type: "string",
+              description:
+                "ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS",
+            },
+            draftId: {
+              type: "string",
+              description: "Existing draft id when refining a prior preview",
+            },
+            columns: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional column labels to include",
+            },
+            filters: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                startDate: { type: "string" },
+                endDate: { type: "string" },
+                yearLevel: { type: "string" },
+                term: { type: "string" },
+                subject: { type: "string" },
+                threshold: { type: "number" },
+                status: { type: "string" },
+                academicYear: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "updateReportPreview",
+        description:
+          "Adjust an existing report draft (filters/columns) and return a fresh preview. Use when the user asks to change the preview. Does NOT create a PDF.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draftId"],
+          properties: {
+            draftId: { type: "string" },
+            reportType: { type: "string" },
+            columns: {
+              type: "array",
+              items: { type: "string" },
+            },
+            addColumns: {
+              type: "array",
+              items: { type: "string" },
+            },
+            removeColumns: {
+              type: "array",
+              items: { type: "string" },
+            },
+            filters: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                startDate: { type: "string" },
+                endDate: { type: "string" },
+                yearLevel: { type: "string" },
+                term: { type: "string" },
+                subject: { type: "string" },
+                threshold: { type: "number" },
+                status: { type: "string" },
+                academicYear: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "generateReport",
+        description:
+          "Alias of previewReport. Previews only — does not create a PDF. Prefer previewReport for new calls.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["reportType"],
+          properties: {
+            reportType: {
+              type: "string",
+              description:
+                "ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS",
+            },
+            format: {
+              type: "string",
+              description: "Ignored; PDF is created only after Generate PDF confirm",
+            },
+            filters: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                startDate: { type: "string" },
+                endDate: { type: "string" },
+                yearLevel: { type: "string" },
+                term: { type: "string" },
+                subject: { type: "string" },
+                threshold: { type: "number" },
+                status: { type: "string" },
+                academicYear: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
   ];
 
 const ALLOWED = new Set(
@@ -625,6 +803,15 @@ function parseArgs(raw: string | null | undefined): Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length ? items : undefined;
 }
 
 function asNumber(value: unknown): number | undefined {
@@ -657,6 +844,13 @@ export async function executeAdminAiTool(
         threshold: asNumber(args.threshold),
         startDate: asString(args.startDate),
         endDate: asString(args.endDate),
+      });
+    case "getLowAttendanceStudents":
+      return getLowAttendanceStudents(actor, {
+        threshold: asNumber(args.threshold),
+        startDate: asString(args.startDate),
+        endDate: asString(args.endDate),
+        subject: asString(args.subject),
       });
     case "getTodayTimetable":
       return getTodayTimetable(actor, {
@@ -822,6 +1016,48 @@ export async function executeAdminAiTool(
       });
     case "getDraftContext":
       return getDraftContext(actor, { topic: asString(args.topic) });
+    case "saveUserMemory":
+      return saveUserMemory(actor, {
+        content: asString(args.content),
+        kind: asString(args.kind),
+      });
+    case "previewReport":
+      return previewReport(actor, {
+        reportType: asString(args.reportType),
+        draftId: asString(args.draftId),
+        columns: asStringArray(args.columns),
+        filters:
+          args.filters &&
+          typeof args.filters === "object" &&
+          !Array.isArray(args.filters)
+            ? (args.filters as Record<string, unknown>)
+            : undefined,
+      });
+    case "updateReportPreview":
+      return updateReportPreview(actor, {
+        draftId: asString(args.draftId),
+        reportType: asString(args.reportType),
+        columns: asStringArray(args.columns),
+        addColumns: asStringArray(args.addColumns),
+        removeColumns: asStringArray(args.removeColumns),
+        filters:
+          args.filters &&
+          typeof args.filters === "object" &&
+          !Array.isArray(args.filters)
+            ? (args.filters as Record<string, unknown>)
+            : undefined,
+      });
+    case "generateReport":
+      return generateReport(actor, {
+        reportType: asString(args.reportType),
+        format: asString(args.format),
+        filters:
+          args.filters &&
+          typeof args.filters === "object" &&
+          !Array.isArray(args.filters)
+            ? (args.filters as Record<string, unknown>)
+            : undefined,
+      });
     default:
       throw new AppError(
         400,

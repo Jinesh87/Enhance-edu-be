@@ -38,6 +38,15 @@ export type LowAttendanceClassRow = {
   presentOrLate: number;
 };
 
+export type LowAttendanceStudentRow = {
+  studentId: string;
+  studentName: string;
+  totalRecords: number;
+  presentOrLate: number;
+  primarySubject: string | null;
+  primaryClassName: string | null;
+};
+
 export type TeacherClassFilters = {
   subject?: string | null;
   teacherName?: string | null;
@@ -221,6 +230,65 @@ export class AdminAiRepository {
       [start, endExclusive, limit],
     );
     return rows as LowAttendanceClassRow[];
+  }
+
+  async getLowAttendanceStudentAggregates(
+    start: Date,
+    endExclusive: Date,
+    options: {
+      thresholdPercent: number;
+      subject?: string | null;
+      limit?: number;
+    },
+  ): Promise<LowAttendanceStudentRow[]> {
+    const limit = options.limit ?? MAX_ROWS;
+    const threshold = options.thresholdPercent;
+    const params: unknown[] = [start, endExclusive, threshold, limit];
+    let subjectFilter = "";
+    if (options.subject?.trim()) {
+      params.push(`%${options.subject.trim()}%`);
+      subjectFilter = `
+      AND (
+        c.subject ILIKE $5
+        OR c.name ILIKE $5
+      )
+      `;
+    }
+
+    const rows = await AppDataSource.query(
+      `
+    SELECT
+      u.id AS "studentId",
+      COALESCE(u."fullName", 'Unknown') AS "studentName",
+      COUNT(ar.id)::int AS "totalRecords",
+      COUNT(*) FILTER (
+        WHERE ar.status IN ('PRESENT', 'LATE')
+      )::int AS "presentOrLate",
+      MIN(c.subject) AS "primarySubject",
+      MIN(c.name) AS "primaryClassName"
+    FROM attendance_records ar
+    INNER JOIN sessions s ON s.id = ar."sessionId"
+    INNER JOIN users u ON u.id = ar."studentId"
+    INNER JOIN classes c ON c.id = s."classId"
+    WHERE s."startAt" >= $1 AND s."startAt" < $2
+      ${subjectFilter}
+    GROUP BY u.id, u."fullName"
+    HAVING COUNT(ar.id) > 0
+      AND (
+        COUNT(*) FILTER (WHERE ar.status IN ('PRESENT', 'LATE'))::float
+        / NULLIF(COUNT(ar.id), 0)
+      ) * 100 < $3
+    ORDER BY
+      (
+        COUNT(*) FILTER (WHERE ar.status IN ('PRESENT', 'LATE'))::float
+        / NULLIF(COUNT(ar.id), 0)
+      ) ASC,
+      COUNT(ar.id) DESC
+    LIMIT $4
+    `,
+      params,
+    );
+    return rows as LowAttendanceStudentRow[];
   }
 
   async findSessionsForDay(

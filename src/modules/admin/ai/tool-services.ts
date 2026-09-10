@@ -3,6 +3,7 @@ export type { ToolResult } from "./tool-helpers.js";
 export {
   getAttendanceSummary,
   getLowAttendanceClasses,
+  getLowAttendanceStudents,
   getTodayTimetable,
   getTermClassSchedule,
   getTodaysAbsences,
@@ -42,4 +43,12 @@ export {
   getAiUsageSummary,
   getDraftContext,
 } from "./tools/settings.tools.js";
+
+export { saveUserMemory } from "./tools/memory.tools.js";
+
+export {
+  generateReport,
+  previewReport,
+  updateReportPreview,
+} from "./tools/report.tools.js";
 

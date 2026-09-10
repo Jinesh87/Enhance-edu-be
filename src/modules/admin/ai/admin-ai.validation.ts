@@ -14,6 +14,18 @@ export const adminAiThreadIdParamsSchema = Joi.object({
   threadId: Joi.string().uuid().required(),
 });
 
+export const adminAiMemoryIdParamsSchema = Joi.object({
+  memoryId: Joi.string().uuid().required(),
+});
+
+export const adminAiReportIdParamsSchema = Joi.object({
+  reportId: Joi.string().uuid().required(),
+});
+
+export const adminAiDraftIdParamsSchema = Joi.object({
+  draftId: Joi.string().uuid().required(),
+});
+
 export const listAdminAiThreadsQuerySchema = Joi.object({
   cursor: Joi.string().uuid().optional(),
 });

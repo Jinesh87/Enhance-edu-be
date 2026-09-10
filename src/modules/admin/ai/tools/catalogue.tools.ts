@@ -100,6 +100,12 @@ export async function searchTeachers(
       .filter((row): row is TeacherAssignmentRow => row !== null),
   );
 
+  const uniqueTeacherIds = new Set<string>();
+  for (const cls of classes) {
+    const id = cls.teacher?.id;
+    if (id) uniqueTeacherIds.add(id);
+  }
+
   const filterLabel = describeTeacherFilters(filters) || "all teachers";
   const hasUnassignedExact =
     classes.length > 0 &&
@@ -107,6 +113,18 @@ export async function searchTeachers(
     Boolean(subject || yearLevel || term);
 
   if (teachers.length > 0) {
+    const actions = [
+      openPageAction("people", "Open People", {
+        filters: { role: "STAFF", search: teacherName || subject },
+      }),
+    ];
+    if (uniqueTeacherIds.size === 1) {
+      const [teacherId] = uniqueTeacherIds;
+      actions.unshift(
+        openPageAction("person", "View Teacher", { id: teacherId }),
+      );
+    }
+
     return {
       data: sanitizeToolPayload({
         entity: "teacher",
@@ -118,20 +136,16 @@ export async function searchTeachers(
         responseHint:
           "Entity is teachers (unique assignments). Table columns only: Teacher | Subject | Year | Term. One row per teacher+subject+year+term. Never list days, sessions, class codes, or times unless the user asked for sessions.",
       }),
-    sources: [
-      {
-        kind: "database",
-        label: "Teacher assignments",
-        detail: filterLabel,
-      },
-    ],
-    actions: [
-      openPageAction("people", "Open People", {
-        filters: { role: "STAFF", search: teacherName || subject },
-      }),
-    ],
-  };
-}
+      sources: [
+        {
+          kind: "database",
+          label: "Teacher assignments",
+          detail: filterLabel,
+        },
+      ],
+      actions,
+    };
+  }
 
   // Exact filters had classes but no assigned teacher.
   let relatedNote: string | null = null;
@@ -262,6 +276,7 @@ export async function searchStudents(
   const enrollments =
     await adminAiRepository.findActiveEnrollmentsForStudentSearch(filters);
   const seen = new Set<string>();
+  const uniqueStudentIds = new Set<string>();
   const students: Array<{
     studentName: string;
     yearLevel: string | null;
@@ -272,6 +287,7 @@ export async function searchStudents(
   for (const enrollment of enrollments) {
     const name = enrollment.student?.fullName?.trim();
     if (!name) continue;
+    if (enrollment.studentId) uniqueStudentIds.add(enrollment.studentId);
     const yl = enrollment.term?.yearLevel?.name ?? null;
     const termName = enrollment.term?.name ?? null;
     const subjectNames = (enrollment.subjects ?? [])
@@ -295,6 +311,18 @@ export async function searchStudents(
       .filter(Boolean)
       .join(", ") || "all students";
 
+  const actions = [
+    openPageAction("enrolments", "Open Enrolments", {
+      filters: { search: studentName, yearLevel },
+    }),
+  ];
+  if (uniqueStudentIds.size === 1) {
+    const [studentId] = uniqueStudentIds;
+    actions.unshift(
+      openPageAction("person", "View Student", { id: studentId }),
+    );
+  }
+
   return {
     data: sanitizeToolPayload({
       entity: "student",
@@ -317,11 +345,7 @@ export async function searchStudents(
         detail: filterLabel,
       },
     ],
-    actions: [
-      openPageAction("enrolments", "Open Enrolments", {
-        filters: { search: studentName, yearLevel },
-      }),
-    ],
+    actions,
   };
 }
 
@@ -389,14 +413,17 @@ export async function searchClasses(
       ? String(classes[0].term.academicYear.year)
       : null);
 
+  const classFilters = {
+    year,
+    yearLevel: yearLevel || rows[0]?.yearLevel,
+    term: term || undefined,
+  };
   const actions = [
-    openPageAction("classes", "Open Classes", {
-      filters: {
-        year,
-        yearLevel: yearLevel || rows[0]?.yearLevel,
-        term: term || undefined,
-      },
-    }),
+    openPageAction(
+      "classes",
+      rows.length === 1 ? "View Class" : "Open Classes",
+      { filters: classFilters },
+    ),
   ];
 
   return {
@@ -515,9 +542,48 @@ export async function listTerms(
   };
 }
 
-/**
- * People directory: name, role, status only (no email/mobile).
- */
+function peopleRoleLabel(role: UserRole): string {
+  switch (role) {
+    case UserRole.SUPER_ADMIN:
+      return "Application Owner";
+    case UserRole.OFFICE_STAFF:
+      return "Staff";
+    case UserRole.STAFF:
+      return "Teacher";
+    case UserRole.STUDENT:
+      return "Student";
+    case UserRole.GUARDIAN:
+      return "Guardian";
+    default:
+      return role;
+  }
+}
+
+function resolvePeopleRoleFilter(roleRaw: string | null): UserRole | null {
+  if (!roleRaw) return null;
+  // Product mapping (matches People page): Staff = OFFICE_STAFF, Teacher = STAFF.
+  const aliases: Record<string, UserRole> = {
+    SUPER_ADMIN: UserRole.SUPER_ADMIN,
+    ADMIN: UserRole.SUPER_ADMIN,
+    APPLICATION_OWNER: UserRole.SUPER_ADMIN,
+    OFFICE_STAFF: UserRole.OFFICE_STAFF,
+    OFFICE: UserRole.OFFICE_STAFF,
+    STAFF: UserRole.OFFICE_STAFF,
+    STAFFS: UserRole.OFFICE_STAFF,
+    TEACHER: UserRole.STAFF,
+    TEACHERS: UserRole.STAFF,
+    TUTOR: UserRole.STAFF,
+    TUTORS: UserRole.STAFF,
+    STUDENT: UserRole.STUDENT,
+    STUDENTS: UserRole.STUDENT,
+    GUARDIAN: UserRole.GUARDIAN,
+    GUARDIANS: UserRole.GUARDIAN,
+    PARENT: UserRole.GUARDIAN,
+    PARENTS: UserRole.GUARDIAN,
+  };
+  return aliases[roleRaw] ?? null;
+}
+
 export async function searchPeople(
   actor: AdminAiActor,
   args: { name?: string; role?: string; status?: string },
@@ -527,25 +593,11 @@ export async function searchPeople(
   const name = args.name?.trim() || null;
   const roleRaw = args.role?.trim().toUpperCase().replace(/\s+/g, "_") || null;
   const statusRaw = args.status?.trim().toUpperCase() || null;
-
-  const roleAliases: Record<string, UserRole> = {
-    SUPER_ADMIN: UserRole.SUPER_ADMIN,
-    ADMIN: UserRole.SUPER_ADMIN,
-    OFFICE_STAFF: UserRole.OFFICE_STAFF,
-    OFFICE: UserRole.OFFICE_STAFF,
-    STAFF: UserRole.STAFF,
-    TEACHER: UserRole.STAFF,
-    TEACHERS: UserRole.STAFF,
-    STUDENT: UserRole.STUDENT,
-    STUDENTS: UserRole.STUDENT,
-    GUARDIAN: UserRole.GUARDIAN,
-    GUARDIANS: UserRole.GUARDIAN,
-    PARENT: UserRole.GUARDIAN,
-  };
+  const roleFilter = resolvePeopleRoleFilter(roleRaw);
 
   const people = await adminAiRepository.findPeople({
     name,
-    role: roleRaw && roleAliases[roleRaw] ? roleAliases[roleRaw] : null,
+    role: roleFilter,
     status:
       statusRaw && Object.values(UserStatus).includes(statusRaw as UserStatus)
         ? (statusRaw as UserStatus)
@@ -553,7 +605,7 @@ export async function searchPeople(
   });
   const rows = people.slice(0, LIST_MAX_ROWS).map((person) => ({
     name: person.fullName,
-    role: person.role,
+    role: peopleRoleLabel(person.role),
     status: person.status,
   }));
 
@@ -564,15 +616,19 @@ export async function searchPeople(
     openPageAction("people", "Open People", {
       filters: {
         search: name,
-        role:
-          roleRaw && roleAliases[roleRaw] ? roleAliases[roleRaw] : undefined,
+        role: roleFilter ?? undefined,
       },
     }),
   ];
   if (people.length === 1) {
-    actions.unshift(
-      openPageAction("person", "Open Person", { id: people[0]!.id }),
-    );
+    const person = people[0]!;
+    const label =
+      person.role === UserRole.STAFF
+        ? "View Teacher"
+        : person.role === UserRole.STUDENT
+          ? "View Student"
+          : "View Person";
+    actions.unshift(openPageAction("person", label, { id: person.id }));
   }
 
   return {
@@ -583,9 +639,11 @@ export async function searchPeople(
       truncated: people.length > LIST_MAX_ROWS,
       people: rows,
       columns: ["Name", "Role", "Status"],
+      roleNote:
+        "Role labels: Teacher (tutors), Staff (office), Guardian, Student, Application Owner. Do not show raw enum codes.",
       exactNote: rows.length ? null : `No people found for ${filterLabel}.`,
       responseHint:
-        "Entity is people. Table: Name | Role | Status. Never show emails, phones, usernames used as secrets, or IDs.",
+        "Entity is people. Table: Name | Role | Status. Use the role labels exactly as given (Teacher/Staff/Guardian). Never show emails, phones, or IDs.",
     }),
     sources: [
       {

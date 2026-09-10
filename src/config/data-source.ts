@@ -58,6 +58,9 @@ import {
   AdminAiThread,
   AdminAiMessage,
   AdminAiAuditLog,
+  AdminAiMemory,
+  AdminAiReport,
+  AdminAiReportDraft,
   Notification,
   OpenAiUsageLog,
   LearningSourceDocument,
@@ -844,6 +847,52 @@ export async function ensureAdminAiSchema() {
       ON admin_ai_audit_logs ("actorUserId", "createdAt");
     CREATE INDEX IF NOT EXISTS "IDX_admin_ai_audit_requestId"
       ON admin_ai_audit_logs ("requestId");
+
+    CREATE TABLE IF NOT EXISTS admin_ai_memories (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "ownerUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "content" varchar(500) NOT NULL,
+      "kind" varchar(32) NOT NULL DEFAULT 'preference',
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_memories_ownerUserId"
+      ON admin_ai_memories ("ownerUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_memories_owner_created"
+      ON admin_ai_memories ("ownerUserId", "createdAt");
+
+    CREATE TABLE IF NOT EXISTS admin_ai_reports (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "ownerUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "reportType" varchar(64) NOT NULL,
+      "format" varchar(16) NOT NULL DEFAULT 'PDF',
+      "filters" jsonb,
+      "title" varchar(240) NOT NULL,
+      "storageKey" varchar(512),
+      "fileName" varchar(255),
+      "byteSize" int,
+      "status" varchar(20) NOT NULL DEFAULT 'READY',
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_reports_ownerUserId"
+      ON admin_ai_reports ("ownerUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_reports_owner_created"
+      ON admin_ai_reports ("ownerUserId", "createdAt");
+
+    CREATE TABLE IF NOT EXISTS admin_ai_report_drafts (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "ownerUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "threadId" uuid,
+      "reportType" varchar(64) NOT NULL,
+      "filters" jsonb,
+      "columns" jsonb,
+      "title" varchar(240) NOT NULL,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_report_drafts_ownerUserId"
+      ON admin_ai_report_drafts ("ownerUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_report_drafts_owner_updated"
+      ON admin_ai_report_drafts ("ownerUserId", "updatedAt");
   `);
 
   await bootstrap.destroy();
@@ -1079,6 +1128,9 @@ export const AppDataSource = new DataSource({
     AdminAiThread,
     AdminAiMessage,
     AdminAiAuditLog,
+    AdminAiMemory,
+    AdminAiReport,
+    AdminAiReportDraft,
     Notification,
     OpenAiUsageLog,
     LearningSourceDocument,

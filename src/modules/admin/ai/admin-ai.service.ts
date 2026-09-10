@@ -24,6 +24,11 @@ import { assertAdminAiRateLimit } from "./rate-limit.js";
 import { previewForSidebar, sanitizeAdminAiText } from "./sanitize.js";
 import { ADMIN_AI_SYSTEM_PROMPT } from "./system-prompt.js";
 import {
+  formatAdminAiMemoryPromptBlock,
+  adminAiMemoryService,
+} from "./memory.js";
+import { adminAiReportService } from "./reports/report.service.js";
+import {
   ADMIN_AI_TOOL_DEFINITIONS,
   executeAdminAiTool,
   inferModeFromTools,
@@ -48,8 +53,15 @@ function toThreadDto(thread: AdminAiThread, preview?: string | null) {
 function toMessageDto(message: AdminAiMessage) {
   const allSources = message.sources ?? [];
   const actions = allSources
-    .filter((source) => source.kind === "action" && source.openPage)
-    .map((source) => source.openPage!)
+    .filter(
+      (source) =>
+        source.kind === "action" &&
+        (source.openPage || source.downloadReport || source.generateReport),
+    )
+    .map(
+      (source) =>
+        source.openPage ?? source.downloadReport ?? source.generateReport!,
+    )
     .slice(0, 8);
   const sources = allSources.filter((source) => source.kind !== "action");
 
@@ -70,14 +82,34 @@ function mergeSources(parts: AdminAiSource[]): AdminAiSource[] {
   const out: AdminAiSource[] = [];
   for (const source of parts) {
     const key =
-      source.kind === "action" && source.openPage
-        ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
-        : `${source.kind}|${source.label}|${source.detail ?? ""}`;
+      source.kind === "action" && source.downloadReport
+        ? `action|download|${source.downloadReport.reportId}|${source.downloadReport.label}`
+        : source.kind === "action" && source.generateReport
+          ? `action|generate|${source.generateReport.draftId}|${source.generateReport.label}`
+          : source.kind === "action" && source.openPage
+            ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
+            : `${source.kind}|${source.label}|${source.detail ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(source);
   }
   return out.slice(0, 20);
+}
+
+function toolErrorMessage(error: unknown): string {
+  if (!(error instanceof AppError)) {
+    return "I could not find authorized data for that request.";
+  }
+  if (error.code === "ADMIN_AI_MODULE_FORBIDDEN") {
+    return "You do not have permission to access this information.";
+  }
+  if (error.code.startsWith("ADMIN_AI_MEMORY_")) {
+    return error.message;
+  }
+  if (error.code.startsWith("ADMIN_AI_REPORT_")) {
+    return error.message;
+  }
+  return "I could not find authorized data for that request.";
 }
 
 export class AdminAiService {
@@ -97,6 +129,44 @@ export class AdminAiService {
       throw new AppError(404, "Chat not found", "ADMIN_AI_THREAD_NOT_FOUND");
     }
     return thread;
+  }
+
+  private async buildSystemContent(actor: AdminAiActor): Promise<string> {
+    const memories = await adminAiMemoryService.listForPrompt(actor);
+    const memoryBlock = formatAdminAiMemoryPromptBlock(memories);
+    if (!memoryBlock) return ADMIN_AI_SYSTEM_PROMPT;
+    return `${ADMIN_AI_SYSTEM_PROMPT}\n\n${memoryBlock}`;
+  }
+
+  async listMemories(userId: string) {
+    const actor = await this.requireActor(userId);
+    return adminAiMemoryService.listForUser(actor);
+  }
+
+  async deleteMemory(userId: string, memoryId: string) {
+    const actor = await this.requireActor(userId);
+    return adminAiMemoryService.delete(actor, memoryId);
+  }
+
+  async downloadReport(
+    userId: string,
+    reportId: string,
+    res: import("express").Response,
+  ) {
+    const actor = await this.requireActor(userId);
+    return adminAiReportService.downloadForOwner(actor, reportId, res);
+  }
+
+  async confirmGenerateReport(userId: string, draftId: string) {
+    const actor = await this.requireActor(userId);
+    const result = await adminAiReportService.confirmGenerate(actor, draftId);
+    return {
+      reportId: result.reportId,
+      title: result.title,
+      fileName: result.fileName,
+      rowCount: result.rowCount,
+      truncated: result.truncated,
+    };
   }
 
   async listThreads(userId: string, cursor?: string | null) {
@@ -245,7 +315,7 @@ export class AdminAiService {
     history.reverse();
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: ADMIN_AI_SYSTEM_PROMPT },
+      { role: "system", content: await this.buildSystemContent(actor) },
       ...history
         .filter(
           (msg) =>
@@ -369,14 +439,10 @@ export class AdminAiService {
               content: JSON.stringify(result.data),
             });
           } catch (error) {
-            const message =
-              error instanceof AppError && error.code === "ADMIN_AI_MODULE_FORBIDDEN"
-                ? "You do not have permission to access this information."
-                : "I could not find authorized data for that request.";
             messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content: JSON.stringify({ error: message }),
+              content: JSON.stringify({ error: toolErrorMessage(error) }),
             });
           }
         }
@@ -488,7 +554,7 @@ export class AdminAiService {
     history.reverse();
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: ADMIN_AI_SYSTEM_PROMPT },
+      { role: "system", content: await this.buildSystemContent(actor) },
       ...history
         .filter(
           (msg) =>
@@ -630,15 +696,10 @@ export class AdminAiService {
               content: JSON.stringify(result.data),
             });
           } catch (error) {
-            const message =
-              error instanceof AppError &&
-              error.code === "ADMIN_AI_MODULE_FORBIDDEN"
-                ? "You do not have permission to access this information."
-                : "I could not find authorized data for that request.";
             messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content: JSON.stringify({ error: message }),
+              content: JSON.stringify({ error: toolErrorMessage(error) }),
             });
           }
         }
