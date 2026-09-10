@@ -10,6 +10,7 @@ import {
   getEnquiryPipelineSummary,
   getLowAttendanceClasses,
   getOpenTasksSummary,
+  getOpsSnapshot,
   getPendingEnrollmentSummary,
   getPendingHomeworkSummary,
   getHolidays,
@@ -18,6 +19,7 @@ import {
   getTodayTimetable,
   listAssessments,
   listClassrooms,
+  listHomework,
   listOpenTasks,
   listSessions,
   listSubjects,
@@ -471,6 +473,38 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
     {
       type: "function",
       function: {
+        name: "listHomework",
+        description:
+          "List homework by due-date range (default last 7 days). Optional subject, title, year level. Returns Title/Due/Subject/Year plus totalMatched. Use for listing homework; use getPendingHomeworkSummary for submission tallies.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            startDate: { type: "string", description: "YYYY-MM-DD" },
+            endDate: { type: "string", description: "YYYY-MM-DD" },
+            subject: { type: "string" },
+            title: { type: "string" },
+            yearLevel: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "getOpsSnapshot",
+        description:
+          "Compact dashboard KPIs: active students/staff, classes, enrolments, open enquiries, open/overdue tasks, 7-day attendance rate, today's absences. Use for overview/dashboard questions. No fees or credentials.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "getAcademicPerformanceSummary",
         description: "Aggregated assessment mark averages (no student-level rows).",
         parameters: {
@@ -510,7 +544,8 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       type: "function",
       function: {
         name: "getOpenTasksSummary",
-        description: "Count of open admin tasks.",
+        description:
+          "Count of open admin tasks, including how many are overdue.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -754,6 +789,16 @@ export async function executeAdminAiTool(
         startDate: asString(args.startDate),
         endDate: asString(args.endDate),
       });
+    case "listHomework":
+      return listHomework(actor, {
+        startDate: asString(args.startDate),
+        endDate: asString(args.endDate),
+        subject: asString(args.subject),
+        title: asString(args.title),
+        yearLevel: asString(args.yearLevel),
+      });
+    case "getOpsSnapshot":
+      return getOpsSnapshot(actor);
     case "getAcademicPerformanceSummary":
       return getAcademicPerformanceSummary(actor, {
         subjectHint: asString(args.subjectHint),

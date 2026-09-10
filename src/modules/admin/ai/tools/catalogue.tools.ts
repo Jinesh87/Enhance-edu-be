@@ -12,6 +12,7 @@ import {
 import {
   LIST_MAX_ROWS,
   MAX_ROWS,
+  openPageAction,
   type ToolResult,
 } from "../tool-helpers.js";
 
@@ -117,15 +118,20 @@ export async function searchTeachers(
         responseHint:
           "Entity is teachers (unique assignments). Table columns only: Teacher | Subject | Year | Term. One row per teacher+subject+year+term. Never list days, sessions, class codes, or times unless the user asked for sessions.",
       }),
-      sources: [
-        {
-          kind: "database",
-          label: "Teacher assignments",
-          detail: filterLabel,
-        },
-      ],
-    };
-  }
+    sources: [
+      {
+        kind: "database",
+        label: "Teacher assignments",
+        detail: filterLabel,
+      },
+    ],
+    actions: [
+      openPageAction("people", "Open People", {
+        filters: { role: "STAFF", search: teacherName || subject },
+      }),
+    ],
+  };
+}
 
   // Exact filters had classes but no assigned teacher.
   let relatedNote: string | null = null;
@@ -311,6 +317,11 @@ export async function searchStudents(
         detail: filterLabel,
       },
     ],
+    actions: [
+      openPageAction("enrolments", "Open Enrolments", {
+        filters: { search: studentName, yearLevel },
+      }),
+    ],
   };
 }
 
@@ -372,6 +383,22 @@ export async function searchClasses(
       .filter(Boolean)
       .join(", ") || "all classes";
 
+  const year =
+    academicYear ||
+    (classes[0]?.term?.academicYear
+      ? String(classes[0].term.academicYear.year)
+      : null);
+
+  const actions = [
+    openPageAction("classes", "Open Classes", {
+      filters: {
+        year,
+        yearLevel: yearLevel || rows[0]?.yearLevel,
+        term: term || undefined,
+      },
+    }),
+  ];
+
   return {
     data: sanitizeToolPayload({
       entity: "class",
@@ -399,6 +426,7 @@ export async function searchClasses(
         detail: filterLabel,
       },
     ],
+    actions,
   };
 }
 
@@ -435,6 +463,7 @@ export async function listSubjects(
         detail: [name, yearLevel].filter(Boolean).join(" · ") || "Catalogue",
       },
     ],
+    actions: [openPageAction("subjects", "Open Subjects")],
   };
 }
 
@@ -482,6 +511,7 @@ export async function listTerms(
           "Catalogue",
       },
     ],
+    actions: [openPageAction("terms", "Open Terms")],
   };
 }
 
@@ -530,6 +560,21 @@ export async function searchPeople(
   const filterLabel =
     [name, roleRaw, statusRaw].filter(Boolean).join(", ") || "people";
 
+  const actions = [
+    openPageAction("people", "Open People", {
+      filters: {
+        search: name,
+        role:
+          roleRaw && roleAliases[roleRaw] ? roleAliases[roleRaw] : undefined,
+      },
+    }),
+  ];
+  if (people.length === 1) {
+    actions.unshift(
+      openPageAction("person", "Open Person", { id: people[0]!.id }),
+    );
+  }
+
   return {
     data: sanitizeToolPayload({
       entity: "person",
@@ -549,6 +594,7 @@ export async function searchPeople(
         detail: filterLabel,
       },
     ],
+    actions,
   };
 }
 
@@ -590,6 +636,7 @@ export async function listClassrooms(
         detail: name || "Catalogue",
       },
     ],
+    actions: [openPageAction("classrooms", "Open Classrooms")],
   };
 }
 
@@ -645,5 +692,6 @@ export async function listSyllabi(
         detail: filterLabel,
       },
     ],
+    actions: [openPageAction("syllabus", "Open Syllabus")],
   };
 }

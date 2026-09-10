@@ -7,7 +7,7 @@ import {
   type AdminAiActor,
 } from "../authorization.js";
 import { sanitizeToolPayload } from "../sanitize.js";
-import { type ToolResult } from "../tool-helpers.js";
+import { openPageAction, type ToolResult } from "../tool-helpers.js";
 
 /** Non-secret institution flags only. */
 export async function getInstitutionSettingsSummary(
@@ -44,6 +44,7 @@ export async function getInstitutionSettingsSummary(
         detail: "Flags only",
       },
     ],
+    actions: [openPageAction("institution-settings", "Open Institution Settings")],
   };
 }
 
@@ -87,6 +88,10 @@ export async function getAiUsageSummary(
         label: "OpenAI usage",
         detail: `Last ${days} days`,
       },
+    ],
+    actions: [
+      openPageAction("ai-usage", "Open AI Usage"),
+      openPageAction("ai-settings", "Open AI Settings"),
     ],
   };
 }

@@ -841,8 +841,18 @@ export class AdminAiRepository {
   }
 
   async findChangeHistory(filters: ChangeHistoryFilters): Promise<AuditChange[]> {
+    // Select metadata only — never load before/after JSON blobs for Admin AI.
     const qb = this.auditChanges
       .createQueryBuilder("change")
+      .select([
+        "change.id",
+        "change.createdAt",
+        "change.actorName",
+        "change.action",
+        "change.recordType",
+        "change.recordLabel",
+        "change.reference",
+      ])
       .where("change.createdAt >= :since", { since: filters.since })
       .orderBy("change.createdAt", "DESC")
       .take(200);
@@ -877,6 +887,46 @@ export class AdminAiRepository {
       take: MAX_ROWS,
       order: { dueDate: "ASC" },
     });
+  }
+
+  /**
+   * Homework list with optional filters. Returns total match count + capped rows.
+   */
+  async findHomeworkList(filters: {
+    startStr: string;
+    endStr: string;
+    subject?: string | null;
+    title?: string | null;
+    yearGroup?: string | null;
+    take?: number;
+  }): Promise<{ items: Homework[]; totalMatched: number }> {
+    const qb = this.homework
+      .createQueryBuilder("hw")
+      .leftJoinAndSelect("hw.subject", "subject")
+      .where("hw.dueDate BETWEEN :start AND :end", {
+        start: filters.startStr,
+        end: filters.endStr,
+      })
+      .orderBy("hw.dueDate", "ASC")
+      .addOrderBy("hw.title", "ASC");
+
+    if (filters.subject) {
+      qb.andWhere(`subject.name ILIKE :subject`, {
+        subject: `%${filters.subject}%`,
+      });
+    }
+    if (filters.title) {
+      qb.andWhere(`hw.title ILIKE :title`, { title: `%${filters.title}%` });
+    }
+    if (filters.yearGroup) {
+      qb.andWhere(`hw.yearGroup ILIKE :yearGroup`, {
+        yearGroup: `%${filters.yearGroup}%`,
+      });
+    }
+
+    const totalMatched = await qb.clone().getCount();
+    const items = await qb.take(filters.take ?? LIST_MAX_ROWS).getMany();
+    return { items, totalMatched };
   }
 
   async countHomeworkStudents(homeworkIds: string[]): Promise<number> {
@@ -940,10 +990,34 @@ export class AdminAiRepository {
     });
   }
 
+  async countActiveEnrollments(): Promise<number> {
+    return this.enrollments.count({
+      where: { status: EnrollmentStatus.ACTIVE },
+    });
+  }
+
+  async countActiveUsersByRole(role: UserRole): Promise<number> {
+    return this.users.count({
+      where: { role, status: UserStatus.ACTIVE },
+    });
+  }
+
   async countOpenTasks(): Promise<number> {
     return this.tasks.count({
       where: { status: TaskStatus.OPEN },
     });
+  }
+
+  async countOverdueOpenTasks(): Promise<number> {
+    return this.tasks
+      .createQueryBuilder("task")
+      .where("task.status = :status", { status: TaskStatus.OPEN })
+      .andWhere("task.dueAt < :now", { now: new Date() })
+      .getCount();
+  }
+
+  async countClasses(): Promise<number> {
+    return this.classes.count();
   }
 
   async findTodaysAbsences(
