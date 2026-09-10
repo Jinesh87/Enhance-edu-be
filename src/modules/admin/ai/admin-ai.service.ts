@@ -56,11 +56,17 @@ function toMessageDto(message: AdminAiMessage) {
     .filter(
       (source) =>
         source.kind === "action" &&
-        (source.openPage || source.downloadReport || source.generateReport),
+        (source.openPage ||
+          source.downloadReport ||
+          source.generateReport ||
+          source.adjustReport),
     )
     .map(
       (source) =>
-        source.openPage ?? source.downloadReport ?? source.generateReport!,
+        source.openPage ??
+        source.downloadReport ??
+        source.generateReport ??
+        source.adjustReport!,
     )
     .slice(0, 8);
   const sources = allSources.filter((source) => source.kind !== "action");
@@ -86,9 +92,11 @@ function mergeSources(parts: AdminAiSource[]): AdminAiSource[] {
         ? `action|download|${source.downloadReport.reportId}|${source.downloadReport.label}`
         : source.kind === "action" && source.generateReport
           ? `action|generate|${source.generateReport.draftId}|${source.generateReport.label}`
-          : source.kind === "action" && source.openPage
-            ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
-            : `${source.kind}|${source.label}|${source.detail ?? ""}`;
+          : source.kind === "action" && source.adjustReport
+            ? `action|adjust|${source.adjustReport.draftId}|${source.adjustReport.label}`
+            : source.kind === "action" && source.openPage
+              ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
+              : `${source.kind}|${source.label}|${source.detail ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(source);

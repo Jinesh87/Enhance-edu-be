@@ -110,12 +110,14 @@ export class AdminAiReportRepository {
       filters.startDate ?? undefined,
       filters.endDate ?? undefined,
     );
+    const studentName = filters.studentName?.trim() || null;
     const rows = await adminAiRepository.getLowAttendanceStudentAggregates(
       start,
       endExclusive,
       {
         thresholdPercent: threshold,
         subject: filters.subject,
+        studentName,
         limit: REPORT_MAX_ROWS + 1,
       },
     );
@@ -123,14 +125,24 @@ export class AdminAiReportRepository {
     const filterLabels: string[] = [];
     pushFilter(filterLabels, "From", start.toISOString().slice(0, 10));
     pushFilter(filterLabels, "To", end.toISOString().slice(0, 10));
-    pushFilter(filterLabels, "Threshold", `< ${threshold}%`);
+    if (!studentName) {
+      pushFilter(filterLabels, "Threshold", `< ${threshold}%`);
+    }
+    pushFilter(filterLabels, "Student", studentName);
     pushFilter(filterLabels, "Subject", filters.subject);
     pushFilter(filterLabels, "Year", filters.yearLevel);
 
     return {
-      title: reportTypeLabel("LOW_ATTENDANCE_STUDENTS"),
+      title: studentName
+        ? `Attendance — ${studentName}`
+        : reportTypeLabel("LOW_ATTENDANCE_STUDENTS"),
       filterLabels,
-      summary: [{ label: "Students listed", value: String(limited.length) }],
+      summary: [
+        {
+          label: studentName ? "Matching rows" : "Students listed",
+          value: String(limited.length),
+        },
+      ],
       columns: ["Student", "Subject", "Class", "Rate", "Present/Sessions"],
       rows: limited.map((row) => {
         const total = Number(row.totalRecords) || 0;
@@ -204,7 +216,7 @@ export class AdminAiReportRepository {
   ): Promise<ReportTablePayload> {
     const active = await adminAiRepository.findActiveEnrollmentsForEnrolmentSearch(
       {
-        studentName: null,
+        studentName: filters.studentName,
         subject: filters.subject,
         yearLevel: filters.yearLevel,
         term: filters.term,
@@ -224,19 +236,31 @@ export class AdminAiReportRepository {
         enrollment.term?.yearLevel?.name ?? "—",
         enrollment.term?.name ?? "—",
         subjects || "—",
+        enrollment.guardian?.fullName?.trim() || "—",
       ]);
     }
     const filterLabels: string[] = [];
+    pushFilter(filterLabels, "Student", filters.studentName);
     pushFilter(filterLabels, "Year", filters.yearLevel);
     pushFilter(filterLabels, "Term", filters.term);
     pushFilter(filterLabels, "Subject", filters.subject);
     pushFilter(filterLabels, "Academic year", filters.academicYear);
 
+    const columns = [
+      "Student",
+      "Status",
+      "Year",
+      "Term",
+      "Subjects",
+      "Guardian",
+    ];
+
     return {
       title: reportTypeLabel("ENROLMENTS"),
       filterLabels,
       summary: [{ label: "Enrolments listed", value: String(rows.length) }],
-      columns: ["Student", "Status", "Year", "Term", "Subjects"],
+      columns,
+      availableColumns: columns,
       rows,
       truncated: active.length > REPORT_MAX_ROWS,
     };
@@ -246,7 +270,7 @@ export class AdminAiReportRepository {
     filters: AdminAiReportFilters,
   ): Promise<ReportTablePayload> {
     const enquiries = await adminAiRepository.findEnquiries({
-      studentName: null,
+      studentName: filters.studentName,
       guardianName: null,
       stage: filters.status,
       subject: filters.subject,
@@ -254,6 +278,7 @@ export class AdminAiReportRepository {
     });
     const limited = enquiries.slice(0, REPORT_MAX_ROWS);
     const filterLabels: string[] = [];
+    pushFilter(filterLabels, "Student", filters.studentName);
     pushFilter(filterLabels, "Year", filters.yearLevel);
     pushFilter(filterLabels, "Subject", filters.subject);
     pushFilter(filterLabels, "Stage", filters.status);
@@ -385,11 +410,12 @@ export class AdminAiReportRepository {
       statusRaw === "DONE" || statusRaw === "ALL" ? statusRaw : "OPEN";
     const tasks = await adminAiRepository.findTasks({
       status,
-      studentName: null,
+      studentName: filters.studentName,
     });
     const limited = tasks.slice(0, REPORT_MAX_ROWS);
     const filterLabels: string[] = [];
     pushFilter(filterLabels, "Status", status);
+    pushFilter(filterLabels, "Student", filters.studentName);
 
     return {
       title: reportTypeLabel("TASKS"),

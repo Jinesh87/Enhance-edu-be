@@ -1,7 +1,11 @@
 import type { AdminAiActor } from "../authorization.js";
 import { adminAiReportService } from "../reports/report.service.js";
 import { sanitizeToolPayload } from "../sanitize.js";
-import { generateReportAction, type ToolResult } from "../tool-helpers.js";
+import {
+  adjustReportAction,
+  generateReportAction,
+  type ToolResult,
+} from "../tool-helpers.js";
 
 function markdownTable(columns: string[], rows: string[][]): string {
   if (!columns.length) return "";
@@ -16,13 +20,36 @@ function markdownTable(columns: string[], rows: string[][]): string {
   return `${header}\n${sep}\n${body}`;
 }
 
-function previewToolResult(
-  preview: Awaited<ReturnType<typeof adminAiReportService.preview>>,
-): ToolResult {
+type PreviewResult = Awaited<ReturnType<typeof adminAiReportService.preview>> & {
+  blockedColumns?: string[];
+  unavailableColumns?: string[];
+};
+
+function previewToolResult(preview: PreviewResult): ToolResult {
   const table = markdownTable(preview.columns, preview.rows);
   const filterLine = preview.filterLabels.length
     ? preview.filterLabels.join(" · ")
     : "No extra filters";
+  const summaryLines = preview.summary.length
+    ? preview.summary.map((item) => `${item.label}: ${item.value}`).join("; ")
+    : "No summary metrics";
+  const available = preview.availableColumns?.length
+    ? preview.availableColumns
+    : preview.columns;
+  const blocked = preview.blockedColumns ?? [];
+  const unavailable = preview.unavailableColumns ?? [];
+
+  const adjustmentNotes: string[] = [];
+  if (blocked.length) {
+    adjustmentNotes.push(
+      `Sensitive fields were refused and cannot be added to reports/PDFs: ${blocked.join(", ")}. Never include email, phone, password, fee, address, or DOB.`,
+    );
+  }
+  if (unavailable.length) {
+    adjustmentNotes.push(
+      `These columns are not available for this report: ${unavailable.join(", ")}. Use only availableColumns.`,
+    );
+  }
 
   return {
     data: sanitizeToolPayload({
@@ -31,19 +58,34 @@ function previewToolResult(
       title: preview.title,
       filtersApplied: filterLine,
       summary: preview.summary,
+      summaryText: summaryLines,
       columns: preview.columns,
+      availableColumns: available,
       previewRowCount: preview.previewRowCount,
       totalMatched: preview.totalMatched,
       truncated: preview.truncated,
       markdownTable: table,
+      blockedColumns: blocked.length ? blocked : null,
+      unavailableColumns: unavailable.length ? unavailable : null,
       responseHint: [
-        "Render the report preview in chat using the markdownTable exactly.",
-        "Include title, filtersApplied, and summary bullets.",
-        `If truncated, say Showing ${preview.previewRowCount} of ${preview.totalMatched} records.`,
-        "Do NOT say the PDF is ready yet.",
-        "Tell the user they can ask to adjust filters/columns, then click Generate PDF.",
-        "Never invent rows or URLs.",
-      ].join(" "),
+        "This is a report PREVIEW only — no PDF has been created yet.",
+        "Reply structure (required):",
+        `1) Title line: **${preview.title}**`,
+        `2) Filters: ${filterLine}`,
+        `3) Summary: ${summaryLines}`,
+        "4) The markdownTable exactly (do not invent or drop rows).",
+        preview.truncated
+          ? `5) Note: Showing ${preview.previewRowCount} of ${preview.totalMatched} records.`
+          : "",
+        `6) Safe columns you may add/remove via updateReportPreview: ${available.join(", ")}.`,
+        "7) Never add email, phone, password, fee, address, or other sensitive fields.",
+        ...adjustmentNotes.map((note, index) => `${8 + index}) ${note}`),
+        "Say the user can click Adjust preview (or reply with changes), then click Generate PDF when ready.",
+        "Never invent rows, URLs, file paths, or claim the PDF is ready.",
+        `Keep draftId ${preview.draftId} for any updateReportPreview call.`,
+      ]
+        .filter(Boolean)
+        .join(" "),
     }),
     sources: [
       {
@@ -52,7 +94,10 @@ function previewToolResult(
         detail: preview.reportType,
       },
     ],
-    actions: [generateReportAction(preview.draftId, "Generate PDF")],
+    actions: [
+      adjustReportAction(preview.draftId, "Adjust preview"),
+      generateReportAction(preview.draftId, "Generate PDF"),
+    ],
   };
 }
 

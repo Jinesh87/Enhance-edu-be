@@ -238,22 +238,40 @@ export class AdminAiRepository {
     options: {
       thresholdPercent: number;
       subject?: string | null;
+      studentName?: string | null;
       limit?: number;
     },
   ): Promise<LowAttendanceStudentRow[]> {
     const limit = options.limit ?? MAX_ROWS;
     const threshold = options.thresholdPercent;
     const params: unknown[] = [start, endExclusive, threshold, limit];
-    let subjectFilter = "";
+    const extraFilters: string[] = [];
+    const studentName = options.studentName?.trim() || null;
+
     if (options.subject?.trim()) {
       params.push(`%${options.subject.trim()}%`);
-      subjectFilter = `
+      extraFilters.push(`
       AND (
-        c.subject ILIKE $5
-        OR c.name ILIKE $5
+        c.subject ILIKE $${params.length}
+        OR c.name ILIKE $${params.length}
       )
-      `;
+      `);
     }
+    if (studentName) {
+      params.push(`%${studentName}%`);
+      extraFilters.push(`
+      AND u."fullName" ILIKE $${params.length}
+      `);
+    }
+
+    // When scoping to a named student, include their attendance even if not "low".
+    const havingClause = studentName
+      ? `HAVING COUNT(ar.id) > 0`
+      : `HAVING COUNT(ar.id) > 0
+      AND (
+        COUNT(*) FILTER (WHERE ar.status IN ('PRESENT', 'LATE'))::float
+        / NULLIF(COUNT(ar.id), 0)
+      ) * 100 < $3`;
 
     const rows = await AppDataSource.query(
       `
@@ -271,13 +289,9 @@ export class AdminAiRepository {
     INNER JOIN users u ON u.id = ar."studentId"
     INNER JOIN classes c ON c.id = s."classId"
     WHERE s."startAt" >= $1 AND s."startAt" < $2
-      ${subjectFilter}
+      ${extraFilters.join("")}
     GROUP BY u.id, u."fullName"
-    HAVING COUNT(ar.id) > 0
-      AND (
-        COUNT(*) FILTER (WHERE ar.status IN ('PRESENT', 'LATE'))::float
-        / NULLIF(COUNT(ar.id), 0)
-      ) * 100 < $3
+    ${havingClause}
     ORDER BY
       (
         COUNT(*) FILTER (WHERE ar.status IN ('PRESENT', 'LATE'))::float
@@ -586,6 +600,7 @@ export class AdminAiRepository {
     const qb = this.enrollments
       .createQueryBuilder("enrollment")
       .leftJoinAndSelect("enrollment.student", "student")
+      .leftJoinAndSelect("enrollment.guardian", "guardian")
       .leftJoinAndSelect("enrollment.term", "term")
       .leftJoinAndSelect("term.yearLevel", "yearLevel")
       .leftJoinAndSelect("term.academicYear", "academicYear")

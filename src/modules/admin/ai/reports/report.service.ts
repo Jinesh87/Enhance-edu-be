@@ -16,8 +16,10 @@ import { adminAiReportStorageService } from "./report-storage.service.js";
 import { renderAdminAiReportPdf } from "./report.templates.js";
 import {
   isAdminAiReportType,
+  isBlockedReportColumnRequest,
   REPORT_MODULE,
   REPORT_PREVIEW_ROWS,
+  resolveReportColumnLabel,
   reportTypeLabel,
   type AdminAiReportFilters,
   type AdminAiReportType,
@@ -67,6 +69,7 @@ function sanitizeFilters(
     threshold: asNumber(raw?.threshold),
     status: asString(raw?.status),
     academicYear: asString(raw?.academicYear),
+    studentName: asString(raw?.studentName),
   };
 }
 
@@ -84,6 +87,7 @@ function mergeFilters(
     threshold: next.threshold ?? current.threshold ?? null,
     status: next.status ?? current.status ?? null,
     academicYear: next.academicYear ?? current.academicYear ?? null,
+    studentName: next.studentName ?? current.studentName ?? null,
   };
 }
 
@@ -102,20 +106,38 @@ function normalizePayload(payload: ReportTablePayload, title: string): ReportTab
       ...payload,
       title,
       columns: ["Message"],
+      availableColumns: payload.availableColumns?.length
+        ? payload.availableColumns
+        : ["Message"],
       rows: [["No matching records for the selected filters."]],
       totalMatched: 0,
     };
   }
-  return { ...payload, title, totalMatched: payload.totalMatched ?? payload.rows.length };
+  return {
+    ...payload,
+    title,
+    totalMatched: payload.totalMatched ?? payload.rows.length,
+    availableColumns: payload.availableColumns?.length
+      ? payload.availableColumns
+      : [...payload.columns],
+  };
 }
 
 function applyColumnSelection(
   payload: ReportTablePayload,
   selected: string[] | null | undefined,
 ): ReportTablePayload {
-  if (!selected?.length) return payload;
+  const available = payload.availableColumns?.length
+    ? payload.availableColumns
+    : payload.columns;
+
+  if (!selected?.length) {
+    return { ...payload, availableColumns: available };
+  }
   const wanted = selected.map((c) => c.trim().toLowerCase()).filter(Boolean);
-  if (!wanted.length) return payload;
+  if (!wanted.length) {
+    return { ...payload, availableColumns: available };
+  }
 
   const indexes: number[] = [];
   const columns: string[] = [];
@@ -125,11 +147,14 @@ function applyColumnSelection(
       columns.push(col);
     }
   });
-  if (!columns.length) return payload;
+  if (!columns.length) {
+    return { ...payload, availableColumns: available };
+  }
 
   return {
     ...payload,
     columns,
+    availableColumns: available,
     rows: payload.rows.map((row) => indexes.map((i) => row[i] ?? "—")),
   };
 }
@@ -142,6 +167,7 @@ function toPreviewSlice(payload: ReportTablePayload) {
     filterLabels: payload.filterLabels,
     summary: payload.summary,
     columns: payload.columns,
+    availableColumns: payload.availableColumns ?? payload.columns,
     rows: previewRows,
     previewRowCount: previewRows.length,
     totalMatched,
@@ -277,15 +303,31 @@ export class AdminAiReportService {
 
     const filters = mergeFilters(sanitizeFilters(draft.filters), input.filters);
     let columns = draft.columns;
+    const blockedColumns: string[] = [];
+    const unavailableColumns: string[] = [];
 
     if (input.columns?.length) {
-      columns = input.columns.map((c) => c.trim()).filter(Boolean).slice(0, 12);
+      const full = await this.loadPayload(reportTypeRaw, filters, null);
+      const available = full.availableColumns ?? full.columns;
+      const resolved: string[] = [];
+      for (const col of input.columns) {
+        if (isBlockedReportColumnRequest(col)) {
+          blockedColumns.push(col.trim());
+          continue;
+        }
+        const match = resolveReportColumnLabel(col, available);
+        if (match) {
+          if (!resolved.some((c) => c.toLowerCase() === match.toLowerCase())) {
+            resolved.push(match);
+          }
+        } else if (col.trim()) {
+          unavailableColumns.push(col.trim());
+        }
+      }
+      columns = resolved.length ? resolved.slice(0, 12) : draft.columns;
     } else {
-      const payload = await this.loadPayload(
-        reportTypeRaw,
-        filters,
-        null,
-      );
+      const payload = await this.loadPayload(reportTypeRaw, filters, null);
+      const available = payload.availableColumns ?? payload.columns;
       let next = columns?.length ? [...columns] : [...payload.columns];
       if (input.removeColumns?.length) {
         const remove = new Set(
@@ -295,24 +337,36 @@ export class AdminAiReportService {
       }
       if (input.addColumns?.length) {
         for (const col of input.addColumns) {
-          const match = payload.columns.find(
-            (c) => c.toLowerCase() === col.trim().toLowerCase(),
-          );
-          if (match && !next.some((c) => c.toLowerCase() === match.toLowerCase())) {
-            next.push(match);
+          if (isBlockedReportColumnRequest(col)) {
+            blockedColumns.push(col.trim());
+            continue;
+          }
+          const match = resolveReportColumnLabel(col, available);
+          if (match) {
+            if (!next.some((c) => c.toLowerCase() === match.toLowerCase())) {
+              next.push(match);
+            }
+          } else if (col.trim()) {
+            unavailableColumns.push(col.trim());
           }
         }
       }
       columns = next.slice(0, 12);
     }
 
-    return this.preview(actor, {
+    const preview = await this.preview(actor, {
       draftId: draft.id,
       reportType: reportTypeRaw,
       filters,
       columns,
       threadId: draft.threadId,
     });
+
+    return {
+      ...preview,
+      blockedColumns,
+      unavailableColumns,
+    };
   }
 
   async confirmGenerate(actor: AdminAiActor, draftId: string) {

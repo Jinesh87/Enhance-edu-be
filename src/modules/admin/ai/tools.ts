@@ -82,7 +82,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "getLowAttendanceStudents",
         description:
-          "Students with attendance rate below a threshold for a date range. Use for 'students with low attendance', 'who has poor attendance', optional subject filter. Returns Student/Subject/Class/Rate rows. Do NOT use getLowAttendanceClasses for student questions.",
+          "Students with attendance rate below a threshold for a date range (chat list only — no Generate PDF). Use for 'students with low attendance' when the user did NOT ask for PDF/report/export/download. For PDF/report asks, use previewReport with LOW_ATTENDANCE_STUDENTS instead. Returns Student/Subject/Class/Rate rows. Do NOT use getLowAttendanceClasses for student questions.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -142,7 +142,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "searchTeachers",
         description:
-          "List unique assigned teachers (not sessions). Use for 'list teachers', 'Biology teachers', 'who teaches Maths'. Apply only filters the user stated. Returns Teacher/Subject/Year/Term rows deduped by assignment. Excludes unassigned. Does not expand into days/times.",
+          "List unique assigned teaching roster rows only (Teacher/Subject/Year/Term). Use for 'who teaches Biology', 'Maths teachers for Year 1', assigned teachers. Do NOT use for 'list all teachers' or teachers directory — use searchPeople with role teacher (includes unassigned). Excludes unassigned. Does not expand into days/times.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -271,7 +271,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "searchEnquiries",
         description:
-          "List enquiries by student/guardian/stage/subject. Use for 'list enquiries', 'enquiries in Trial stage'. Never returns emails or phones.",
+          "List enquiries by student/guardian/stage/subject (chat list only — no Generate PDF). Use for 'list enquiries' when the user did NOT ask for PDF/report/export/download. For enquiry PDF/report asks, use previewReport with ENQUIRIES. Never returns emails or phones.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -346,7 +346,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "searchPeople",
         description:
-          "List people directory rows. Role filter words: staff/staffs → office Staff; teacher/teachers → Teacher; guardian/parent → Guardian; student → Student. Returns Name | Role label | Status. Role labels are Teacher, Staff, Guardian, Student, Application Owner — never raw STAFF enums. For assigned teaching roster prefer searchTeachers.",
+          "List people directory rows (includes unassigned). Prefer this for 'list all teachers', 'list teachers', teachers/staff/guardians directory. Role filter words: staff/staffs → office Staff; teacher/teachers → Teacher; guardian/parent → Guardian; student → Student. Returns Name | Role label | Status. Role labels are Teacher, Staff, Guardian, Student, Application Owner — never raw STAFF enums. Use searchTeachers only for assigned teaching roster / who teaches.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -661,7 +661,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "previewReport",
         description:
-          "Build a report preview (table in chat + Generate PDF button). Does NOT create a PDF. Use for build/generate/export/report requests. Allowlisted reportType: ATTENDANCE_SUMMARY, LOW_ATTENDANCE_STUDENTS, LOW_ATTENDANCE_CLASSES, ENROLMENTS, ENQUIRIES, ASSESSMENTS, TIMETABLE, TASKS. Pass only filters the user stated. Never invent URLs or claim the PDF is ready.",
+          "REQUIRED for any create/generate/export/download/prepare PDF or report request. Builds a PREVIEW only (title/filters/summary/table + Adjust preview and Generate PDF buttons). Does NOT create a PDF. Never use getLowAttendanceStudents/searchEnquiries/list tools for PDF asks. reportType: ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS (use for student attendance PDF; pass filters.studentName) | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS. Pass only filters the user stated. Never invent URLs or claim the PDF is ready.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -693,6 +693,11 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
                 threshold: { type: "number" },
                 status: { type: "string" },
                 academicYear: { type: "string" },
+                studentName: {
+                  type: "string",
+                  description:
+                    "Student name scope when user asked for a named student report",
+                },
               },
             },
           },
@@ -704,7 +709,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "updateReportPreview",
         description:
-          "Adjust an existing report draft (filters/columns) and return a fresh preview. Use when the user asks to change the preview. Does NOT create a PDF.",
+          "Adjust an existing report draft (filters/columns/studentName) and return a fresh preview. Use when the user asks to change the preview. addColumns may use synonyms like 'guardian details' → Guardian. Sensitive fields (email/phone/password/fee/address/DOB) are refused. Does NOT create a PDF.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -736,6 +741,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
                 threshold: { type: "number" },
                 status: { type: "string" },
                 academicYear: { type: "string" },
+                studentName: { type: "string" },
               },
             },
           },
@@ -747,7 +753,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "generateReport",
         description:
-          "Alias of previewReport. Previews only — does not create a PDF. Prefer previewReport for new calls.",
+          "Alias of previewReport. REQUIRED preview-only path for create/generate/export/download/prepare PDF — does not create a PDF. Prefer previewReport for new calls.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -774,6 +780,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
                 threshold: { type: "number" },
                 status: { type: "string" },
                 academicYear: { type: "string" },
+                studentName: { type: "string" },
               },
             },
           },
