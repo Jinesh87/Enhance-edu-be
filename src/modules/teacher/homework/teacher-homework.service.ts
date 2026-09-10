@@ -752,6 +752,25 @@ export class TeacherHomeworkService {
 
     await this.submissions.save(submission);
 
+    try {
+      const { AppDataSource: ds } = await import("../../../config/data-source.js");
+      const { Student } = await import("../../../entities/Student.js");
+      const {
+        queueStudentKnowledgeIngest,
+        studentKnowledgeIngestService,
+      } = await import("../../coach/student-knowledge-ingest.service.js");
+      queueStudentKnowledgeIngest(async () => {
+        const student = await ds.getRepository(Student).findOne({
+          where: { userId: studentId },
+        });
+        if (!student) return;
+        await studentKnowledgeIngestService.indexHomework(student, userId);
+        await studentKnowledgeIngestService.indexSummary(student, userId);
+      }, "homework-mark");
+    } catch {
+      /* optional ingest */
+    }
+
     const updated = await this.submissions.findOne({
       where: { id: submission.id },
       relations: { files: true, markedBy: true },

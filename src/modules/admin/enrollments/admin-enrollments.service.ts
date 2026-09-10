@@ -701,6 +701,22 @@ export class AdminEnrollmentsService {
       guardianName: guardian.fullName,
     });
 
+    try {
+      const {
+        queueStudentKnowledgeIngest,
+        studentKnowledgeIngestService,
+      } = await import("../../coach/student-knowledge-ingest.service.js");
+      queueStudentKnowledgeIngest(
+        () =>
+          studentKnowledgeIngestService.ensureIndexed(result.student.id, {
+            force: true,
+          }),
+        "enrollment-accepted",
+      );
+    } catch {
+      /* optional */
+    }
+
     return result;
   }
 
