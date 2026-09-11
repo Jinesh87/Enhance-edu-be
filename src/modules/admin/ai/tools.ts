@@ -3,6 +3,10 @@ import { AppError } from "../../../common/errors/AppError.js";
 import type { AdminAiActor } from "./authorization.js";
 import { searchAuthorizedSyllabusDocuments } from "./document-retrieval.js";
 import {
+  normalizeToolArgs,
+  type NormalizeToolArgsContext,
+} from "./query-normalize/index.js";
+import {
   getAcademicPerformanceSummary,
   getAttendanceSummary,
   getClassRoster,
@@ -346,16 +350,20 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "searchPeople",
         description:
-          "List people directory rows (includes unassigned). Prefer this for 'list all teachers', 'list teachers', teachers/staff/guardians directory. Role filter words: staff/staffs → office Staff; teacher/teachers → Teacher; guardian/parent → Guardian; student → Student. Returns Name | Role label | Status. Role labels are Teacher, Staff, Guardian, Student, Application Owner — never raw STAFF enums. Use searchTeachers only for assigned teaching roster / who teaches.",
+          "List people directory rows (includes unassigned). Use for teachers/staff/guardians/students AND application owners (app owners / super admins). Role filter words: application_owner/owner/app owner → Application Owner; staff/staffs → office Staff; teacher/teachers → Teacher; guardian/parent → Guardian; student → Student. For 'show all application owner details' pass role=application_owner and leave name empty. Never put filler words (details, show, all, list) in name. Returns Name | Preferred name | Role | Status | Employment. Never returns emails or phones. Use searchTeachers only for assigned teaching roster / who teaches.",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
-            name: { type: "string" },
+            name: {
+              type: "string",
+              description:
+                "Optional person name only. Do not pass role phrases or filler words here.",
+            },
             role: {
               type: "string",
               description:
-                "staff, teacher, guardian, student, office, or SUPER_ADMIN",
+                "application_owner | owner | staff | teacher | guardian | student | office | SUPER_ADMIN",
             },
             status: {
               type: "string",
@@ -829,6 +837,7 @@ export async function executeAdminAiTool(
   actor: AdminAiActor,
   name: string,
   rawArgs: string | null | undefined,
+  context: NormalizeToolArgsContext = {},
 ): Promise<ToolResult> {
   if (!ALLOWED.has(name)) {
     throw new AppError(
@@ -838,7 +847,7 @@ export async function executeAdminAiTool(
     );
   }
 
-  const args = parseArgs(rawArgs);
+  const args = normalizeToolArgs(name, parseArgs(rawArgs), context);
 
   switch (name) {
     case "getAttendanceSummary":

@@ -431,6 +431,7 @@ export class AdminAiService {
               actor,
               name,
               call.function.arguments,
+              { userMessage: input.content },
             );
             collectedSources.push(...result.sources);
             if (result.actions?.length) {
@@ -688,6 +689,7 @@ export class AdminAiService {
               actor,
               name,
               call.function.arguments,
+              { userMessage: input.content },
             );
             collectedSources.push(...result.sources);
             if (result.actions?.length) {
