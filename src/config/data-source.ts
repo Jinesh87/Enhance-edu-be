@@ -267,6 +267,28 @@ export async function ensureInstitutionSettingSchema() {
       ADD COLUMN IF NOT EXISTS "openaiApiKey" varchar(255);
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "sessionChangeEmailNotificationsEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiAssistantEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiDataInsightsEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiEmailDraftingEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiMessageDraftingEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiBulkCommunicationEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiNotificationSuggestionsEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiProactiveBriefingEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiReportBuilderEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiDeepLinksEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiConfirmedActionsEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiBriefingConfig" jsonb;
   `);
   await bootstrap.destroy();
 }

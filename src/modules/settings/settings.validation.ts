@@ -25,6 +25,32 @@ export const updateNotificationSettingSchema = Joi.object({
   sessionChangeEmailNotificationsEnabled: Joi.boolean().required(),
 });
 
+export const updateAdminAiCapabilitySettingSchema = Joi.object({
+  assistantEnabled: Joi.boolean().required(),
+  dataInsightsEnabled: Joi.boolean().required(),
+  emailDraftingEnabled: Joi.boolean().required(),
+  messageDraftingEnabled: Joi.boolean().required(),
+  bulkCommunicationEnabled: Joi.boolean().required(),
+  notificationSuggestionsEnabled: Joi.boolean().required(),
+  proactiveBriefingEnabled: Joi.boolean().required(),
+  reportBuilderEnabled: Joi.boolean().required(),
+  deepLinksEnabled: Joi.boolean().required(),
+  confirmedActionsEnabled: Joi.boolean().required(),
+  briefingConfig: Joi.object({
+    time: Joi.string()
+      .pattern(/^\d{2}:\d{2}$/)
+      .allow(null)
+      .optional(),
+    daysOfWeek: Joi.array()
+      .items(Joi.number().integer().min(0).max(6))
+      .max(7)
+      .optional(),
+    sections: Joi.array().items(Joi.string().trim().max(40)).max(12).optional(),
+  })
+    .allow(null)
+    .optional(),
+});
+
 export const openAiUsageQuerySchema = Joi.object({
   from: Joi.string().trim().max(40).optional(),
   to: Joi.string().trim().max(40).optional(),

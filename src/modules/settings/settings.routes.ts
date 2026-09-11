@@ -14,6 +14,7 @@ import {
   updateGuardianPortalSettingSchema,
   updateOpenAiSettingSchema,
   updateNotificationSettingSchema,
+  updateAdminAiCapabilitySettingSchema,
   openAiUsageQuerySchema,
 } from "./settings.validation.js";
 import {
@@ -128,6 +129,18 @@ router.put(
   "/notifications",
   validate(updateNotificationSettingSchema, "body"),
   (req, res) => void settingsController.updateNotificationSettings(req, res),
+);
+
+router.get(
+  "/ai-capabilities",
+  (req, res) => void settingsController.getAdminAiCapabilitySettings(req, res),
+);
+
+router.put(
+  "/ai-capabilities",
+  validate(updateAdminAiCapabilitySettingSchema, "body"),
+  (req, res) =>
+    void settingsController.updateAdminAiCapabilitySettings(req, res),
 );
 
 router.post(

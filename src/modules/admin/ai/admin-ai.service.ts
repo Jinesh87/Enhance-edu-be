@@ -20,6 +20,13 @@ import {
   resolveAdminAiActor,
   type AdminAiActor,
 } from "./authorization.js";
+import {
+  assertCapabilityEnabled,
+  formatDisabledCapabilitiesForPrompt,
+  loadAdminAiCapabilitySettings,
+  precheckCapabilityIntent,
+  type AdminAiCapabilitySettings,
+} from "./admin-ai-capabilities.js";
 import { assertAdminAiRateLimit } from "./rate-limit.js";
 import { previewForSidebar, sanitizeAdminAiText } from "./sanitize.js";
 import { ADMIN_AI_SYSTEM_PROMPT } from "./system-prompt.js";
@@ -113,6 +120,9 @@ function toolErrorMessage(error: unknown): string {
   if (!(error instanceof AppError)) {
     return "I could not find authorized data for that request.";
   }
+  if (error.code === "ADMIN_AI_CAPABILITY_DISABLED") {
+    return error.message;
+  }
   if (error.code === "ADMIN_AI_MODULE_FORBIDDEN") {
     return "You do not have permission to access this information.";
   }
@@ -128,6 +138,23 @@ function toolErrorMessage(error: unknown): string {
   return "I could not find authorized data for that request.";
 }
 
+function filterSourcesByCapabilities(
+  sources: AdminAiSource[],
+  settings: AdminAiCapabilitySettings,
+): AdminAiSource[] {
+  return sources.filter((source) => {
+    if (source.kind !== "action") return true;
+    if (source.openPage && !settings.deepLinksEnabled) return false;
+    if (
+      (source.confirmSend || source.generateReport) &&
+      !settings.confirmedActionsEnabled
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export class AdminAiService {
   private readonly threads = AppDataSource.getRepository(AdminAiThread);
   private readonly messages = AppDataSource.getRepository(AdminAiMessage);
@@ -135,6 +162,14 @@ export class AdminAiService {
   private async requireActor(userId: string): Promise<AdminAiActor> {
     assertAdminAiEnabled();
     return resolveAdminAiActor(userId);
+  }
+
+  private async requireAssistantEnabled(
+    _settings: AdminAiCapabilitySettings,
+  ): Promise<void> {
+    // Admin AI Assistant is always available for authorised console roles.
+    // Capability toggles in Settings control features, not the assistant itself.
+    void _settings;
   }
 
   private async requireOwnedThread(actorId: string, threadId: string) {
@@ -147,11 +182,16 @@ export class AdminAiService {
     return thread;
   }
 
-  private async buildSystemContent(actor: AdminAiActor): Promise<string> {
+  private async buildSystemContent(
+    actor: AdminAiActor,
+    settings: AdminAiCapabilitySettings,
+  ): Promise<string> {
     const memories = await adminAiMemoryService.listForPrompt(actor);
     const memoryBlock = formatAdminAiMemoryPromptBlock(memories);
-    if (!memoryBlock) return ADMIN_AI_SYSTEM_PROMPT;
-    return `${ADMIN_AI_SYSTEM_PROMPT}\n\n${memoryBlock}`;
+    const capabilityBlock = formatDisabledCapabilitiesForPrompt(settings);
+    return [ADMIN_AI_SYSTEM_PROMPT, capabilityBlock, memoryBlock]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   async listMemories(userId: string) {
@@ -175,6 +215,9 @@ export class AdminAiService {
 
   async confirmGenerateReport(userId: string, draftId: string) {
     const actor = await this.requireActor(userId);
+    const settings = await loadAdminAiCapabilitySettings();
+    assertCapabilityEnabled(settings, "reportBuilder");
+    assertCapabilityEnabled(settings, "confirmedActions");
     const result = await adminAiReportService.confirmGenerate(actor, draftId);
     return {
       reportId: result.reportId,
@@ -290,6 +333,16 @@ export class AdminAiService {
     },
   ) {
     const actor = await this.requireActor(userId);
+    const settings = await loadAdminAiCapabilitySettings();
+    assertCapabilityEnabled(settings, "emailDrafting");
+    assertCapabilityEnabled(settings, "confirmedActions");
+    const draft = await communicationDraftService.get(actor, draftId);
+    if (
+      draft.recipientCount >= 21 ||
+      draft.requiresReauth
+    ) {
+      assertCapabilityEnabled(settings, "bulkCommunication");
+    }
     return communicationDraftService.confirmSend(actor, draftId, input);
   }
 
@@ -380,6 +433,61 @@ export class AdminAiService {
     return { deletedId: threadId };
   }
 
+  private async replyWithoutTools(
+    actor: AdminAiActor,
+    threadId: string | null | undefined,
+    userContent: string,
+    assistantContent: string,
+    requestId: string,
+  ) {
+    let thread: AdminAiThread;
+    if (threadId) {
+      thread = await this.requireOwnedThread(actor.id, threadId);
+    } else {
+      thread = this.threads.create({
+        ownerUserId: actor.id,
+        title: userContent.slice(0, 80),
+        lastMessageAt: null,
+      });
+      await this.threads.save(thread);
+    }
+    const userMessage = this.messages.create({
+      threadId: thread.id,
+      role: "user",
+      content: userContent,
+      status: "COMPLETE",
+      mode: null,
+      sources: null,
+    });
+    await this.messages.save(userMessage);
+    const assistantMessage = this.messages.create({
+      threadId: thread.id,
+      role: "assistant",
+      content: assistantContent,
+      status: "COMPLETE",
+      mode: "GENERAL",
+      sources: null,
+    });
+    await this.messages.save(assistantMessage);
+    thread.lastMessageAt = new Date();
+    if (!thread.title) thread.title = userContent.slice(0, 80);
+    await this.threads.save(thread);
+    await writeAdminAiAudit({
+      requestId,
+      actor,
+      conversationId: thread.id,
+      eventType: "AI_REQUEST_COMPLETED",
+      resultStatus: "ok",
+      scopeMetadata: { capabilityBlocked: true },
+    });
+    return {
+      thread: toThreadDto(thread, previewForSidebar(assistantContent)),
+      userMessage: toMessageDto(userMessage),
+      assistantMessage: toMessageDto(assistantMessage),
+      requestId,
+    };
+  }
+
   async sendMessage(
     userId: string,
     input: { content: string; threadId?: string | null },
@@ -387,6 +495,8 @@ export class AdminAiService {
     const requestId = crypto.randomUUID();
     const actor = await this.requireActor(userId);
     await assertAdminAiRateLimit(actor.id);
+    const capabilitySettings = await loadAdminAiCapabilitySettings();
+    await this.requireAssistantEnabled(capabilitySettings);
 
     const content = sanitizeAdminAiText(
       input.content,
@@ -394,6 +504,17 @@ export class AdminAiService {
     );
     if (!content) {
       throw new AppError(400, "Message is required", "VALIDATION_ERROR");
+    }
+
+    const blocked = precheckCapabilityIntent(content, capabilitySettings);
+    if (blocked) {
+      return this.replyWithoutTools(
+        actor,
+        input.threadId,
+        content,
+        blocked,
+        requestId,
+      );
     }
 
     let thread: AdminAiThread;
@@ -439,7 +560,7 @@ export class AdminAiService {
     history.reverse();
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: await this.buildSystemContent(actor) },
+      { role: "system", content: await this.buildSystemContent(actor, capabilitySettings) },
       ...history
         .filter(
           (msg) =>
@@ -496,7 +617,10 @@ export class AdminAiService {
             choice.content?.trim() ||
             "I could not find authorized data for that request.";
           const mode = inferModeFromTools(toolNames) as AdminAiMode;
-          const sources = mergeSources(collectedSources);
+          const sources = filterSourcesByCapabilities(
+            mergeSources(collectedSources),
+            capabilitySettings,
+          );
 
           const assistantMessage = this.messages.create({
             threadId: thread.id,
@@ -548,6 +672,7 @@ export class AdminAiService {
               name,
               call.function.arguments,
               { userMessage: input.content },
+              capabilitySettings,
             );
             collectedSources.push(...result.sources);
             if (result.actions?.length) {
@@ -620,6 +745,8 @@ export class AdminAiService {
     const requestId = crypto.randomUUID();
     const actor = await this.requireActor(userId);
     await assertAdminAiRateLimit(actor.id);
+    const capabilitySettings = await loadAdminAiCapabilitySettings();
+    await this.requireAssistantEnabled(capabilitySettings);
 
     const content = sanitizeAdminAiText(
       input.content,
@@ -627,6 +754,30 @@ export class AdminAiService {
     );
     if (!content) {
       throw new AppError(400, "Message is required", "VALIDATION_ERROR");
+    }
+
+    const blocked = precheckCapabilityIntent(content, capabilitySettings);
+    if (blocked) {
+      const result = await this.replyWithoutTools(
+        actor,
+        input.threadId,
+        content,
+        blocked,
+        requestId,
+      );
+      emit("meta", {
+        requestId: result.requestId,
+        thread: result.thread,
+        userMessage: result.userMessage,
+      });
+      emit("delta", blocked);
+      emit("done", {
+        requestId: result.requestId,
+        thread: result.thread,
+        userMessage: result.userMessage,
+        assistantMessage: result.assistantMessage,
+      });
+      return;
     }
 
     let thread: AdminAiThread;
@@ -679,7 +830,7 @@ export class AdminAiService {
     history.reverse();
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: await this.buildSystemContent(actor) },
+      { role: "system", content: await this.buildSystemContent(actor, capabilitySettings) },
       ...history
         .filter(
           (msg) =>
@@ -744,7 +895,10 @@ export class AdminAiService {
             streamed.content.trim() ||
             "I could not find authorized data for that request.";
           const mode = inferModeFromTools(toolNames) as AdminAiMode;
-          const sources = mergeSources(collectedSources);
+          const sources = filterSourcesByCapabilities(
+            mergeSources(collectedSources),
+            capabilitySettings,
+          );
 
           const assistantMessage = this.messages.create({
             threadId: thread.id,
@@ -806,6 +960,7 @@ export class AdminAiService {
               name,
               call.function.arguments,
               { userMessage: input.content },
+              capabilitySettings,
             );
             collectedSources.push(...result.sources);
             if (result.actions?.length) {

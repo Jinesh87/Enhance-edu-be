@@ -1,5 +1,10 @@
 import { AppDataSource } from "../../config/data-source.js";
 import { InstitutionSetting } from "../../entities/index.js";
+import {
+  DEFAULT_ADMIN_AI_BRIEFING_CONFIG,
+  type AdminAiBriefingConfig,
+  type AdminAiCapabilitySettings,
+} from "../admin/ai/admin-ai-capabilities.js";
 
 export interface UpdateInstitutionSettingInput {
   latitude: number;
@@ -34,6 +39,50 @@ export interface UpdateOpenAiSettingInput {
   openaiApiKey: string | null;
 }
 
+export type UpdateAdminAiCapabilitySettingsInput = {
+  assistantEnabled: boolean;
+  dataInsightsEnabled: boolean;
+  emailDraftingEnabled: boolean;
+  messageDraftingEnabled: boolean;
+  bulkCommunicationEnabled: boolean;
+  notificationSuggestionsEnabled: boolean;
+  proactiveBriefingEnabled: boolean;
+  reportBuilderEnabled: boolean;
+  deepLinksEnabled: boolean;
+  confirmedActionsEnabled: boolean;
+  briefingConfig?: Partial<AdminAiBriefingConfig> | null;
+};
+
+function normalizeBriefingConfig(
+  raw:
+    | InstitutionSetting["adminAiBriefingConfig"]
+    | Partial<AdminAiBriefingConfig>
+    | null
+    | undefined,
+): AdminAiBriefingConfig {
+  const base = DEFAULT_ADMIN_AI_BRIEFING_CONFIG;
+  const time =
+    typeof raw?.time === "string" && /^\d{2}:\d{2}$/.test(raw.time.trim())
+      ? raw.time.trim()
+      : base.time;
+  const days = Array.isArray(raw?.daysOfWeek)
+    ? raw.daysOfWeek
+        .filter((d): d is number => typeof d === "number" && d >= 0 && d <= 6)
+        .slice(0, 7)
+    : base.daysOfWeek;
+  const sections = Array.isArray(raw?.sections)
+    ? raw.sections
+        .filter((s): s is string => typeof s === "string" && Boolean(s.trim()))
+        .map((s) => s.trim().slice(0, 40))
+        .slice(0, 12)
+    : base.sections;
+  return {
+    time,
+    daysOfWeek: days.length ? days : base.daysOfWeek,
+    sections: sections.length ? sections : base.sections,
+  };
+}
+
 export class SettingsService {
   private readonly settingRepo = AppDataSource.getRepository(InstitutionSetting);
 
@@ -52,17 +101,89 @@ export class SettingsService {
         guardianPortalAttendanceEnabled: false,
         openaiApiKey: null,
         sessionChangeEmailNotificationsEnabled: false,
+        adminAiAssistantEnabled: true,
+        adminAiDataInsightsEnabled: true,
+        adminAiEmailDraftingEnabled: true,
+        adminAiMessageDraftingEnabled: true,
+        adminAiBulkCommunicationEnabled: true,
+        adminAiNotificationSuggestionsEnabled: true,
+        adminAiProactiveBriefingEnabled: true,
+        adminAiReportBuilderEnabled: true,
+        adminAiDeepLinksEnabled: true,
+        adminAiConfirmedActionsEnabled: true,
+        adminAiBriefingConfig: DEFAULT_ADMIN_AI_BRIEFING_CONFIG,
       });
       setting = await this.settingRepo.save(setting);
     }
     return setting;
   }
 
+  private mapAdminAiCapabilitySettings(
+    setting: InstitutionSetting,
+  ): AdminAiCapabilitySettings {
+    return {
+      assistantEnabled: setting.adminAiAssistantEnabled ?? true,
+      dataInsightsEnabled: setting.adminAiDataInsightsEnabled ?? true,
+      emailDraftingEnabled: setting.adminAiEmailDraftingEnabled ?? true,
+      messageDraftingEnabled: setting.adminAiMessageDraftingEnabled ?? true,
+      bulkCommunicationEnabled: setting.adminAiBulkCommunicationEnabled ?? true,
+      notificationSuggestionsEnabled:
+        setting.adminAiNotificationSuggestionsEnabled ?? true,
+      proactiveBriefingEnabled: setting.adminAiProactiveBriefingEnabled ?? true,
+      reportBuilderEnabled: setting.adminAiReportBuilderEnabled ?? true,
+      deepLinksEnabled: setting.adminAiDeepLinksEnabled ?? true,
+      confirmedActionsEnabled: setting.adminAiConfirmedActionsEnabled ?? true,
+      briefingConfig: normalizeBriefingConfig(setting.adminAiBriefingConfig),
+    };
+  }
+
+  async getAdminAiCapabilitySettings(): Promise<AdminAiCapabilitySettings> {
+    const setting = await this.getOrCreateDefault();
+    return this.mapAdminAiCapabilitySettings(setting);
+  }
+
+  async updateAdminAiCapabilitySettings(
+    input: UpdateAdminAiCapabilitySettingsInput,
+  ): Promise<AdminAiCapabilitySettings> {
+    const setting = await this.getOrCreateDefault();
+    const before = this.mapAdminAiCapabilitySettings(setting);
+
+    setting.adminAiAssistantEnabled = Boolean(input.assistantEnabled);
+    setting.adminAiDataInsightsEnabled = Boolean(input.dataInsightsEnabled);
+    setting.adminAiEmailDraftingEnabled = Boolean(input.emailDraftingEnabled);
+    setting.adminAiMessageDraftingEnabled = Boolean(
+      input.messageDraftingEnabled,
+    );
+    setting.adminAiBulkCommunicationEnabled = Boolean(
+      input.bulkCommunicationEnabled,
+    );
+    setting.adminAiNotificationSuggestionsEnabled = Boolean(
+      input.notificationSuggestionsEnabled,
+    );
+    setting.adminAiProactiveBriefingEnabled = Boolean(
+      input.proactiveBriefingEnabled,
+    );
+    setting.adminAiReportBuilderEnabled = Boolean(input.reportBuilderEnabled);
+    setting.adminAiDeepLinksEnabled = Boolean(input.deepLinksEnabled);
+    setting.adminAiConfirmedActionsEnabled = Boolean(
+      input.confirmedActionsEnabled,
+    );
+    setting.adminAiBriefingConfig = normalizeBriefingConfig({
+      ...before.briefingConfig,
+      ...(input.briefingConfig ?? {}),
+    });
+
+    await this.settingRepo.save(setting);
+    return this.mapAdminAiCapabilitySettings(setting);
+  }
+
   async getInstitutionSettings(): Promise<InstitutionSetting | null> {
     return this.settingRepo.findOneBy({ id: "default" });
   }
 
-  async updateInstitutionSettings(input: UpdateInstitutionSettingInput): Promise<InstitutionSetting> {
+  async updateInstitutionSettings(
+    input: UpdateInstitutionSettingInput,
+  ): Promise<InstitutionSetting> {
     const setting = await this.getOrCreateDefault();
     setting.latitude = input.latitude;
     setting.longitude = input.longitude;

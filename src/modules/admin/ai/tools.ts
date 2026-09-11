@@ -1,5 +1,11 @@
 import type OpenAI from "openai";
 import { AppError } from "../../../common/errors/AppError.js";
+import {
+  assertCapabilityEnabled,
+  capabilityForTool,
+  loadAdminAiCapabilitySettings,
+  type AdminAiCapabilitySettings,
+} from "./admin-ai-capabilities.js";
 import type { AdminAiActor } from "./authorization.js";
 import { searchAuthorizedSyllabusDocuments } from "./document-retrieval.js";
 import {
@@ -982,6 +988,7 @@ export async function executeAdminAiTool(
   name: string,
   rawArgs: string | null | undefined,
   context: NormalizeToolArgsContext = {},
+  capabilitySettings?: AdminAiCapabilitySettings,
 ): Promise<ToolResult> {
   if (!ALLOWED.has(name)) {
     throw new AppError(
@@ -989,6 +996,13 @@ export async function executeAdminAiTool(
       "I could not find authorized data for that request.",
       "ADMIN_AI_TOOL_DENIED",
     );
+  }
+
+  const settings =
+    capabilitySettings ?? (await loadAdminAiCapabilitySettings());
+  const required = capabilityForTool(name);
+  if (required) {
+    assertCapabilityEnabled(settings, required);
   }
 
   const args = normalizeToolArgs(name, parseArgs(rawArgs), context);
