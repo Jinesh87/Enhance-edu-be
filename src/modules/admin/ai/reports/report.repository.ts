@@ -1,11 +1,16 @@
 import { AttendanceStatus } from "../../../../entities/AttendanceRecord.js";
 import { TaskStatus } from "../../../../entities/Task.js";
 import {
+  UserRole,
+  UserStatus,
+} from "../../../../common/constants/roles.js";
+import {
   calendarDateInTimeZone,
   DEFAULT_CLASS_TIMEZONE,
   formatInTimeZone,
 } from "../../../../common/utils/timezone.js";
 import { adminAiRepository } from "../admin-ai.repository.js";
+import { peopleRoleLabel } from "../query-normalize/normalize-tool-args.js";
 import {
   clampRange,
   dayBoundsInClassTz,
@@ -50,6 +55,8 @@ export class AdminAiReportRepository {
         return this.timetable(filters);
       case "TASKS":
         return this.tasks(filters);
+      case "TEACHERS":
+        return this.teachers(filters);
     }
   }
 
@@ -452,6 +459,135 @@ export class AdminAiReportRepository {
       truncated: tasks.length > REPORT_MAX_ROWS,
     };
   }
+
+  private async teachers(
+    filters: AdminAiReportFilters,
+  ): Promise<ReportTablePayload> {
+    const statusRaw = filters.status?.trim().toUpperCase() || null;
+    const status =
+      statusRaw &&
+      Object.values(UserStatus).includes(statusRaw as UserStatus)
+        ? (statusRaw as UserStatus)
+        : UserStatus.ACTIVE;
+
+    const name = filters.studentName?.trim() || null;
+    let people = await adminAiRepository.findPeople({
+      name,
+      role: UserRole.STAFF,
+      status,
+    });
+
+    const hasAssignmentFilter = Boolean(
+      filters.yearLevel?.trim() ||
+        filters.term?.trim() ||
+        filters.subject?.trim(),
+    );
+
+    const [allAssignments, scopedAssignments] = await Promise.all([
+      adminAiRepository.findTeacherClasses({
+        teacherName: name,
+        subject: null,
+        yearLevel: null,
+        term: null,
+        academicYear: null,
+      }),
+      hasAssignmentFilter
+        ? adminAiRepository.findTeacherClasses({
+            teacherName: name,
+            subject: filters.subject?.trim() || null,
+            yearLevel: filters.yearLevel?.trim() || null,
+            term: filters.term?.trim() || null,
+            academicYear: filters.academicYear?.trim() || null,
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (scopedAssignments) {
+      const allowed = new Set(
+        scopedAssignments
+          .map((cls) => cls.teacher?.id)
+          .filter((id): id is string => Boolean(id)),
+      );
+      people = people.filter((person) => allowed.has(person.id));
+    }
+
+    const assignmentsByTeacher = new Map<
+      string,
+      { years: string[]; terms: string[]; subjects: string[] }
+    >();
+    for (const cls of allAssignments) {
+      const teacherId = cls.teacher?.id;
+      if (!teacherId) continue;
+      let bucket = assignmentsByTeacher.get(teacherId);
+      if (!bucket) {
+        bucket = { years: [], terms: [], subjects: [] };
+        assignmentsByTeacher.set(teacherId, bucket);
+      }
+      const year = cls.term?.yearLevel?.name?.trim();
+      const term = (cls.term?.name ?? cls.termName)?.trim();
+      const subject = (cls.subject ?? cls.name)?.trim();
+      if (year) bucket.years.push(year);
+      if (term) bucket.terms.push(term);
+      if (subject) bucket.subjects.push(subject);
+    }
+
+    const limited = people.slice(0, REPORT_MAX_ROWS);
+    const filterLabels: string[] = ["Role: Teacher"];
+    pushFilter(filterLabels, "Name", name);
+    pushFilter(filterLabels, "Status", status);
+    pushFilter(filterLabels, "Year", filters.yearLevel);
+    pushFilter(filterLabels, "Term", filters.term);
+    pushFilter(filterLabels, "Subject", filters.subject);
+
+    const columns = [
+      "Name",
+      "Preferred Name",
+      "Role",
+      "Status",
+      "Employment",
+      "Year",
+      "Term",
+      "Subject",
+    ];
+
+    return {
+      title: reportTypeLabel("TEACHERS"),
+      filterLabels,
+      summary: [{ label: "Teachers listed", value: String(limited.length) }],
+      columns,
+      availableColumns: columns,
+      rows: limited.map((person) => {
+        const assignments = assignmentsByTeacher.get(person.id);
+        return [
+          person.fullName?.trim() || "—",
+          person.preferredName?.trim() || "—",
+          peopleRoleLabel(person.role),
+          person.status,
+          person.employmentType?.replaceAll("_", " ") || "—",
+          uniqueJoined(assignments?.years) || "—",
+          uniqueJoined(assignments?.terms) || "—",
+          uniqueJoined(assignments?.subjects) || "—",
+        ];
+      }),
+      truncated: people.length > REPORT_MAX_ROWS,
+      totalMatched: people.length,
+    };
+  }
+}
+
+function uniqueJoined(values: string[] | undefined): string {
+  if (!values?.length) return "";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out.join(", ");
 }
 
 export const adminAiReportRepository = new AdminAiReportRepository();

@@ -28,6 +28,7 @@ import {
   adminAiMemoryService,
 } from "./memory.js";
 import { adminAiReportService } from "./reports/report.service.js";
+import { communicationDraftService } from "./communications/communication-draft.service.js";
 import {
   ADMIN_AI_TOOL_DEFINITIONS,
   executeAdminAiTool,
@@ -59,14 +60,16 @@ function toMessageDto(message: AdminAiMessage) {
         (source.openPage ||
           source.downloadReport ||
           source.generateReport ||
-          source.adjustReport),
+          source.adjustReport ||
+          source.confirmSend),
     )
     .map(
       (source) =>
         source.openPage ??
         source.downloadReport ??
         source.generateReport ??
-        source.adjustReport!,
+        source.adjustReport ??
+        source.confirmSend!,
     )
     .slice(0, 8);
   const sources = allSources.filter((source) => source.kind !== "action");
@@ -94,7 +97,9 @@ function mergeSources(parts: AdminAiSource[]): AdminAiSource[] {
           ? `action|generate|${source.generateReport.draftId}|${source.generateReport.label}`
           : source.kind === "action" && source.adjustReport
             ? `action|adjust|${source.adjustReport.draftId}|${source.adjustReport.label}`
-            : source.kind === "action" && source.openPage
+            : source.kind === "action" && source.confirmSend
+              ? `action|confirmSend|${source.confirmSend.draftId}|${source.confirmSend.label}`
+              : source.kind === "action" && source.openPage
               ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
               : `${source.kind}|${source.label}|${source.detail ?? ""}`;
     if (seen.has(key)) continue;
@@ -115,6 +120,9 @@ function toolErrorMessage(error: unknown): string {
     return error.message;
   }
   if (error.code.startsWith("ADMIN_AI_REPORT_")) {
+    return error.message;
+  }
+  if (error.code.startsWith("ADMIN_AI_COMM_")) {
     return error.message;
   }
   return "I could not find authorized data for that request.";
@@ -175,6 +183,114 @@ export class AdminAiService {
       rowCount: result.rowCount,
       truncated: result.truncated,
     };
+  }
+
+  async getCommunicationDraft(userId: string, draftId: string) {
+    const actor = await this.requireActor(userId);
+    return communicationDraftService.get(actor, draftId);
+  }
+
+  async listCommunicationRecipients(userId: string, draftId: string) {
+    const actor = await this.requireActor(userId);
+    return communicationDraftService.listRecipients(actor, draftId);
+  }
+
+  async updateCommunicationDraft(
+    userId: string,
+    draftId: string,
+    input: {
+      subject?: string;
+      body?: string;
+      refreshAudience?: boolean;
+      audienceType?: string;
+      roles?: string[];
+      groups?: string[];
+      yearLevel?: string | null;
+      term?: string | null;
+      subjectFilter?: string | null;
+      className?: string | null;
+      date?: string | null;
+      nameQuery?: string | null;
+      userIds?: string[];
+      selectedUserIds?: string[];
+      recipientOf?: string;
+      assessmentQuery?: string | null;
+      enquiryStage?: string | null;
+      status?: string | null;
+      label?: string | null;
+      ambiguous?: boolean;
+      confirmed?: boolean;
+    },
+  ) {
+    const actor = await this.requireActor(userId);
+    const hasAudiencePatch = Boolean(
+      input.audienceType ||
+        input.roles ||
+        input.groups ||
+        input.recipientOf ||
+        input.confirmed !== undefined ||
+        input.yearLevel ||
+        input.term ||
+        input.subjectFilter ||
+        input.className ||
+        input.date ||
+        input.nameQuery ||
+        input.userIds ||
+        input.assessmentQuery ||
+        input.enquiryStage ||
+        input.status ||
+        input.label ||
+        input.ambiguous !== undefined,
+    );
+    const audience = hasAudiencePatch
+      ? {
+          type: input.audienceType,
+          roles: input.roles,
+          groups: input.groups,
+          yearLevel: input.yearLevel,
+          term: input.term,
+          subject: input.subjectFilter,
+          className: input.className,
+          date: input.date,
+          nameQuery: input.nameQuery,
+          userIds: input.userIds,
+          recipientOf: input.recipientOf,
+          assessmentQuery: input.assessmentQuery,
+          enquiryStage: input.enquiryStage,
+          status: input.status,
+          label: input.label,
+          ambiguous: input.ambiguous,
+          confirmed: input.confirmed,
+          options: null,
+        }
+      : undefined;
+    return communicationDraftService.update(actor, draftId, {
+      subject: input.subject,
+      body: input.body,
+      refreshAudience: input.refreshAudience,
+      audience,
+      selectedUserIds: input.selectedUserIds,
+    });
+  }
+
+  async confirmSendCommunication(
+    userId: string,
+    draftId: string,
+    input: {
+      password?: string;
+      subject?: string;
+      body?: string;
+      retryFailedOnly?: boolean;
+      selectedUserIds?: string[];
+      attachments?: Array<{
+        filename?: string;
+        contentBase64?: string;
+        mimeType?: string | null;
+      }>;
+    },
+  ) {
+    const actor = await this.requireActor(userId);
+    return communicationDraftService.confirmSend(actor, draftId, input);
   }
 
   async listThreads(userId: string, cursor?: string | null) {

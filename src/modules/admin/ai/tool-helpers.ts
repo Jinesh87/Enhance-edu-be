@@ -43,11 +43,19 @@ export type AdminAiAdjustReportAction = {
   label: string;
 };
 
+/** Confirm sending a communication draft (email). */
+export type AdminAiConfirmSendAction = {
+  type: "CONFIRM_SEND";
+  draftId: string;
+  label: string;
+};
+
 export type AdminAiUiAction =
   | AdminAiOpenPageAction
   | AdminAiDownloadReportAction
   | AdminAiGenerateReportAction
-  | AdminAiAdjustReportAction;
+  | AdminAiAdjustReportAction
+  | AdminAiConfirmSendAction;
 
 export type ToolResult = {
   data: unknown;
@@ -115,6 +123,17 @@ export function adjustReportAction(
   };
 }
 
+export function confirmSendCommunicationAction(
+  draftId: string,
+  label = "Confirm Send",
+): AdminAiConfirmSendAction {
+  return {
+    type: "CONFIRM_SEND",
+    draftId: draftId.trim(),
+    label,
+  };
+}
+
 export function actionSource(action: AdminAiUiAction): AdminAiSource {
   if (action.type === "DOWNLOAD_REPORT") {
     return {
@@ -135,6 +154,13 @@ export function actionSource(action: AdminAiUiAction): AdminAiSource {
       kind: "action",
       label: action.label,
       adjustReport: action,
+    };
+  }
+  if (action.type === "CONFIRM_SEND") {
+    return {
+      kind: "action",
+      label: action.label,
+      confirmSend: action,
     };
   }
   return {

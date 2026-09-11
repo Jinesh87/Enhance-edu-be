@@ -11,8 +11,10 @@ import {
   adminAiMemoryIdParamsSchema,
   adminAiReportIdParamsSchema,
   adminAiThreadIdParamsSchema,
+  confirmSendCommunicationSchema,
   listAdminAiThreadsQuerySchema,
   sendAdminAiMessageSchema,
+  updateCommunicationDraftSchema,
 } from "./admin-ai.validation.js";
 
 const router = Router();
@@ -53,6 +55,28 @@ router.get(
   "/reports/:reportId/download",
   validate(adminAiReportIdParamsSchema, "params"),
   adminAiController.downloadReport,
+);
+router.get(
+  "/communications/drafts/:draftId",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  adminAiController.getCommunicationDraft,
+);
+router.get(
+  "/communications/drafts/:draftId/recipients",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  adminAiController.listCommunicationRecipients,
+);
+router.patch(
+  "/communications/drafts/:draftId",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  validate(updateCommunicationDraftSchema),
+  adminAiController.updateCommunicationDraft,
+);
+router.post(
+  "/communications/drafts/:draftId/confirm-send",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  validate(confirmSendCommunicationSchema),
+  adminAiController.confirmSendCommunication,
 );
 router.post(
   "/messages",

@@ -90,6 +90,14 @@ export interface SendPasswordResetEmailParams {
   resetLink: string;
 }
 
+export interface SendAdminCommunicationEmailParams {
+  to: string;
+  fullName: string;
+  subject: string;
+  bodyText: string;
+  attachments?: EmailAttachment[];
+}
+
 export interface UpdateMessagingConfigInput {
   resendApiKey: string;
   fromEmail: string;
@@ -676,6 +684,67 @@ export class EmailService {
     if (error) {
       logger.warn({ error, to: params.to }, "Failed to send new enrolment email");
     }
+  }
+
+  async sendAdminCommunicationEmail(
+    params: SendAdminCommunicationEmailParams,
+  ): Promise<string | null> {
+    const config = await this.getConfig();
+
+    if (!config) {
+      throw new AppError(
+        500,
+        "Email configuration not found. Please configure email settings first.",
+        "EMAIL_NOT_CONFIGURED",
+      );
+    }
+
+    if (!config.enabled) {
+      throw new AppError(
+        500,
+        "Email sending is disabled. Enable it in System Settings → Message history, then try again.",
+        "EMAIL_DISABLED",
+      );
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    const safeBody = escapeHtml(params.bodyText).replace(/\n/g, "<br/>");
+    const html = `
+<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; color: #111; line-height: 1.5;">
+  <p>Hi ${escapeHtml(params.fullName)},</p>
+  <div>${safeBody}</div>
+  <p style="margin-top: 24px; color: #666; font-size: 12px;">Enhance Education</p>
+</body>
+</html>`.trim();
+
+    const { data, error } = await resend.emails.send({
+      from: `${config.fromName} <${config.fromEmail}>`,
+      to: params.to,
+      subject: params.subject.slice(0, 240),
+      html,
+      attachments: this.toResendAttachments(params.attachments),
+    });
+
+    if (error) {
+      logger.error(
+        { error, to: params.to },
+        "Failed to send admin communication email",
+      );
+      throw new AppError(
+        500,
+        "Failed to send email",
+        "EMAIL_SEND_FAILED",
+        { error },
+      );
+    }
+
+    logger.info(
+      { to: params.to, emailId: data?.id },
+      "Admin communication email sent",
+    );
+    return data?.id ?? null;
   }
 
   private toResendAttachments(attachments?: EmailAttachment[]) {

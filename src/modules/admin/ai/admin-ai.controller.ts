@@ -127,6 +127,107 @@ class AdminAiController {
     }
   };
 
+  getCommunicationDraft = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.getCommunicationDraft(
+        req.user!.id,
+        req.params.draftId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listCommunicationRecipients = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.listCommunicationRecipients(
+        req.user!.id,
+        req.params.draftId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateCommunicationDraft = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.updateCommunicationDraft(
+        req.user!.id,
+        req.params.draftId as string,
+        {
+          subject: req.body.subject,
+          body: req.body.body,
+          refreshAudience: Boolean(req.body.refreshAudience),
+          audienceType: req.body.audienceType,
+          roles: req.body.roles,
+          groups: req.body.groups,
+          yearLevel: req.body.yearLevel,
+          term: req.body.term,
+          subjectFilter: req.body.subjectFilter,
+          className: req.body.className,
+          date: req.body.date,
+          nameQuery: req.body.nameQuery,
+          userIds: req.body.userIds,
+          selectedUserIds: req.body.selectedUserIds,
+          recipientOf: req.body.recipientOf,
+          assessmentQuery: req.body.assessmentQuery,
+          enquiryStage: req.body.enquiryStage,
+          status: req.body.status,
+          label: req.body.label,
+          ambiguous:
+            typeof req.body.ambiguous === "boolean"
+              ? req.body.ambiguous
+              : undefined,
+          confirmed:
+            typeof req.body.confirmed === "boolean"
+              ? req.body.confirmed
+              : undefined,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  confirmSendCommunication = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.confirmSendCommunication(
+        req.user!.id,
+        req.params.draftId as string,
+        {
+          password: req.body.password,
+          subject: req.body.subject,
+          body: req.body.body,
+          retryFailedOnly: Boolean(req.body.retryFailedOnly),
+          selectedUserIds: req.body.selectedUserIds,
+          attachments: req.body.attachments,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   sendMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await adminAiService.sendMessage(req.user!.id, {

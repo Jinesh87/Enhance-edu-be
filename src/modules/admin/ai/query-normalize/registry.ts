@@ -294,6 +294,19 @@ export const REPORT_TYPE_ALIAS_MAP = buildAliasMap(
         ? ["timetable", "schedule", "class schedule"]
         : []),
       ...(type === "TASKS" ? ["task", "tasks", "open tasks"] : []),
+      ...(type === "TEACHERS"
+        ? [
+            "teacher",
+            "teachers",
+            "teachers list",
+            "teacher list",
+            "teachers directory",
+            "teacher directory",
+            "tutors",
+            "tutor list",
+            "staff teachers",
+          ]
+        : []),
     ],
   })),
 );

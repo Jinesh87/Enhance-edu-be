@@ -61,6 +61,7 @@ import {
   AdminAiMemory,
   AdminAiReport,
   AdminAiReportDraft,
+  AdminAiCommunicationDraft,
   Notification,
   OpenAiUsageLog,
   LearningSourceDocument,
@@ -893,6 +894,31 @@ export async function ensureAdminAiSchema() {
       ON admin_ai_report_drafts ("ownerUserId");
     CREATE INDEX IF NOT EXISTS "IDX_admin_ai_report_drafts_owner_updated"
       ON admin_ai_report_drafts ("ownerUserId", "updatedAt");
+
+    CREATE TABLE IF NOT EXISTS admin_ai_communication_drafts (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "ownerUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "threadId" uuid,
+      "channel" varchar(16) NOT NULL DEFAULT 'email',
+      "subject" varchar(240) NOT NULL,
+      "body" text NOT NULL,
+      "audience" jsonb NOT NULL,
+      "recipientsSnapshot" jsonb,
+      "attachments" jsonb,
+      "recipientCount" int NOT NULL DEFAULT 0,
+      "sentCount" int NOT NULL DEFAULT 0,
+      "failedCount" int NOT NULL DEFAULT 0,
+      "status" varchar(24) NOT NULL DEFAULT 'draft',
+      "requiresReauth" boolean NOT NULL DEFAULT false,
+      "expiresAt" timestamptz,
+      "previewedAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_comm_drafts_ownerUserId"
+      ON admin_ai_communication_drafts ("ownerUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_comm_drafts_owner_updated"
+      ON admin_ai_communication_drafts ("ownerUserId", "updatedAt");
   `);
 
   await bootstrap.destroy();
@@ -1131,6 +1157,7 @@ export const AppDataSource = new DataSource({
     AdminAiMemory,
     AdminAiReport,
     AdminAiReportDraft,
+    AdminAiCommunicationDraft,
     Notification,
     OpenAiUsageLog,
     LearningSourceDocument,
