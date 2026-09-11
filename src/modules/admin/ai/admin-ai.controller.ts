@@ -9,12 +9,10 @@ function openAdminAiSse(res: FlushableResponse) {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
-  // Discourage intermediary buffering; help small token writes go out immediately.
   res.socket?.setNoDelay?.(true);
   if (typeof res.flushHeaders === "function") {
     res.flushHeaders();
   }
-  // ~2KB comment so common proxies flush the first packets instead of buffering.
   res.write(`:${" ".repeat(2048)}\n\n`);
   if (typeof res.flush === "function") {
     res.flush();
@@ -220,6 +218,85 @@ class AdminAiController {
           retryFailedOnly: Boolean(req.body.retryFailedOnly),
           selectedUserIds: req.body.selectedUserIds,
           attachments: req.body.attachments,
+          confirmationText: req.body.confirmationText,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  previewBulkAction = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.previewBulkAction(
+        req.user!.id,
+        String(req.body.draftId),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  confirmBulkAction = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.confirmBulkAction(
+        req.user!.id,
+        req.params.id as string,
+        {
+          password: req.body.password,
+          subject: req.body.subject,
+          body: req.body.body,
+          retryFailedOnly: Boolean(req.body.retryFailedOnly),
+          selectedUserIds: req.body.selectedUserIds,
+          attachments: req.body.attachments,
+          confirmationText: req.body.confirmationText,
+          action: req.body.action,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getBulkActionStatus = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.getBulkActionStatus(
+        req.user!.id,
+        req.params.id as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  retryFailedBulkAction = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.retryFailedBulkAction(
+        req.user!.id,
+        req.params.id as string,
+        {
+          password: req.body.password,
+          confirmationText: req.body.confirmationText,
         },
       );
       res.status(200).json(data);
@@ -249,7 +326,6 @@ class AdminAiController {
     const flushable = res as FlushableResponse;
     let streamStarted = false;
 
-    // Abort only when the *response* connection drops mid-stream.
     const onResponseClose = () => {
       if (!res.writableEnded) {
         abort.abort();

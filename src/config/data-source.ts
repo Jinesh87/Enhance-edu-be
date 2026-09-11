@@ -930,7 +930,11 @@ export async function ensureAdminAiSchema() {
       "recipientCount" int NOT NULL DEFAULT 0,
       "sentCount" int NOT NULL DEFAULT 0,
       "failedCount" int NOT NULL DEFAULT 0,
+      "processedCount" int NOT NULL DEFAULT 0,
+      "skippedCount" int NOT NULL DEFAULT 0,
       "status" varchar(24) NOT NULL DEFAULT 'draft',
+      "idempotencyKey" varchar(64),
+      "jobId" varchar(120),
       "requiresReauth" boolean NOT NULL DEFAULT false,
       "expiresAt" timestamptz,
       "previewedAt" timestamptz,
@@ -941,6 +945,17 @@ export async function ensureAdminAiSchema() {
       ON admin_ai_communication_drafts ("ownerUserId");
     CREATE INDEX IF NOT EXISTS "IDX_admin_ai_comm_drafts_owner_updated"
       ON admin_ai_communication_drafts ("ownerUserId", "updatedAt");
+  `);
+
+  await bootstrap.query(`
+    ALTER TABLE admin_ai_communication_drafts
+      ADD COLUMN IF NOT EXISTS "processedCount" int NOT NULL DEFAULT 0;
+    ALTER TABLE admin_ai_communication_drafts
+      ADD COLUMN IF NOT EXISTS "skippedCount" int NOT NULL DEFAULT 0;
+    ALTER TABLE admin_ai_communication_drafts
+      ADD COLUMN IF NOT EXISTS "idempotencyKey" varchar(64);
+    ALTER TABLE admin_ai_communication_drafts
+      ADD COLUMN IF NOT EXISTS "jobId" varchar(120);
   `);
 
   await bootstrap.destroy();

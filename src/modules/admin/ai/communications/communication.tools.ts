@@ -1,4 +1,10 @@
 import type { AdminAiActor } from "../authorization.js";
+import {
+  disabledCapabilityMessage,
+  isBulkRecipientAudience,
+  isCapabilityEnabled,
+  loadAdminAiCapabilitySettings,
+} from "../admin-ai-capabilities.js";
 import { sanitizeToolPayload } from "../sanitize.js";
 import {
   confirmSendCommunicationAction,
@@ -63,6 +69,31 @@ function draftToolResult(
       },
     ],
     actions: [confirmSendCommunicationAction(draft.draftId, "Confirm Send")],
+  };
+}
+
+async function rejectIfBulkDisabled(
+  actor: AdminAiActor,
+  draft: Awaited<ReturnType<typeof communicationDraftService.create>>,
+  options?: { discard?: boolean },
+): Promise<ToolResult | null> {
+  if (!isBulkRecipientAudience(draft.recipientCount)) return null;
+  const settings = await loadAdminAiCapabilitySettings();
+  if (isCapabilityEnabled(settings, "bulkCommunication")) return null;
+  if (options?.discard) {
+    await communicationDraftService.discard(actor, draft.draftId).catch(() => {
+      /* best-effort cleanup */
+    });
+  }
+  return {
+    data: sanitizeToolPayload({
+      error: disabledCapabilityMessage("bulkCommunication"),
+      recipientCount: draft.recipientCount,
+      audienceLabel: draft.audienceLabel,
+      responseHint:
+        "Bulk Communication is disabled in Settings → AI. Enable it there, or message a single recipient.",
+    }),
+    sources: [],
   };
 }
 
@@ -151,6 +182,8 @@ export async function createCommunicationDraft(
     },
     threadId: args.threadId ?? null,
   });
+  const rejected = await rejectIfBulkDisabled(actor, draft, { discard: true });
+  if (rejected) return rejected;
   return draftToolResult(draft);
 }
 
@@ -236,6 +269,8 @@ export async function updateCommunicationDraft(
       : undefined,
     refreshAudience: args.refreshAudience,
   });
+  const rejected = await rejectIfBulkDisabled(actor, draft);
+  if (rejected) return rejected;
   return draftToolResult(draft, "Draft updated. Still not sent.");
 }
 

@@ -52,7 +52,7 @@ Filter examples:
 - Assessment participants → groups:[ASSESSMENT_PARTICIPANTS], assessmentQuery
 - Enquiry contacts → groups:[ENQUIRY_CONTACTS]
 - Selected people → userIds (real UUIDs from searchPeople)
-After createCommunicationDraft, reply briefly (e.g. "I've prepared the email.") — the preview card handles recipients, subject, message, and Confirm Send.
+After createCommunicationDraft, reply briefly (e.g. "I've prepared the email.") — the preview card handles recipients, subject, message, and Confirm Send. Never say the preview is ready unless createCommunicationDraft was actually called.
 If ambiguous (e.g. “message Year 10”), set ambiguous=true so the admin confirms audience in the preview UI before send.
 For any create/generate/export/download/prepare PDF or report request → ALWAYS call previewReport (or generateReport alias). Never answer those with getLowAttendanceStudents, searchEnquiries, searchEnrolments, listOpenTasks, or other list tools alone — those do not show Generate PDF.
 Report type mapping for PDF/report asks:

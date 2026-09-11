@@ -25,6 +25,8 @@ export {
   AUDIENCE_ROLES,
 } from "./audience.normalize.js";
 
+import { BULK_ABSOLUTE_MAX_RECIPIENTS } from "../bulk-actions/bulk-action-limits.js";
+
 type UserRow = {
   userId: string;
   name: string;
@@ -35,7 +37,7 @@ type UserRow = {
   relationshipLabel?: string | null;
 };
 
-const RECIPIENT_LIMIT = 500;
+const RECIPIENT_LIMIT = BULK_ABSOLUTE_MAX_RECIPIENTS;
 
 function dedupeRecipients(rows: UserRow[]): CommunicationRecipientSnapshot[] {
   const byUser = new Map<string, CommunicationRecipientSnapshot>();
@@ -85,11 +87,6 @@ function intersectByUserId(a: UserRow[], b: UserRow[]): UserRow[] {
   return a.filter((row) => ids.has(row.userId));
 }
 
-/**
- * Filter-first audience resolver.
- * Structured intent → permission-scoped DB queries → deduped recipients.
- * Add new groups by registering a handler — do not fork the send flow.
- */
 export class AudienceResolverService {
   async resolve(
     audience: CommunicationAudience,

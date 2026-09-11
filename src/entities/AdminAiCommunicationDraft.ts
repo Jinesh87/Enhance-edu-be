@@ -15,6 +15,7 @@ export type CommunicationChannel = "email";
 
 export type CommunicationDraftStatus =
   | "draft"
+  | "queued"
   | "sending"
   | "sent"
   | "partially_sent"
@@ -27,11 +28,6 @@ export type CommunicationRecipientStatus =
   | "failed"
   | "skipped";
 
-/**
- * Filter-first audience intent.
- * AI supplies structured filters; backend resolves recipients from DB relationships.
- * Legacy `type` presets are normalized into roles/groups on sanitize.
- */
 export type CommunicationAudience = {
   roles?: string[] | null;
   groups?: string[] | null;
@@ -46,7 +42,6 @@ export type CommunicationAudience = {
   userIds?: string[] | null;
   assessmentQuery?: string | null;
   enquiryStage?: string | null;
-  /** Human-readable audience summary for preview UI. */
   label?: string | null;
   ambiguous?: boolean;
   confirmed?: boolean;
@@ -60,23 +55,16 @@ export type CommunicationAudienceOption = {
   roles?: string[] | null;
   groups?: string[] | null;
   recipientOf?: "SELF" | "PARENTS" | null;
-  /** Legacy option type (normalized into roles/groups). */
   type?: string | null;
 };
 
-/**
- * Server-side recipient snapshot for drafts.
- * Raw email/phone are NEVER stored here — resolved at send-time only.
- */
 export type CommunicationRecipientSnapshot = {
   userId: string;
   name: string;
   hasEmail: boolean;
   role?: string | null;
   studentNames?: string[];
-  /** Human relationship hint when known (e.g. Guardian). */
   relationshipLabel?: string | null;
-  /** Admin can deselect before Confirm Send. Default true. */
   selected?: boolean;
   status: CommunicationRecipientStatus;
   errorReason?: string | null;
@@ -132,8 +120,20 @@ export class AdminAiCommunicationDraft {
   @Column({ type: "int", default: 0 })
   failedCount!: number;
 
+  @Column({ type: "int", default: 0 })
+  processedCount!: number;
+
+  @Column({ type: "int", default: 0 })
+  skippedCount!: number;
+
   @Column({ type: "varchar", length: 24, default: "draft" })
   status!: CommunicationDraftStatus;
+
+  @Column({ type: "varchar", length: 64, nullable: true })
+  idempotencyKey!: string | null;
+
+  @Column({ type: "varchar", length: 120, nullable: true })
+  jobId!: string | null;
 
   @Column({ type: "boolean", default: false })
   requiresReauth!: boolean;

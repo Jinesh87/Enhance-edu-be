@@ -26,10 +26,20 @@ import {
   recipientHasEmail,
   sanitizeRecipientsForStorage,
 } from "./audience.privacy.js";
-import { communicationSendService } from "./communication-send.service.js";
+import {
+  assertWithinHardCap,
+  BULK_ABSOLUTE_MAX_RECIPIENTS,
+  BULK_REAUTH_THRESHOLD,
+  expectedTypeConfirmPhrase,
+  requiresTypeConfirm,
+} from "../bulk-actions/bulk-action-limits.js";
+import {
+  enqueueBulkActionJob,
+  storeBulkActionAttachments,
+} from "../../../../common/queues/bulk-actions-queue.js";
 
 export const COMM_DRAFT_TTL_MS = 30 * 60 * 1000;
-export const COMM_BULK_REAUTH_THRESHOLD = 21;
+export const COMM_BULK_REAUTH_THRESHOLD = BULK_REAUTH_THRESHOLD;
 
 function asTrimmedString(value: unknown, max = 80): string | null {
   return typeof value === "string" && value.trim()
@@ -89,8 +99,6 @@ function sanitizeAudience(
   const recipientOf =
     recipientRaw === "PARENTS" ? ("PARENTS" as const) : ("SELF" as const);
 
-  // "Parents of Student X" targets students then expands to linked guardians.
-  // Never treat this as a generic GUARDIAN role audience.
   if (recipientOf === "PARENTS") {
     const onlyGuardian =
       roles?.length &&
@@ -162,7 +170,6 @@ function sanitizeAudience(
     audience.confirmed = true;
   }
 
-  // Prefer structured human labels over model-provided generic wording.
   const individualParents =
     audience.recipientOf === "PARENTS" &&
     Boolean(audience.nameQuery?.trim()) &&
@@ -280,18 +287,31 @@ function toDraftDto(
   const audienceConfirm = requiresAudienceConfirm(draft.audience);
   const audienceLabel =
     draft.audience.label ?? describeAudience(draft.audience);
+  const skippedCount =
+    draft.skippedCount ||
+    snapshot.filter((r) => r.status === "skipped").length;
+  const processedCount =
+    draft.processedCount ||
+    snapshot.filter(
+      (r) => r.status === "sent" || r.status === "failed" || r.status === "skipped",
+    ).length;
+  const hardCap = assertWithinHardCap(draft.recipientCount);
+  const sendable = withEmail.length;
+  const typeConfirm = requiresTypeConfirm(sendable);
 
   return {
     draftId: draft.id,
     channel: draft.channel,
+    action: "send_email" as const,
     subject: draft.subject,
     body: draft.body,
     audience: publicAudience(draft.audience),
     audienceLabel,
     recipientCount: draft.recipientCount,
     selectedCount: selected.length,
-    sendableCount: withEmail.length,
+    sendableCount: sendable,
     missingEmailCount: missingEmail.length,
+    excludedCount: missingEmail.length + snapshot.filter((r) => r.selected === false).length,
     emptyReason:
       emptyReason ??
       (audienceConfirm || snapshot.length
@@ -299,8 +319,17 @@ function toDraftDto(
         : "No recipients match this audience."),
     sentCount: draft.sentCount,
     failedCount: draft.failedCount,
+    skippedCount,
+    processedCount,
     status: draft.status,
     requiresReauth: draft.requiresReauth,
+    requiresTypeConfirm: typeConfirm,
+    typeConfirmPhrase: typeConfirm
+      ? expectedTypeConfirmPhrase(sendable)
+      : null,
+    withinLimit: hardCap.ok,
+    limitMessage: hardCap.ok ? null : hardCap.message,
+    absoluteMaxRecipients: BULK_ABSOLUTE_MAX_RECIPIENTS,
     requiresAudienceConfirm: audienceConfirm,
     audienceOptions: (draft.audience.options ?? []).map((option) => ({
       label: option.label,
@@ -400,7 +429,6 @@ export class CommunicationDraftService {
         "ADMIN_AI_COMM_DRAFT_NOT_FOUND",
       );
     }
-    // Strip any legacy raw emails from in-memory snapshot (defense in depth).
     if (draft.recipientsSnapshot?.length) {
       draft.recipientsSnapshot = sanitizeRecipientsForStorage(
         draft.recipientsSnapshot,
@@ -585,6 +613,15 @@ export class CommunicationDraftService {
     return toDraftDto(draft, emptyReason);
   }
 
+  /** Remove an unused draft (e.g. bulk disabled after create). */
+  async discard(actor: AdminAiActor, draftId: string) {
+    await this.drafts.delete({
+      id: draftId,
+      ownerUserId: actor.id,
+      status: "draft",
+    });
+  }
+
   async listRecipients(actor: AdminAiActor, draftId: string) {
     const draft = await this.requireOwnedDraft(actor.id, draftId);
     const emptyReason = await resolveEmptyReason(
@@ -643,6 +680,7 @@ export class CommunicationDraftService {
       retryFailedOnly?: boolean;
       selectedUserIds?: string[] | null;
       attachments?: unknown;
+      confirmationText?: string;
     },
   ) {
     const draft = await this.requireOwnedDraft(actor.id, draftId);
@@ -757,6 +795,28 @@ export class CommunicationDraftService {
       );
     }
 
+    if (!input.retryFailedOnly) {
+      const hardCap = assertWithinHardCap(targets.length);
+      if (!hardCap.ok) {
+        throw new AppError(
+          400,
+          hardCap.message,
+          "ADMIN_AI_BULK_CAP_EXCEEDED",
+        );
+      }
+      if (requiresTypeConfirm(targets.length)) {
+        const expected = expectedTypeConfirmPhrase(targets.length);
+        const typed = (input.confirmationText ?? "").trim().toUpperCase();
+        if (typed !== expected) {
+          throw new AppError(
+            400,
+            `Type ${expected} to continue.`,
+            "ADMIN_AI_BULK_TYPE_CONFIRM_REQUIRED",
+          );
+        }
+      }
+    }
+
     if (
       !input.retryFailedOnly &&
       draft.requiresReauth &&
@@ -799,25 +859,37 @@ export class CommunicationDraftService {
       });
     }
 
-    // Persist subject/body/selection + attachment names (no file bytes) before claim
     if (inlineAttachments.length) {
       draft.attachments = inlineAttachments.map((file, index) => ({
         fileId: `inline-${index + 1}`,
         name: file.filename,
       }));
     }
+
+    const idempotencyKey =
+      draft.idempotencyKey && input.retryFailedOnly
+        ? `${draft.idempotencyKey}-retry-${Date.now()}`
+        : randomUUID().replace(/-/g, "").slice(0, 32);
+    draft.idempotencyKey = idempotencyKey;
     await this.drafts.save(draft);
 
-    // Atomic claim: draft|failed|partially_sent → sending
+    await storeBulkActionAttachments(draft.id, inlineAttachments);
+
+    // Atomic claim: draft|failed|partially_sent → queued (frozen snapshot)
     const claim = await this.drafts
       .createQueryBuilder()
       .update(AdminAiCommunicationDraft)
       .set({
-        status: "sending",
+        status: "queued",
         subject: draft.subject,
         body: draft.body,
         recipientsSnapshot: draft.recipientsSnapshot,
         attachments: draft.attachments,
+        idempotencyKey,
+        processedCount: input.retryFailedOnly ? draft.processedCount : 0,
+        skippedCount: input.retryFailedOnly ? draft.skippedCount : 0,
+        sentCount: input.retryFailedOnly ? draft.sentCount : 0,
+        failedCount: input.retryFailedOnly ? 0 : 0,
       })
       .where("id = :id AND ownerUserId = :ownerUserId", {
         id: draft.id,
@@ -841,6 +913,41 @@ export class CommunicationDraftService {
       );
     }
 
+    let jobId: string;
+    try {
+      jobId = await enqueueBulkActionJob({
+        draftId: draft.id,
+        action: "send_email",
+        requestedBy: actor.id,
+        idempotencyKey,
+        retryFailedOnly: Boolean(input.retryFailedOnly),
+      });
+    } catch (error) {
+      await this.drafts
+        .createQueryBuilder()
+        .update(AdminAiCommunicationDraft)
+        .set({ status: input.retryFailedOnly ? "partially_sent" : "draft" })
+        .where("id = :id AND status = :status", {
+          id: draft.id,
+          status: "queued",
+        })
+        .execute();
+      await storeBulkActionAttachments(draft.id, []).catch(() => undefined);
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        503,
+        "Messaging is temporarily unavailable. Please try again in a moment.",
+        "ADMIN_AI_COMM_QUEUE_UNAVAILABLE",
+      );
+    }
+
+    await this.drafts
+      .createQueryBuilder()
+      .update(AdminAiCommunicationDraft)
+      .set({ jobId })
+      .where("id = :id", { id: draft.id })
+      .execute();
+
     await writeAdminAiAudit({
       requestId: randomUUID().replace(/-/g, "").slice(0, 32),
       actor,
@@ -851,16 +958,28 @@ export class CommunicationDraftService {
         targetCount: targets.length,
         retryFailedOnly: Boolean(input.retryFailedOnly),
         attachmentCount: inlineAttachments.length,
+        queued: true,
+        jobId,
+        confirmationType: requiresTypeConfirm(targets.length)
+          ? "type_confirm"
+          : draft.requiresReauth
+            ? "password"
+            : "click",
       },
       resultStatus: "ok",
     });
 
-    const result = await communicationSendService.sendDraft(actor, draft.id, {
-      retryFailedOnly: Boolean(input.retryFailedOnly),
-      attachments: inlineAttachments,
-    });
-
-    return result;
+    return {
+      draftId: draft.id,
+      status: "queued" as const,
+      recipientCount: draft.recipientCount,
+      sentCount: input.retryFailedOnly ? draft.sentCount : 0,
+      failedCount: 0,
+      skippedCount: 0,
+      processedCount: 0,
+      targetCount: targets.length,
+      failures: [] as Array<{ name: string; errorReason: string }>,
+    };
   }
 }
 

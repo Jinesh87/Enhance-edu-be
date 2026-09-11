@@ -3,6 +3,7 @@ import { AppError } from "../../../common/errors/AppError.js";
 import {
   assertCapabilityEnabled,
   capabilityForTool,
+  isCapabilityDisabledReply,
   loadAdminAiCapabilitySettings,
   type AdminAiCapabilitySettings,
 } from "./admin-ai-capabilities.js";
@@ -1310,4 +1311,32 @@ export function inferModeFromTools(toolNames: string[]): string {
   }
   if (toolNames.length > 0) return "DATA";
   return "GENERAL";
+}
+
+const COMM_DRAFT_MODE_TOOLS = new Set([
+  "createCommunicationDraft",
+  "updateCommunicationDraft",
+  "previewAudience",
+  "getCommunicationDraft",
+]);
+
+/** Draft tools that returned an error payload should not force DRAFT mode. */
+export function isFailedCommunicationDraftToolResult(
+  toolName: string,
+  data: unknown,
+): boolean {
+  if (!COMM_DRAFT_MODE_TOOLS.has(toolName)) return false;
+  if (!data || typeof data !== "object") return false;
+  const error = (data as { error?: unknown }).error;
+  return typeof error === "string" && error.trim().length > 0;
+}
+
+export function resolveAssistantMode(input: {
+  toolNames: string[];
+  replyText: string;
+  ensuredDraft?: boolean;
+}): string {
+  if (isCapabilityDisabledReply(input.replyText)) return "GENERAL";
+  if (input.ensuredDraft) return "DRAFT";
+  return inferModeFromTools(input.toolNames);
 }

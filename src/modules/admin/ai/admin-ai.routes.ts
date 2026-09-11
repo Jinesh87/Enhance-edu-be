@@ -7,12 +7,16 @@ import {
 import { validate } from "../../../common/middleware/validate.js";
 import { adminAiController } from "./admin-ai.controller.js";
 import {
+  adminAiBulkActionIdParamsSchema,
   adminAiDraftIdParamsSchema,
   adminAiMemoryIdParamsSchema,
   adminAiReportIdParamsSchema,
   adminAiThreadIdParamsSchema,
+  confirmBulkActionSchema,
   confirmSendCommunicationSchema,
   listAdminAiThreadsQuerySchema,
+  previewBulkActionSchema,
+  retryFailedBulkActionSchema,
   sendAdminAiMessageSchema,
   updateCommunicationDraftSchema,
 } from "./admin-ai.validation.js";
@@ -77,6 +81,28 @@ router.post(
   validate(adminAiDraftIdParamsSchema, "params"),
   validate(confirmSendCommunicationSchema),
   adminAiController.confirmSendCommunication,
+);
+router.post(
+  "/bulk-actions/preview",
+  validate(previewBulkActionSchema),
+  adminAiController.previewBulkAction,
+);
+router.post(
+  "/bulk-actions/:id/confirm",
+  validate(adminAiBulkActionIdParamsSchema, "params"),
+  validate(confirmBulkActionSchema),
+  adminAiController.confirmBulkAction,
+);
+router.get(
+  "/bulk-actions/:id/status",
+  validate(adminAiBulkActionIdParamsSchema, "params"),
+  adminAiController.getBulkActionStatus,
+);
+router.post(
+  "/bulk-actions/:id/retry-failed",
+  validate(adminAiBulkActionIdParamsSchema, "params"),
+  validate(retryFailedBulkActionSchema),
+  adminAiController.retryFailedBulkAction,
 );
 router.post(
   "/messages",

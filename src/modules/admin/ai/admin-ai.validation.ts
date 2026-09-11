@@ -26,6 +26,14 @@ export const adminAiDraftIdParamsSchema = Joi.object({
   draftId: Joi.string().uuid().required(),
 });
 
+export const adminAiBulkActionIdParamsSchema = Joi.object({
+  id: Joi.string().uuid().required(),
+});
+
+export const previewBulkActionSchema = Joi.object({
+  draftId: Joi.string().uuid().required(),
+});
+
 export const updateCommunicationDraftSchema = Joi.object({
   subject: Joi.string().trim().max(240).allow("").optional(),
   body: Joi.string().trim().max(20000).allow("").optional(),
@@ -58,6 +66,8 @@ export const confirmSendCommunicationSchema = Joi.object({
   body: Joi.string().trim().min(1).max(20000).optional(),
   retryFailedOnly: Joi.boolean().optional(),
   selectedUserIds: Joi.array().items(Joi.string().uuid()).max(500).optional(),
+  confirmationText: Joi.string().trim().max(40).allow("").optional(),
+  action: Joi.string().valid("send_email").optional(),
   attachments: Joi.array()
     .items(
       Joi.object({
@@ -68,6 +78,13 @@ export const confirmSendCommunicationSchema = Joi.object({
     )
     .max(3)
     .optional(),
+});
+
+export const confirmBulkActionSchema = confirmSendCommunicationSchema;
+
+export const retryFailedBulkActionSchema = Joi.object({
+  password: Joi.string().allow("").optional(),
+  confirmationText: Joi.string().trim().max(40).allow("").optional(),
 });
 
 export const listAdminAiThreadsQuerySchema = Joi.object({

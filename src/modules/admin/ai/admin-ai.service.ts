@@ -21,6 +21,7 @@ import {
   type AdminAiActor,
 } from "./authorization.js";
 import {
+  assertBulkCommunicationIfNeeded,
   assertCapabilityEnabled,
   formatDisabledCapabilitiesForPrompt,
   loadAdminAiCapabilitySettings,
@@ -36,10 +37,13 @@ import {
 } from "./memory.js";
 import { adminAiReportService } from "./reports/report.service.js";
 import { communicationDraftService } from "./communications/communication-draft.service.js";
+import { bulkActionService } from "./bulk-actions/bulk-action.service.js";
+import { ensureCommunicationPreviewIfNeeded } from "./communications/ensure-communication-preview.js";
 import {
   ADMIN_AI_TOOL_DEFINITIONS,
   executeAdminAiTool,
-  inferModeFromTools,
+  isFailedCommunicationDraftToolResult,
+  resolveAssistantMode,
 } from "./tools.js";
 import { actionSource } from "./tool-helpers.js";
 
@@ -167,8 +171,6 @@ export class AdminAiService {
   private async requireAssistantEnabled(
     _settings: AdminAiCapabilitySettings,
   ): Promise<void> {
-    // Admin AI Assistant is always available for authorised console roles.
-    // Capability toggles in Settings control features, not the assistant itself.
     void _settings;
   }
 
@@ -330,6 +332,7 @@ export class AdminAiService {
         contentBase64?: string;
         mimeType?: string | null;
       }>;
+      confirmationText?: string;
     },
   ) {
     const actor = await this.requireActor(userId);
@@ -337,13 +340,60 @@ export class AdminAiService {
     assertCapabilityEnabled(settings, "emailDrafting");
     assertCapabilityEnabled(settings, "confirmedActions");
     const draft = await communicationDraftService.get(actor, draftId);
-    if (
-      draft.recipientCount >= 21 ||
-      draft.requiresReauth
-    ) {
-      assertCapabilityEnabled(settings, "bulkCommunication");
-    }
+    const effectiveCount =
+      input.selectedUserIds && input.selectedUserIds.length > 0
+        ? input.selectedUserIds.length
+        : draft.recipientCount;
+    assertBulkCommunicationIfNeeded(settings, effectiveCount);
     return communicationDraftService.confirmSend(actor, draftId, input);
+  }
+
+  async previewBulkAction(userId: string, draftId: string) {
+    const actor = await this.requireActor(userId);
+    const settings = await loadAdminAiCapabilitySettings();
+    assertCapabilityEnabled(settings, "emailDrafting");
+    const draft = await bulkActionService.preview(actor, draftId);
+    assertBulkCommunicationIfNeeded(settings, draft.recipientCount);
+    return draft;
+  }
+
+  async confirmBulkAction(
+    userId: string,
+    draftId: string,
+    input: {
+      password?: string;
+      subject?: string;
+      body?: string;
+      retryFailedOnly?: boolean;
+      selectedUserIds?: string[];
+      attachments?: Array<{
+        filename?: string;
+        contentBase64?: string;
+        mimeType?: string | null;
+      }>;
+      confirmationText?: string;
+      action?: string;
+    },
+  ) {
+    return this.confirmSendCommunication(userId, draftId, input);
+  }
+
+  async getBulkActionStatus(userId: string, draftId: string) {
+    const actor = await this.requireActor(userId);
+    return bulkActionService.status(actor, draftId);
+  }
+
+  async retryFailedBulkAction(
+    userId: string,
+    draftId: string,
+    input: { password?: string; confirmationText?: string } = {},
+  ) {
+    const actor = await this.requireActor(userId);
+    const settings = await loadAdminAiCapabilitySettings();
+    assertCapabilityEnabled(settings, "emailDrafting");
+    assertCapabilityEnabled(settings, "confirmedActions");
+    assertCapabilityEnabled(settings, "bulkCommunication");
+    return bulkActionService.retryFailed(actor, draftId, input);
   }
 
   async listThreads(userId: string, cursor?: string | null) {
@@ -577,6 +627,7 @@ export class AdminAiService {
     ];
 
     const toolNames: string[] = [];
+    const modeToolNames: string[] = [];
     const collectedSources: AdminAiSource[] = [];
     const documentIds: string[] = [];
 
@@ -613,14 +664,37 @@ export class AdminAiService {
 
         const toolCalls = choice.tool_calls ?? [];
         if (toolCalls.length === 0) {
-          const replyText =
+          let replyText =
             choice.content?.trim() ||
             "I could not find authorized data for that request.";
-          const mode = inferModeFromTools(toolNames) as AdminAiMode;
-          const sources = filterSourcesByCapabilities(
+          let sources = filterSourcesByCapabilities(
             mergeSources(collectedSources),
             capabilitySettings,
           );
+
+          const ensured = await ensureCommunicationPreviewIfNeeded({
+            actor,
+            userMessage: content,
+            threadId: thread.id,
+            sources,
+            settings: capabilitySettings,
+            replyText,
+          });
+          sources = filterSourcesByCapabilities(
+            mergeSources(ensured.sources),
+            capabilitySettings,
+          );
+          replyText = ensured.replyText;
+          if (ensured.ensured) {
+            toolNames.push("createCommunicationDraft");
+            modeToolNames.push("createCommunicationDraft");
+          }
+
+          const mode = resolveAssistantMode({
+            toolNames: modeToolNames,
+            replyText,
+            ensuredDraft: ensured.ensured,
+          }) as AdminAiMode;
 
           const assistantMessage = this.messages.create({
             threadId: thread.id,
@@ -643,7 +717,10 @@ export class AdminAiService {
             eventType: "AI_REQUEST_COMPLETED",
             mode,
             toolNames,
-            scopeMetadata: { sourceCount: sources.length },
+            scopeMetadata: {
+              sourceCount: sources.length,
+              communicationPreviewEnsured: ensured.ensured,
+            },
             documentIds: documentIds.length ? documentIds : null,
             resultStatus: "success",
           });
@@ -674,6 +751,9 @@ export class AdminAiService {
               { userMessage: input.content },
               capabilitySettings,
             );
+            if (!isFailedCommunicationDraftToolResult(name, result.data)) {
+              modeToolNames.push(name);
+            }
             collectedSources.push(...result.sources);
             if (result.actions?.length) {
               collectedSources.push(
@@ -847,6 +927,7 @@ export class AdminAiService {
     ];
 
     const toolNames: string[] = [];
+    const modeToolNames: string[] = [];
     const collectedSources: AdminAiSource[] = [];
     const documentIds: string[] = [];
 
@@ -891,14 +972,39 @@ export class AdminAiService {
 
         const toolCalls = streamed.toolCalls;
         if (toolCalls.length === 0) {
-          const replyText =
+          let replyText =
             streamed.content.trim() ||
             "I could not find authorized data for that request.";
-          const mode = inferModeFromTools(toolNames) as AdminAiMode;
-          const sources = filterSourcesByCapabilities(
+          let sources = filterSourcesByCapabilities(
             mergeSources(collectedSources),
             capabilitySettings,
           );
+
+          const ensured = await ensureCommunicationPreviewIfNeeded({
+            actor,
+            userMessage: content,
+            threadId: thread.id,
+            sources,
+            settings: capabilitySettings,
+            replyText,
+          });
+          sources = filterSourcesByCapabilities(
+            mergeSources(ensured.sources),
+            capabilitySettings,
+          );
+          if (ensured.ensured) {
+            toolNames.push("createCommunicationDraft");
+            modeToolNames.push("createCommunicationDraft");
+            if (emittedText) emit("clear", {});
+            replyText = ensured.replyText;
+            emit("delta", { text: replyText });
+          }
+
+          const mode = resolveAssistantMode({
+            toolNames: modeToolNames,
+            replyText,
+            ensuredDraft: ensured.ensured,
+          }) as AdminAiMode;
 
           const assistantMessage = this.messages.create({
             threadId: thread.id,
@@ -921,7 +1027,10 @@ export class AdminAiService {
             eventType: "AI_REQUEST_COMPLETED",
             mode,
             toolNames,
-            scopeMetadata: { sourceCount: sources.length },
+            scopeMetadata: {
+              sourceCount: sources.length,
+              communicationPreviewEnsured: ensured.ensured,
+            },
             documentIds: documentIds.length ? documentIds : null,
             resultStatus: "success",
           });
@@ -962,6 +1071,9 @@ export class AdminAiService {
               { userMessage: input.content },
               capabilitySettings,
             );
+            if (!isFailedCommunicationDraftToolResult(name, result.data)) {
+              modeToolNames.push(name);
+            }
             collectedSources.push(...result.sources);
             if (result.actions?.length) {
               collectedSources.push(

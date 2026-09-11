@@ -130,7 +130,6 @@ export class CommunicationSendService {
       } catch (error) {
         row.status = "failed";
         row.errorReason = humanizeSendError(error);
-        // Log userId only — never log the destination email address.
         logger.warn(
           { err: error, draftId: draft.id, userId: row.userId },
           "Admin AI communication send failed for recipient",
@@ -140,6 +139,13 @@ export class CommunicationSendService {
 
     const sentCount = snapshot.filter((row) => row.status === "sent").length;
     const failedCount = snapshot.filter((row) => row.status === "failed").length;
+    const skippedCount = snapshot.filter((row) => row.status === "skipped").length;
+    const processedCount = snapshot.filter(
+      (row) =>
+        row.status === "sent" ||
+        row.status === "failed" ||
+        row.status === "skipped",
+    ).length;
     const attempted = snapshot.filter(
       (row) => row.status === "sent" || row.status === "failed",
     ).length;
@@ -152,6 +158,8 @@ export class CommunicationSendService {
     draft.recipientsSnapshot = sanitizeRecipientsForStorage(snapshot);
     draft.sentCount = sentCount;
     draft.failedCount = failedCount;
+    draft.skippedCount = skippedCount;
+    draft.processedCount = processedCount;
     draft.status = status;
     await this.drafts.save(draft);
 
@@ -169,6 +177,8 @@ export class CommunicationSendService {
         draftId: draft.id,
         sentCount,
         failedCount,
+        skippedCount,
+        processedCount,
         recipientCount: draft.recipientCount,
       },
       resultStatus: status === "failed" ? "failed" : "ok",
@@ -180,6 +190,8 @@ export class CommunicationSendService {
       recipientCount: draft.recipientCount,
       sentCount,
       failedCount,
+      skippedCount,
+      processedCount,
       failures: snapshot
         .filter((row) => row.status === "failed")
         .slice(0, 20)

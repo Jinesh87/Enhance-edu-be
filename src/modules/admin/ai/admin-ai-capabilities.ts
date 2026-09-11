@@ -1,8 +1,7 @@
 import { AppError } from "../../../common/errors/AppError.js";
 import { settingsService } from "../../settings/settings.service.js";
 
-/** Admin AI–only capability keys (does not control teacher/guardian/learning AIs). */
-export const ADMIN_AI_CAPABILITIES = [
+  export const ADMIN_AI_CAPABILITIES = [
   "assistant",
   "dataInsights",
   "emailDrafting",
@@ -84,6 +83,18 @@ export function disabledCapabilityMessage(capability: AdminAiCapability): string
   return DISABLED_MESSAGES[capability];
 }
 
+export function isCapabilityDisabledReply(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  for (const message of Object.values(DISABLED_MESSAGES)) {
+    if (t === message || t.includes(message)) return true;
+  }
+  return (
+    /\bis disabled\b/i.test(t) &&
+    /settings\s*(→|->|–|-)?\s*ai\b/i.test(t)
+  );
+}
+
 export function isCapabilityEnabled(
   settings: AdminAiCapabilitySettings,
   capability: AdminAiCapability,
@@ -114,7 +125,6 @@ export function isCapabilityEnabled(
   }
 }
 
-/** Map Admin AI tools → capability (null = always allowed when assistant is on). */
 const TOOL_CAPABILITY: Record<string, AdminAiCapability | null> = {
   previewReport: "reportBuilder",
   updateReportPreview: "reportBuilder",
@@ -148,6 +158,18 @@ export function assertCapabilityEnabled(
   );
 }
 
+export function isBulkRecipientAudience(recipientCount: number): boolean {
+  return recipientCount > 1;
+}
+
+export function assertBulkCommunicationIfNeeded(
+  settings: AdminAiCapabilitySettings,
+  recipientCount: number,
+): void {
+  if (!isBulkRecipientAudience(recipientCount)) return;
+  assertCapabilityEnabled(settings, "bulkCommunication");
+}
+
 export async function loadAdminAiCapabilitySettings(): Promise<AdminAiCapabilitySettings> {
   return settingsService.getAdminAiCapabilitySettings();
 }
@@ -175,7 +197,6 @@ const BRIEFING_INTENT =
 const NOTIFICATION_SUGGEST_INTENT =
   /\b(notification\s+suggest|suggest\s+notification|notify\s+suggestion)\b/i;
 
-/** Pre-LLM short-circuit for capabilities that have no tool yet. */
 export function precheckCapabilityIntent(
   content: string,
   settings: AdminAiCapabilitySettings,
