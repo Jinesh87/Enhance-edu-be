@@ -52,3 +52,10 @@ export {
   updateReportPreview,
 } from "./tools/report.tools.js";
 
+export {
+  createCommunicationDraft,
+  updateCommunicationDraft,
+  previewAudience,
+  getCommunicationDraft,
+} from "./communications/communication.tools.js";
+

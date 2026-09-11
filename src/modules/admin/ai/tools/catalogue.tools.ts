@@ -4,6 +4,7 @@ import {
   assertAdminAiModule,
   type AdminAiActor,
 } from "../authorization.js";
+import { peopleRoleLabel } from "../query-normalize/index.js";
 import { sanitizeToolPayload } from "../sanitize.js";
 import {
   adminAiRepository,
@@ -63,10 +64,6 @@ function describeTeacherFilters(filters: TeacherClassFilters) {
     .join(", ");
 }
 
-/**
- * Teacher list search: unique assigned teachers by academic assignment.
- * Does not expand into sessions/days. Excludes unassigned classes from teacher rows.
- */
 export async function searchTeachers(
   actor: AdminAiActor,
   args: {
@@ -542,81 +539,47 @@ export async function listTerms(
   };
 }
 
-function peopleRoleLabel(role: UserRole): string {
-  switch (role) {
-    case UserRole.SUPER_ADMIN:
-      return "Application Owner";
-    case UserRole.OFFICE_STAFF:
-      return "Staff";
-    case UserRole.STAFF:
-      return "Teacher";
-    case UserRole.STUDENT:
-      return "Student";
-    case UserRole.GUARDIAN:
-      return "Guardian";
-    default:
-      return role;
-  }
-}
-
-function resolvePeopleRoleFilter(roleRaw: string | null): UserRole | null {
-  if (!roleRaw) return null;
-  // Product mapping (matches People page): Staff = OFFICE_STAFF, Teacher = STAFF.
-  const aliases: Record<string, UserRole> = {
-    SUPER_ADMIN: UserRole.SUPER_ADMIN,
-    ADMIN: UserRole.SUPER_ADMIN,
-    APPLICATION_OWNER: UserRole.SUPER_ADMIN,
-    OFFICE_STAFF: UserRole.OFFICE_STAFF,
-    OFFICE: UserRole.OFFICE_STAFF,
-    STAFF: UserRole.OFFICE_STAFF,
-    STAFFS: UserRole.OFFICE_STAFF,
-    TEACHER: UserRole.STAFF,
-    TEACHERS: UserRole.STAFF,
-    TUTOR: UserRole.STAFF,
-    TUTORS: UserRole.STAFF,
-    STUDENT: UserRole.STUDENT,
-    STUDENTS: UserRole.STUDENT,
-    GUARDIAN: UserRole.GUARDIAN,
-    GUARDIANS: UserRole.GUARDIAN,
-    PARENT: UserRole.GUARDIAN,
-    PARENTS: UserRole.GUARDIAN,
-  };
-  return aliases[roleRaw] ?? null;
-}
-
 export async function searchPeople(
   actor: AdminAiActor,
   args: { name?: string; role?: string; status?: string },
 ): Promise<ToolResult> {
   assertAdminAiModule(actor, "people");
 
+  // Args are normalized in executeAdminAiTool; accept already-canonical role/status.
   const name = args.name?.trim() || null;
-  const roleRaw = args.role?.trim().toUpperCase().replace(/\s+/g, "_") || null;
-  const statusRaw = args.status?.trim().toUpperCase() || null;
-  const roleFilter = resolvePeopleRoleFilter(roleRaw);
+  const role =
+    args.role && Object.values(UserRole).includes(args.role as UserRole)
+      ? (args.role as UserRole)
+      : null;
+  const status =
+    args.status && Object.values(UserStatus).includes(args.status as UserStatus)
+      ? (args.status as UserStatus)
+      : null;
+  const roleLabel = role ? peopleRoleLabel(role) : null;
 
   const people = await adminAiRepository.findPeople({
     name,
-    role: roleFilter,
-    status:
-      statusRaw && Object.values(UserStatus).includes(statusRaw as UserStatus)
-        ? (statusRaw as UserStatus)
-        : null,
+    role,
+    status,
   });
+
   const rows = people.slice(0, LIST_MAX_ROWS).map((person) => ({
     name: person.fullName,
+    preferredName: person.preferredName?.trim() || null,
     role: peopleRoleLabel(person.role),
     status: person.status,
+    employmentType: person.employmentType ?? null,
   }));
 
   const filterLabel =
-    [name, roleRaw, statusRaw].filter(Boolean).join(", ") || "people";
+    [name, roleLabel, status].filter(Boolean).join(", ") ||
+    "people";
 
   const actions = [
     openPageAction("people", "Open People", {
       filters: {
         search: name,
-        role: roleFilter ?? undefined,
+        role: role ?? undefined,
       },
     }),
   ];
@@ -627,7 +590,9 @@ export async function searchPeople(
         ? "View Teacher"
         : person.role === UserRole.STUDENT
           ? "View Student"
-          : "View Person";
+          : person.role === UserRole.SUPER_ADMIN
+            ? "View Application Owner"
+            : "View Person";
     actions.unshift(openPageAction("person", label, { id: person.id }));
   }
 
@@ -638,12 +603,32 @@ export async function searchPeople(
       peopleCount: rows.length,
       truncated: people.length > LIST_MAX_ROWS,
       people: rows,
-      columns: ["Name", "Role", "Status"],
+      columns: [
+        "Name",
+        "Preferred name",
+        "Role",
+        "Status",
+        "Employment",
+      ],
+      filtersApplied: {
+        name: name,
+        role: roleLabel,
+        status: status,
+      },
       roleNote:
-        "Role labels: Teacher (tutors), Staff (office), Guardian, Student, Application Owner. Do not show raw enum codes.",
-      exactNote: rows.length ? null : `No people found for ${filterLabel}.`,
-      responseHint:
-        "Entity is people. Table: Name | Role | Status. Use the role labels exactly as given (Teacher/Staff/Guardian). For list-all-teachers answers this is the correct full directory (assigned or not). Never show emails, phones, or IDs. Never mention Generate PDF.",
+        "Role labels: Teacher (tutors), Staff (office), Guardian, Student, Application Owner. Do not show raw enum codes. Application Owner = SUPER_ADMIN in storage.",
+      exactNote: rows.length
+        ? null
+        : `No matching records for ${filterLabel}.`,
+      responseHint: [
+        "Entity is people from the directory.",
+        "Table columns: Name | Preferred name | Role | Status | Employment (omit empty preferred/employment cells as —).",
+        "Use role labels exactly (Application Owner, Staff, Teacher, Guardian, Student).",
+        "For application owner / app owner / super admin questions, these rows are the correct answer when peopleCount > 0.",
+        "Say no matching records only when peopleCount is 0.",
+        "Never show emails, phones, passwords, usernames that look like emails, or IDs.",
+        "Never mention Generate PDF.",
+      ].join(" "),
     }),
     sources: [
       {

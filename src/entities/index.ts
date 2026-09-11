@@ -79,6 +79,7 @@ export * from "./AdminAiAuditLog.js";
 export * from "./AdminAiMemory.js";
 export * from "./AdminAiReport.js";
 export * from "./AdminAiReportDraft.js";
+export * from "./AdminAiCommunicationDraft.js";
 export * from "./Notification.js";
 export * from "./OpenAiUsageLog.js";
 export * from "./LearningSourceDocument.js";

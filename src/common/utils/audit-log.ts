@@ -32,6 +32,7 @@ const RECORD_PATHS: Record<string, (id: string) => string> = {
   account: () => "/admin/people",
   change_history: () => "/admin/change-history",
   enquiry: (id) => `/admin/enquiries/${id}`,
+  admin_ai_settings: () => "/admin/ai-settings",
 };
 
 export function recordPathFor(

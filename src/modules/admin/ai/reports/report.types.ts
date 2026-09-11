@@ -9,6 +9,7 @@ export const ADMIN_AI_REPORT_TYPES = [
   "ASSESSMENTS",
   "TIMETABLE",
   "TASKS",
+  "TEACHERS",
 ] as const;
 
 export type AdminAiReportType = (typeof ADMIN_AI_REPORT_TYPES)[number];
@@ -26,7 +27,7 @@ export type AdminAiReportFilters = {
   threshold?: number | null;
   status?: string | null;
   academicYear?: string | null;
-  /** Optional person name scope (student / enquiry student). */
+  /** Optional person name scope (student / enquiry student / teacher). */
   studentName?: string | null;
 };
 
@@ -68,14 +69,25 @@ export function resolveReportColumnLabel(
     guardian: ["guardian", "guardians", "guardian details", "guardian name", "parent", "parents", "parent name", "carer"],
     student: ["student", "students", "student name", "learner"],
     subjects: ["subjects", "subject", "courses"],
+    subject: ["subject", "subjects", "courses"],
     status: ["status", "enrolment status", "enrollment status"],
-    year: ["year", "year level", "grade"],
-    term: ["term", "semester"],
+    year: [
+      "year",
+      "year level",
+      "grade",
+      "responsible year",
+      "assigned year",
+      "years",
+    ],
+    term: ["term", "semester", "responsible term", "assigned term", "terms"],
     owner: ["owner", "assigned to", "staff owner"],
     stage: ["stage", "pipeline stage"],
     rate: ["rate", "attendance rate", "attendance %", "percent"],
     class: ["class", "class name"],
-    teacher: ["teacher", "tutor"],
+    teacher: ["teacher", "tutor", "name"],
+    "preferred name": ["preferred name", "preferred", "nickname"],
+    role: ["role"],
+    employment: ["employment", "employment type", "contract"],
     task: ["task", "tasks", "title"],
     due: ["due", "due date"],
   };
@@ -102,6 +114,7 @@ export const REPORT_MODULE: Record<AdminAiReportType, AdminModuleId> = {
   ASSESSMENTS: "classes",
   TIMETABLE: "classes",
   TASKS: "tasks",
+  TEACHERS: "people",
 };
 
 export function isAdminAiReportType(value: string): value is AdminAiReportType {
@@ -126,5 +139,7 @@ export function reportTypeLabel(type: AdminAiReportType): string {
       return "Timetable";
     case "TASKS":
       return "Tasks";
+    case "TEACHERS":
+      return "Teachers";
   }
 }

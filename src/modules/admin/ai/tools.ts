@@ -1,7 +1,18 @@
 import type OpenAI from "openai";
 import { AppError } from "../../../common/errors/AppError.js";
+import {
+  assertCapabilityEnabled,
+  capabilityForTool,
+  isCapabilityDisabledReply,
+  loadAdminAiCapabilitySettings,
+  type AdminAiCapabilitySettings,
+} from "./admin-ai-capabilities.js";
 import type { AdminAiActor } from "./authorization.js";
 import { searchAuthorizedSyllabusDocuments } from "./document-retrieval.js";
+import {
+  normalizeToolArgs,
+  type NormalizeToolArgsContext,
+} from "./query-normalize/index.js";
 import {
   getAcademicPerformanceSummary,
   getAttendanceSummary,
@@ -39,6 +50,10 @@ import {
   generateReport,
   previewReport,
   updateReportPreview,
+  createCommunicationDraft,
+  updateCommunicationDraft,
+  previewAudience,
+  getCommunicationDraft,
   type ToolResult,
 } from "./tool-services.js";
 
@@ -346,16 +361,20 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "searchPeople",
         description:
-          "List people directory rows (includes unassigned). Prefer this for 'list all teachers', 'list teachers', teachers/staff/guardians directory. Role filter words: staff/staffs → office Staff; teacher/teachers → Teacher; guardian/parent → Guardian; student → Student. Returns Name | Role label | Status. Role labels are Teacher, Staff, Guardian, Student, Application Owner — never raw STAFF enums. Use searchTeachers only for assigned teaching roster / who teaches.",
+          "List people directory rows (includes unassigned). Use for teachers/staff/guardians/students AND application owners (app owners / super admins). Role filter words: application_owner/owner/app owner → Application Owner; staff/staffs → office Staff; teacher/teachers → Teacher; guardian/parent → Guardian; student → Student. For 'show all application owner details' pass role=application_owner and leave name empty. Never put filler words (details, show, all, list) in name. Returns Name | Preferred name | Role | Status | Employment. Never returns emails or phones. Use searchTeachers only for assigned teaching roster / who teaches.",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
-            name: { type: "string" },
+            name: {
+              type: "string",
+              description:
+                "Optional person name only. Do not pass role phrases or filler words here.",
+            },
             role: {
               type: "string",
               description:
-                "staff, teacher, guardian, student, office, or SUPER_ADMIN",
+                "application_owner | owner | staff | teacher | guardian | student | office | SUPER_ADMIN",
             },
             status: {
               type: "string",
@@ -661,7 +680,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "previewReport",
         description:
-          "REQUIRED for any create/generate/export/download/prepare PDF or report request. Builds a PREVIEW only (title/filters/summary/table + Adjust preview and Generate PDF buttons). Does NOT create a PDF. Never use getLowAttendanceStudents/searchEnquiries/list tools for PDF asks. reportType: ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS (use for student attendance PDF; pass filters.studentName) | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS. Pass only filters the user stated. Never invent URLs or claim the PDF is ready.",
+          "REQUIRED for any create/generate/export/download/prepare PDF or report request. Builds a PREVIEW only (title/filters/summary/table + Adjust preview and Generate PDF buttons). Does NOT create a PDF. Never use getLowAttendanceStudents/searchEnquiries/list tools for PDF asks. reportType: ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS (use for student attendance PDF; pass filters.studentName) | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS | TEACHERS (teachers directory PDF; optional filters.status, filters.studentName as teacher name). Pass only filters the user stated. Never invent URLs or claim the PDF is ready.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -670,7 +689,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
             reportType: {
               type: "string",
               description:
-                "ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS",
+                "ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS | TEACHERS",
             },
             draftId: {
               type: "string",
@@ -751,6 +770,146 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
     {
       type: "function",
       function: {
+        name: "createCommunicationDraft",
+        description:
+          "Create an EMAIL draft and open the Email Preview UI immediately (never sends). Call as soon as the admin wants to email/message/remind/notify — do NOT ask chat questions for subject or body. Pass whatever you can parse: empty subject/body are OK (preview UI edits them). If the user included a message (e.g. 'saying hi'), put it in body and suggest a short subject. Individual parent: roles:[STUDENT], nameQuery:student name, recipientOf:PARENTS (never roles:GUARDIAN for 'X parent'). Bulk parents: roles:[STUDENT], yearLevel/subject/className, recipientOf:PARENTS. Groups: OVERDUE_HOMEWORK | ABSENCES | SESSION_TEACHERS | ASSESSMENT_PARTICIPANTS | ENQUIRY_CONTACTS | CLASS_ROSTER | ENROLLED. Set ambiguous=true only if students vs parents is unclear.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subject: {
+              type: "string",
+              description:
+                "Optional. Suggest a short subject if message intent is clear; otherwise omit/empty for the preview UI.",
+            },
+            body: {
+              type: "string",
+              description:
+                "Optional message body from the user request. May include {{guardianName}}, {{studentNames}}. Empty is OK — preview UI collects it.",
+            },
+            roles: {
+              type: "array",
+              items: { type: "string" },
+              description: "STUDENT | STAFF | OFFICE_STAFF | GUARDIAN",
+            },
+            groups: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "OVERDUE_HOMEWORK | ABSENCES | SESSION_TEACHERS | ASSESSMENT_PARTICIPANTS | ENQUIRY_CONTACTS | CLASS_ROSTER | ENROLLED",
+            },
+            audienceType: {
+              type: "string",
+              description:
+                "Legacy preset only if needed. Prefer roles/groups.",
+            },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            subjectFilter: { type: "string" },
+            className: { type: "string" },
+            date: {
+              type: "string",
+              description: "YYYY-MM-DD for ABSENCES or SESSION_TEACHERS",
+            },
+            nameQuery: {
+              type: "string",
+              description:
+                "Student or person name from the request (e.g. Student 1, Ahmed)",
+            },
+            userIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Real user UUIDs for selected individuals",
+            },
+            recipientOf: {
+              type: "string",
+              description:
+                "SELF or PARENTS. Use PARENTS for parent/guardian of students.",
+            },
+            assessmentQuery: { type: "string" },
+            enquiryStage: { type: "string" },
+            status: { type: "string" },
+            label: {
+              type: "string",
+              description:
+                "Short human audience label (e.g. Parent of Student 1, Year 10 Biology Parents)",
+            },
+            ambiguous: { type: "boolean" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "updateCommunicationDraft",
+        description:
+          "Update an existing email draft (subject/body/audience filters). Does NOT send.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draftId"],
+          properties: {
+            draftId: { type: "string" },
+            subject: { type: "string" },
+            body: { type: "string" },
+            roles: { type: "array", items: { type: "string" } },
+            groups: { type: "array", items: { type: "string" } },
+            audienceType: { type: "string" },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            subjectFilter: { type: "string" },
+            className: { type: "string" },
+            date: { type: "string" },
+            nameQuery: { type: "string" },
+            userIds: { type: "array", items: { type: "string" } },
+            recipientOf: { type: "string" },
+            assessmentQuery: { type: "string" },
+            enquiryStage: { type: "string" },
+            status: { type: "string" },
+            label: { type: "string" },
+            ambiguous: { type: "boolean" },
+            confirmed: { type: "boolean" },
+            refreshAudience: { type: "boolean" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "previewAudience",
+        description:
+          "Refresh recipient snapshot for a communication draft from live DB data. Does NOT send.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draftId"],
+          properties: {
+            draftId: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "getCommunicationDraft",
+        description:
+          "Fetch an existing communication draft preview. Does NOT send.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draftId"],
+          properties: {
+            draftId: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "generateReport",
         description:
           "Alias of previewReport. REQUIRED preview-only path for create/generate/export/download/prepare PDF — does not create a PDF. Prefer previewReport for new calls.",
@@ -762,7 +921,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
             reportType: {
               type: "string",
               description:
-                "ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS",
+                "ATTENDANCE_SUMMARY | LOW_ATTENDANCE_STUDENTS | LOW_ATTENDANCE_CLASSES | ENROLMENTS | ENQUIRIES | ASSESSMENTS | TIMETABLE | TASKS | TEACHERS",
             },
             format: {
               type: "string",
@@ -829,6 +988,8 @@ export async function executeAdminAiTool(
   actor: AdminAiActor,
   name: string,
   rawArgs: string | null | undefined,
+  context: NormalizeToolArgsContext = {},
+  capabilitySettings?: AdminAiCapabilitySettings,
 ): Promise<ToolResult> {
   if (!ALLOWED.has(name)) {
     throw new AppError(
@@ -838,7 +999,14 @@ export async function executeAdminAiTool(
     );
   }
 
-  const args = parseArgs(rawArgs);
+  const settings =
+    capabilitySettings ?? (await loadAdminAiCapabilitySettings());
+  const required = capabilityForTool(name);
+  if (required) {
+    assertCapabilityEnabled(settings, required);
+  }
+
+  const args = normalizeToolArgs(name, parseArgs(rawArgs), context);
 
   switch (name) {
     case "getAttendanceSummary":
@@ -1028,6 +1196,62 @@ export async function executeAdminAiTool(
         content: asString(args.content),
         kind: asString(args.kind),
       });
+    case "createCommunicationDraft":
+      return createCommunicationDraft(actor, {
+        audienceType: asString(args.audienceType),
+        roles: args.roles,
+        groups: args.groups,
+        subject: asString(args.subject),
+        body: asString(args.body),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        subjectFilter: asString(args.subjectFilter),
+        className: asString(args.className),
+        date: asString(args.date),
+        nameQuery: asString(args.nameQuery),
+        userIds: args.userIds,
+        recipientOf: asString(args.recipientOf),
+        assessmentQuery: asString(args.assessmentQuery),
+        enquiryStage: asString(args.enquiryStage),
+        status: asString(args.status),
+        label: asString(args.label),
+        ambiguous:
+          typeof args.ambiguous === "boolean" ? args.ambiguous : undefined,
+        userMessage: context.userMessage ?? undefined,
+      });
+    case "updateCommunicationDraft":
+      return updateCommunicationDraft(actor, {
+        draftId: asString(args.draftId),
+        subject: asString(args.subject),
+        body: asString(args.body),
+        audienceType: asString(args.audienceType),
+        roles: args.roles,
+        groups: args.groups,
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        subjectFilter: asString(args.subjectFilter),
+        className: asString(args.className),
+        date: asString(args.date),
+        nameQuery: asString(args.nameQuery),
+        userIds: args.userIds,
+        recipientOf: asString(args.recipientOf),
+        assessmentQuery: asString(args.assessmentQuery),
+        enquiryStage: asString(args.enquiryStage),
+        status: asString(args.status),
+        label: asString(args.label),
+        ambiguous:
+          typeof args.ambiguous === "boolean" ? args.ambiguous : undefined,
+        confirmed:
+          typeof args.confirmed === "boolean" ? args.confirmed : undefined,
+        refreshAudience:
+          typeof args.refreshAudience === "boolean"
+            ? args.refreshAudience
+            : undefined,
+      });
+    case "previewAudience":
+      return previewAudience(actor, { draftId: asString(args.draftId) });
+    case "getCommunicationDraft":
+      return getCommunicationDraft(actor, { draftId: asString(args.draftId) });
     case "previewReport":
       return previewReport(actor, {
         reportType: asString(args.reportType),
@@ -1076,7 +1300,43 @@ export async function executeAdminAiTool(
 
 export function inferModeFromTools(toolNames: string[]): string {
   if (toolNames.includes("searchAuthorizedSyllabusDocuments")) return "DOCUMENT";
-  if (toolNames.includes("getDraftContext")) return "DRAFT";
+  if (
+    toolNames.includes("getDraftContext") ||
+    toolNames.includes("createCommunicationDraft") ||
+    toolNames.includes("updateCommunicationDraft") ||
+    toolNames.includes("previewAudience") ||
+    toolNames.includes("getCommunicationDraft")
+  ) {
+    return "DRAFT";
+  }
   if (toolNames.length > 0) return "DATA";
   return "GENERAL";
+}
+
+const COMM_DRAFT_MODE_TOOLS = new Set([
+  "createCommunicationDraft",
+  "updateCommunicationDraft",
+  "previewAudience",
+  "getCommunicationDraft",
+]);
+
+/** Draft tools that returned an error payload should not force DRAFT mode. */
+export function isFailedCommunicationDraftToolResult(
+  toolName: string,
+  data: unknown,
+): boolean {
+  if (!COMM_DRAFT_MODE_TOOLS.has(toolName)) return false;
+  if (!data || typeof data !== "object") return false;
+  const error = (data as { error?: unknown }).error;
+  return typeof error === "string" && error.trim().length > 0;
+}
+
+export function resolveAssistantMode(input: {
+  toolNames: string[];
+  replyText: string;
+  ensuredDraft?: boolean;
+}): string {
+  if (isCapabilityDisabledReply(input.replyText)) return "GENERAL";
+  if (input.ensuredDraft) return "DRAFT";
+  return inferModeFromTools(input.toolNames);
 }

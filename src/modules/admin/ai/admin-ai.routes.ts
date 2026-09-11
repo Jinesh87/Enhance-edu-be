@@ -7,12 +7,18 @@ import {
 import { validate } from "../../../common/middleware/validate.js";
 import { adminAiController } from "./admin-ai.controller.js";
 import {
+  adminAiBulkActionIdParamsSchema,
   adminAiDraftIdParamsSchema,
   adminAiMemoryIdParamsSchema,
   adminAiReportIdParamsSchema,
   adminAiThreadIdParamsSchema,
+  confirmBulkActionSchema,
+  confirmSendCommunicationSchema,
   listAdminAiThreadsQuerySchema,
+  previewBulkActionSchema,
+  retryFailedBulkActionSchema,
   sendAdminAiMessageSchema,
+  updateCommunicationDraftSchema,
 } from "./admin-ai.validation.js";
 
 const router = Router();
@@ -53,6 +59,50 @@ router.get(
   "/reports/:reportId/download",
   validate(adminAiReportIdParamsSchema, "params"),
   adminAiController.downloadReport,
+);
+router.get(
+  "/communications/drafts/:draftId",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  adminAiController.getCommunicationDraft,
+);
+router.get(
+  "/communications/drafts/:draftId/recipients",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  adminAiController.listCommunicationRecipients,
+);
+router.patch(
+  "/communications/drafts/:draftId",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  validate(updateCommunicationDraftSchema),
+  adminAiController.updateCommunicationDraft,
+);
+router.post(
+  "/communications/drafts/:draftId/confirm-send",
+  validate(adminAiDraftIdParamsSchema, "params"),
+  validate(confirmSendCommunicationSchema),
+  adminAiController.confirmSendCommunication,
+);
+router.post(
+  "/bulk-actions/preview",
+  validate(previewBulkActionSchema),
+  adminAiController.previewBulkAction,
+);
+router.post(
+  "/bulk-actions/:id/confirm",
+  validate(adminAiBulkActionIdParamsSchema, "params"),
+  validate(confirmBulkActionSchema),
+  adminAiController.confirmBulkAction,
+);
+router.get(
+  "/bulk-actions/:id/status",
+  validate(adminAiBulkActionIdParamsSchema, "params"),
+  adminAiController.getBulkActionStatus,
+);
+router.post(
+  "/bulk-actions/:id/retry-failed",
+  validate(adminAiBulkActionIdParamsSchema, "params"),
+  validate(retryFailedBulkActionSchema),
+  adminAiController.retryFailedBulkAction,
 );
 router.post(
   "/messages",

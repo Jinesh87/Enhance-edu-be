@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { settingsService } from "./settings.service.js";
 import { logger } from "../../config/logger.js";
 import { openAiUsageService } from "../../common/ai/openai-usage.service.js";
+import { writeAuditLog } from "../../common/utils/audit-log.js";
 
 function parseOptionalDate(value: unknown, endOfDay = false): Date | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
@@ -129,6 +130,43 @@ export class SettingsController {
       },
       "Notification settings updated",
     );
+
+    res.json(config);
+  }
+
+  async getAdminAiCapabilitySettings(_req: Request, res: Response): Promise<void> {
+    const config = await settingsService.getAdminAiCapabilitySettings();
+    res.json(config);
+  }
+
+  async updateAdminAiCapabilitySettings(
+    req: Request,
+    res: Response,
+  ): Promise<void> {
+    const before = await settingsService.getAdminAiCapabilitySettings();
+    const config = await settingsService.updateAdminAiCapabilitySettings(
+      req.body,
+    );
+
+    logger.info(
+      {
+        userId: req.user?.id,
+        before,
+        after: config,
+      },
+      "Admin AI capability settings updated",
+    );
+
+    await writeAuditLog({
+      actorUserId: req.user?.id ?? null,
+      action: "EDITED",
+      recordType: "admin_ai_settings",
+      recordId: "default",
+      recordLabel: "Admin AI Settings",
+      recordPath: "/admin/ai-settings",
+      before: before as unknown as Record<string, unknown>,
+      after: config as unknown as Record<string, unknown>,
+    });
 
     res.json(config);
   }

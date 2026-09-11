@@ -56,6 +56,46 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   sessionChangeEmailNotificationsEnabled!: boolean;
 
+  // ── Admin AI capability controls (institution-wide; does not affect other AIs) ──
+
+  @Column({ type: "boolean", default: true })
+  adminAiAssistantEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiDataInsightsEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiEmailDraftingEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiMessageDraftingEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiBulkCommunicationEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiNotificationSuggestionsEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiProactiveBriefingEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiReportBuilderEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiDeepLinksEnabled!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  adminAiConfirmedActionsEnabled!: boolean;
+
+  /** Schedule/sections for Admin AI proactive briefings (no timezone picker). */
+  @Column({ type: "jsonb", nullable: true })
+  adminAiBriefingConfig!: {
+    time?: string | null;
+    daysOfWeek?: number[] | null;
+    sections?: string[] | null;
+  } | null;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 

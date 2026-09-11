@@ -44,6 +44,12 @@ export type AdminAiSource = {
     draftId: string;
     label: string;
   } | null;
+  /** Present when kind is "action" and type is CONFIRM_SEND. */
+  confirmSend?: {
+    type: "CONFIRM_SEND";
+    draftId: string;
+    label: string;
+  } | null;
 };
 
 @Entity("admin_ai_messages")

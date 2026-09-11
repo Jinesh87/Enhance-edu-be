@@ -25,6 +25,7 @@ import { adminTasksService } from "./modules/admin/tasks/admin-tasks.service.js"
 import { adminAssessmentsService } from "./modules/admin/assessments/admin-assessments.service.js";
 import { startOcrWorker } from "./common/queues/ocr-queue.js";
 import { startSyllabusIngestWorker } from "./common/queues/syllabus-ingest-queue.js";
+import { startBulkActionsWorker } from "./common/queues/bulk-actions-queue.js";
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
 const ASSESSMENT_STATUS_SYNC_MS = 60_000;
@@ -51,6 +52,7 @@ async function bootstrap() {
   await seedSuperAdmin();
   startOcrWorker();
   startSyllabusIngestWorker();
+  startBulkActionsWorker();
 
   app.listen(port, "0.0.0.0", () => {
     logger.info({ port }, "API listening");

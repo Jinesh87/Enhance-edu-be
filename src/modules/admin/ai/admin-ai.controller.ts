@@ -9,12 +9,10 @@ function openAdminAiSse(res: FlushableResponse) {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
-  // Discourage intermediary buffering; help small token writes go out immediately.
   res.socket?.setNoDelay?.(true);
   if (typeof res.flushHeaders === "function") {
     res.flushHeaders();
   }
-  // ~2KB comment so common proxies flush the first packets instead of buffering.
   res.write(`:${" ".repeat(2048)}\n\n`);
   if (typeof res.flush === "function") {
     res.flush();
@@ -127,6 +125,186 @@ class AdminAiController {
     }
   };
 
+  getCommunicationDraft = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.getCommunicationDraft(
+        req.user!.id,
+        req.params.draftId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listCommunicationRecipients = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.listCommunicationRecipients(
+        req.user!.id,
+        req.params.draftId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateCommunicationDraft = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.updateCommunicationDraft(
+        req.user!.id,
+        req.params.draftId as string,
+        {
+          subject: req.body.subject,
+          body: req.body.body,
+          refreshAudience: Boolean(req.body.refreshAudience),
+          audienceType: req.body.audienceType,
+          roles: req.body.roles,
+          groups: req.body.groups,
+          yearLevel: req.body.yearLevel,
+          term: req.body.term,
+          subjectFilter: req.body.subjectFilter,
+          className: req.body.className,
+          date: req.body.date,
+          nameQuery: req.body.nameQuery,
+          userIds: req.body.userIds,
+          selectedUserIds: req.body.selectedUserIds,
+          recipientOf: req.body.recipientOf,
+          assessmentQuery: req.body.assessmentQuery,
+          enquiryStage: req.body.enquiryStage,
+          status: req.body.status,
+          label: req.body.label,
+          ambiguous:
+            typeof req.body.ambiguous === "boolean"
+              ? req.body.ambiguous
+              : undefined,
+          confirmed:
+            typeof req.body.confirmed === "boolean"
+              ? req.body.confirmed
+              : undefined,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  confirmSendCommunication = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.confirmSendCommunication(
+        req.user!.id,
+        req.params.draftId as string,
+        {
+          password: req.body.password,
+          subject: req.body.subject,
+          body: req.body.body,
+          retryFailedOnly: Boolean(req.body.retryFailedOnly),
+          selectedUserIds: req.body.selectedUserIds,
+          attachments: req.body.attachments,
+          confirmationText: req.body.confirmationText,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  previewBulkAction = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.previewBulkAction(
+        req.user!.id,
+        String(req.body.draftId),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  confirmBulkAction = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.confirmBulkAction(
+        req.user!.id,
+        req.params.id as string,
+        {
+          password: req.body.password,
+          subject: req.body.subject,
+          body: req.body.body,
+          retryFailedOnly: Boolean(req.body.retryFailedOnly),
+          selectedUserIds: req.body.selectedUserIds,
+          attachments: req.body.attachments,
+          confirmationText: req.body.confirmationText,
+          action: req.body.action,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getBulkActionStatus = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.getBulkActionStatus(
+        req.user!.id,
+        req.params.id as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  retryFailedBulkAction = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await adminAiService.retryFailedBulkAction(
+        req.user!.id,
+        req.params.id as string,
+        {
+          password: req.body.password,
+          confirmationText: req.body.confirmationText,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   sendMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await adminAiService.sendMessage(req.user!.id, {
@@ -148,7 +326,6 @@ class AdminAiController {
     const flushable = res as FlushableResponse;
     let streamStarted = false;
 
-    // Abort only when the *response* connection drops mid-stream.
     const onResponseClose = () => {
       if (!res.writableEnded) {
         abort.abort();
