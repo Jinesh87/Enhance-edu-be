@@ -4,6 +4,7 @@ import {
 import { UserRole } from "../../../../common/constants/roles.js";
 import {
   assertAdminAiModule,
+  canUseAdminAiModule,
   type AdminAiActor,
 } from "../authorization.js";
 import { sanitizeToolPayload } from "../sanitize.js";
@@ -837,6 +838,11 @@ export async function getOpsSnapshot(
 ): Promise<ToolResult> {
   assertAdminAiModule(actor, "classes");
 
+  const canEnrolments = canUseAdminAiModule(actor, "enrolments");
+  const canEnquiries = canUseAdminAiModule(actor, "enquiries");
+  const canTasks = canUseAdminAiModule(actor, "tasks");
+  const canAttendance = canUseAdminAiModule(actor, "attendance");
+
   const week = clampRange(undefined, undefined);
   const day = dayBoundsInClassTz();
 
@@ -852,16 +858,37 @@ export async function getOpsSnapshot(
     attendanceRows,
     absences,
   ] = await Promise.all([
-    adminAiRepository.countOpenTasks(),
-    adminAiRepository.countOverdueOpenTasks(),
-    adminAiRepository.countPendingEnrollments(),
-    adminAiRepository.countActiveEnrollments(),
+    canTasks ? adminAiRepository.countOpenTasks() : Promise.resolve(null),
+    canTasks
+      ? adminAiRepository.countOverdueOpenTasks()
+      : Promise.resolve(null),
+    canEnrolments
+      ? adminAiRepository.countPendingEnrollments()
+      : Promise.resolve(null),
+    canEnrolments
+      ? adminAiRepository.countActiveEnrollments()
+      : Promise.resolve(null),
     adminAiRepository.countActiveUsersByRole(UserRole.STUDENT),
     adminAiRepository.countActiveUsersByRole(UserRole.STAFF),
     adminAiRepository.countClasses(),
-    adminAiRepository.getEnquiryPipelineAggregates(),
-    adminAiRepository.getAttendanceStatusCounts(week.start, week.endExclusive),
-    adminAiRepository.findTodaysAbsences(day.start, day.end, null),
+    canEnquiries
+      ? adminAiRepository.getEnquiryPipelineAggregates()
+      : Promise.resolve([] as Awaited<
+          ReturnType<typeof adminAiRepository.getEnquiryPipelineAggregates>
+        >),
+    canAttendance
+      ? adminAiRepository.getAttendanceStatusCounts(
+          week.start,
+          week.endExclusive,
+        )
+      : Promise.resolve([] as Awaited<
+          ReturnType<typeof adminAiRepository.getAttendanceStatusCounts>
+        >),
+    canAttendance
+      ? adminAiRepository.findTodaysAbsences(day.start, day.end, null)
+      : Promise.resolve([] as Awaited<
+          ReturnType<typeof adminAiRepository.findTodaysAbsences>
+        >),
   ]);
 
   const attendanceByStatus: Record<string, number> = {};
@@ -882,56 +909,69 @@ export async function getOpsSnapshot(
     .filter((row) => row.stageKind === "OPEN")
     .reduce((sum, row) => sum + (Number(row.count) || 0), 0);
 
+  const data: Record<string, unknown> = {
+    entity: "ops_snapshot",
+    asOfDate: day.label,
+    people: {
+      activeStudents,
+      activeStaffTeachers: activeStaff,
+    },
+    classes: {
+      classCount,
+    },
+    unavailable: [
+      "Fee / payment ledgers are not available via Admin AI.",
+      "WWCC / compliance credentials are not available via Admin AI.",
+    ],
+    responseHint:
+      "Short KPI summary for dashboard-style questions. Use exact numbers. Do not invent fees or credentials. Only mention modules included in this snapshot. Mention absencesToday only if present and relevant.",
+  };
+
+  if (canEnrolments) {
+    data.enrolments = {
+      activeEnrolments,
+      pendingEnrolments,
+    };
+  }
+  if (canEnquiries) {
+    data.enquiries = {
+      openEnquiries,
+    };
+  }
+  if (canTasks) {
+    data.tasks = {
+      openTasks,
+      overdueOpenTasks: overdueTasks,
+    };
+  }
+  if (canAttendance) {
+    data.attendanceLast7Days = {
+      totalRecords: attendanceTotal,
+      byStatus: attendanceByStatus,
+      presentOrLateRatePercent: attendanceRate,
+    };
+    data.absencesToday = {
+      count: absences.length,
+      date: day.label,
+      truncated: absences.length >= 60,
+    };
+  }
+
+  const actions = [openPageAction("dashboard", "Open Dashboard")];
+  if (canTasks) actions.push(openPageAction("tasks", "Open Tasks"));
+  if (canAttendance) {
+    actions.push(openPageAction("attendance", "Open Attendance"));
+  }
+
   return {
-    data: sanitizeToolPayload({
-      entity: "ops_snapshot",
-      asOfDate: day.label,
-      people: {
-        activeStudents,
-        activeStaffTeachers: activeStaff,
-      },
-      classes: {
-        classCount,
-      },
-      enrolments: {
-        activeEnrolments,
-        pendingEnrolments,
-      },
-      enquiries: {
-        openEnquiries,
-      },
-      tasks: {
-        openTasks,
-        overdueOpenTasks: overdueTasks,
-      },
-      attendanceLast7Days: {
-        totalRecords: attendanceTotal,
-        byStatus: attendanceByStatus,
-        presentOrLateRatePercent: attendanceRate,
-      },
-      absencesToday: {
-        count: absences.length,
-        date: day.label,
-        truncated: absences.length >= 60,
-      },
-      unavailable: [
-        "Fee / payment ledgers are not available via Admin AI.",
-        "WWCC / compliance credentials are not available via Admin AI.",
-      ],
-      responseHint:
-        "Short KPI summary for dashboard-style questions. Use exact numbers. Do not invent fees or credentials. Mention absencesToday only if relevant.",
-    }),
+    data: sanitizeToolPayload(data),
     sources: [
       {
         kind: "database",
         label: "Ops snapshot",
-        detail: "Aggregates only",
+        detail: "Aggregates only (module-scoped)",
       },
     ],
-    actions: [
-      openPageAction("dashboard", "Open Dashboard"),
-      openPageAction("tasks", "Open Tasks"),
-      openPageAction("attendance", "Open Attendance"),
-    ],
+    actions,
   };
 }

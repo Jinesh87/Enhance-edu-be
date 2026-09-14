@@ -15,6 +15,10 @@ import {
 } from "./query-normalize/index.js";
 import { canUseAdminAiTool } from "./tool-modules.js";
 import {
+  assertNoCrossModuleSubstitutes,
+  canOpenAdminAiPage,
+} from "./module-intent.js";
+import {
   getAcademicPerformanceSummary,
   getAttendanceSummary,
   getClassRoster,
@@ -1017,6 +1021,8 @@ export async function executeAdminAiTool(
     );
   }
 
+  assertNoCrossModuleSubstitutes(actor, name, context.userMessage);
+
   const settings =
     capabilitySettings ?? (await loadAdminAiCapabilitySettings());
   const required = capabilityForTool(name);
@@ -1026,6 +1032,27 @@ export async function executeAdminAiTool(
 
   const args = normalizeToolArgs(name, parseArgs(rawArgs), context);
 
+  // Re-check with normalized args so unscoped teacher dumps cannot bypass
+  // People permissions via paraphrases like "current staff details".
+  assertNoCrossModuleSubstitutes(actor, name, context.userMessage, args);
+
+  const result = await runAdminAiTool(actor, name, args, context);
+  if (!result.actions?.length) return result;
+  return {
+    ...result,
+    actions: result.actions.filter((action) => {
+      if (action.type !== "OPEN_PAGE") return true;
+      return canOpenAdminAiPage(actor, action.resource);
+    }),
+  };
+}
+
+async function runAdminAiTool(
+  actor: AdminAiActor,
+  name: string,
+  args: Record<string, unknown>,
+  context: NormalizeToolArgsContext,
+): Promise<ToolResult> {
   switch (name) {
     case "getAttendanceSummary":
       return getAttendanceSummary(actor, {

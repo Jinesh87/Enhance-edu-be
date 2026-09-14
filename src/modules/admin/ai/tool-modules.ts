@@ -1,11 +1,13 @@
 import type { AdminModuleId } from "../../../common/constants/modules.js";
-import { ADMIN_MODULES } from "../../../common/constants/modules.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import {
   canUseAdminAiModule,
   type AdminAiActor,
 } from "./authorization.js";
+import { formatModuleAccessGuidance } from "./module-intent.js";
 import { REPORT_MODULE } from "./reports/report.types.js";
+
+export { formatModuleAccessGuidance as formatAllowedModulesForPrompt };
 
 /**
  * Modules required to *offer* a tool to the model (AND semantics when multiple).
@@ -105,26 +107,4 @@ export function canUseAdminAiTool(
     return actor.role === UserRole.SUPER_ADMIN;
   }
   return actorHasAllModules(actor, required);
-}
-
-export function formatAllowedModulesForPrompt(actor: AdminAiActor): string {
-  if (actor.role === UserRole.SUPER_ADMIN) {
-    return "Access scope: Super Admin — all admin modules.";
-  }
-
-  const allowed = ADMIN_MODULES.filter((module) =>
-    canUseAdminAiModule(actor, module.id),
-  ).map((module) => module.label);
-
-  if (allowed.length === 0) {
-    return [
-      "Access scope: no admin modules assigned.",
-      "You cannot look up school data. Tell the user to ask an administrator to grant module access.",
-    ].join("\n");
-  }
-
-  return [
-    `Access scope: Office Staff modules — ${allowed.join(", ")}.`,
-    "Only answer using tools for those modules. If the user asks about a module they do not have, say you do not have access to that area and suggest they ask an administrator.",
-  ].join("\n");
 }

@@ -129,7 +129,10 @@ function toolErrorMessage(error: unknown): string {
     return error.message;
   }
   if (error.code === "ADMIN_AI_MODULE_FORBIDDEN") {
-    return "You do not have permission to access this information.";
+    return error.message || "You do not have permission to access this information.";
+  }
+  if (error.code === "ADMIN_AI_WRONG_ENTITY") {
+    return error.message;
   }
   if (error.code.startsWith("ADMIN_AI_MEMORY_")) {
     return error.message;
@@ -140,7 +143,7 @@ function toolErrorMessage(error: unknown): string {
   if (error.code.startsWith("ADMIN_AI_COMM_")) {
     return error.message;
   }
-  return "I could not find authorized data for that request.";
+  return error.message || "I could not find authorized data for that request.";
 }
 
 function filterSourcesByCapabilities(
