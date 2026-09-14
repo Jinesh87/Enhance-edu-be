@@ -62,6 +62,7 @@ import {
   AdminAiReport,
   AdminAiReportDraft,
   AdminAiCommunicationDraft,
+  AdminAiBriefing,
   Notification,
   OpenAiUsageLog,
   LearningSourceDocument,
@@ -945,6 +946,25 @@ export async function ensureAdminAiSchema() {
       ON admin_ai_communication_drafts ("ownerUserId");
     CREATE INDEX IF NOT EXISTS "IDX_admin_ai_comm_drafts_owner_updated"
       ON admin_ai_communication_drafts ("ownerUserId", "updatedAt");
+
+    CREATE TABLE IF NOT EXISTS admin_ai_briefings (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "userId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "briefingDate" date NOT NULL,
+      "title" varchar(200) NOT NULL,
+      "summary" text NOT NULL,
+      "snapshot" jsonb,
+      "readAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT "UQ_admin_ai_briefings_user_date" UNIQUE ("userId", "briefingDate")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_briefings_userId"
+      ON admin_ai_briefings ("userId");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_briefings_user_created"
+      ON admin_ai_briefings ("userId", "createdAt");
+    CREATE INDEX IF NOT EXISTS "IDX_admin_ai_briefings_user_read"
+      ON admin_ai_briefings ("userId", "readAt");
   `);
 
   await bootstrap.query(`
@@ -1195,6 +1215,7 @@ export const AppDataSource = new DataSource({
     AdminAiReport,
     AdminAiReportDraft,
     AdminAiCommunicationDraft,
+    AdminAiBriefing,
     Notification,
     OpenAiUsageLog,
     LearningSourceDocument,

@@ -13,7 +13,6 @@ export const MAX_RANGE_DAYS = 62;
 export const MAX_ROWS = 40;
 export const LIST_MAX_ROWS = 60;
 
-/** Structured deep-link metadata. Never sent to the LLM as free-form URLs. */
 export type AdminAiOpenPageAction = {
   type: "OPEN_PAGE";
   resource: string;
@@ -22,28 +21,24 @@ export type AdminAiOpenPageAction = {
   label: string;
 };
 
-/** Download action — reportId only; FE fetches PDF via API. */
 export type AdminAiDownloadReportAction = {
   type: "DOWNLOAD_REPORT";
   reportId: string;
   label: string;
 };
 
-/** Confirm PDF generation from a preview draft. */
 export type AdminAiGenerateReportAction = {
   type: "GENERATE_REPORT";
   draftId: string;
   label: string;
 };
 
-/** Focus chat composer so the user can refine the preview before PDF. */
 export type AdminAiAdjustReportAction = {
   type: "ADJUST_REPORT";
   draftId: string;
   label: string;
 };
 
-/** Confirm sending a communication draft (email). */
 export type AdminAiConfirmSendAction = {
   type: "CONFIRM_SEND";
   draftId: string;

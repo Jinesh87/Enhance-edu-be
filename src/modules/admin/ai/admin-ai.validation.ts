@@ -30,6 +30,14 @@ export const adminAiBulkActionIdParamsSchema = Joi.object({
   id: Joi.string().uuid().required(),
 });
 
+export const adminAiBriefingIdParamsSchema = Joi.object({
+  briefingId: Joi.string().uuid().required(),
+});
+
+export const listAdminAiBriefingsQuerySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(30).optional(),
+});
+
 export const previewBulkActionSchema = Joi.object({
   draftId: Joi.string().uuid().required(),
 });

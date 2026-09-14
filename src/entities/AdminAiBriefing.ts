@@ -7,23 +7,17 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
   Relation,
+  Unique,
   UpdateDateColumn,
 } from "typeorm";
 import { User } from "./User.js";
 
-export const NOTIFICATION_TYPES = [
-  "SESSION_UPDATED",
-  "SESSION_DELETED",
-  "ENROLLMENT_ACCEPTED",
-  "ASSESSMENT_CREATED",
-  "HOMEWORK_CREATED",
-  "ADMIN_AI_BRIEFING",
-] as const;
-
-export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
-
-@Entity("notifications")
-export class Notification {
+/** One proactive briefing per admin user per local calendar date. */
+@Entity("admin_ai_briefings")
+@Unique(["userId", "briefingDate"])
+@Index(["userId", "createdAt"])
+@Index(["userId", "readAt"])
+export class AdminAiBriefing {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
@@ -35,21 +29,21 @@ export class Notification {
   @JoinColumn({ name: "userId" })
   user!: Relation<User>;
 
-  @Column({ type: "varchar", length: 40 })
-  @Index()
-  type!: NotificationType;
+  /** Local calendar date in the institution briefing timezone (YYYY-MM-DD). */
+  @Column({ type: "date" })
+  briefingDate!: string;
 
   @Column({ type: "varchar", length: 200 })
   title!: string;
 
   @Column({ type: "text" })
-  body!: string;
+  summary!: string;
 
+  /** Sanitized aggregate snapshot used for the AI summary (no PII/secrets). */
   @Column({ type: "jsonb", nullable: true })
-  data!: Record<string, unknown> | null;
+  snapshot!: Record<string, unknown> | null;
 
   @Column({ type: "timestamptz", nullable: true })
-  @Index()
   readAt!: Date | null;
 
   @CreateDateColumn({ type: "timestamptz" })

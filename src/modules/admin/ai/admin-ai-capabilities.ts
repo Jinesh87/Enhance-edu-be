@@ -16,10 +16,34 @@ import { settingsService } from "../../settings/settings.service.js";
 
 export type AdminAiCapability = (typeof ADMIN_AI_CAPABILITIES)[number];
 
+export type AdminAiBriefingSection =
+  | "attendance"
+  | "tasks"
+  | "enquiries"
+  | "homework"
+  | "operations";
+
+export const ADMIN_AI_BRIEFING_SECTIONS: AdminAiBriefingSection[] = [
+  "attendance",
+  "tasks",
+  "enquiries",
+  "homework",
+  "operations",
+];
+
 export type AdminAiBriefingConfig = {
   time: string | null;
+  /** IANA timezone (e.g. Australia/Sydney). */
+  timeZone: string;
   daysOfWeek: number[];
-  sections: string[];
+  sections: AdminAiBriefingSection[];
+  /** Optional inclusive local date bounds YYYY-MM-DD. */
+  startDate: string | null;
+  endDate: string | null;
+  /** Next scheduled fire time (UTC ISO). */
+  nextRunAt: string | null;
+  /** Last successful schedule claim (UTC ISO). */
+  lastRunAt: string | null;
 };
 
 export type AdminAiCapabilitySettings = {
@@ -38,8 +62,13 @@ export type AdminAiCapabilitySettings = {
 
 export const DEFAULT_ADMIN_AI_BRIEFING_CONFIG: AdminAiBriefingConfig = {
   time: "08:00",
+  timeZone: "Australia/Sydney",
   daysOfWeek: [1, 2, 3, 4, 5],
   sections: ["attendance", "tasks", "enquiries"],
+  startDate: null,
+  endDate: null,
+  nextRunAt: null,
+  lastRunAt: null,
 };
 
 export const DEFAULT_ADMIN_AI_CAPABILITY_SETTINGS: AdminAiCapabilitySettings = {
