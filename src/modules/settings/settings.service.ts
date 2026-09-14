@@ -1,10 +1,14 @@
 import { AppDataSource } from "../../config/data-source.js";
 import { InstitutionSetting } from "../../entities/index.js";
 import {
+  ADMIN_AI_BRIEFING_SECTIONS,
   DEFAULT_ADMIN_AI_BRIEFING_CONFIG,
   type AdminAiBriefingConfig,
+  type AdminAiBriefingSection,
   type AdminAiCapabilitySettings,
 } from "../admin/ai/admin-ai-capabilities.js";
+import { computeNextBriefingRunAt } from "../admin/ai/briefings/briefing-schedule.js";
+import { resolveIanaTimeZone } from "../../common/utils/timezone.js";
 
 export interface UpdateInstitutionSettingInput {
   latitude: number;
@@ -59,28 +63,57 @@ function normalizeBriefingConfig(
     | Partial<AdminAiBriefingConfig>
     | null
     | undefined,
+  options?: { recomputeNextRun?: boolean },
 ): AdminAiBriefingConfig {
   const base = DEFAULT_ADMIN_AI_BRIEFING_CONFIG;
   const time =
     typeof raw?.time === "string" && /^\d{2}:\d{2}$/.test(raw.time.trim())
       ? raw.time.trim()
       : base.time;
+  const timeZone = resolveIanaTimeZone(
+    typeof raw?.timeZone === "string" ? raw.timeZone : base.timeZone,
+  );
   const days = Array.isArray(raw?.daysOfWeek)
     ? raw.daysOfWeek
         .filter((d): d is number => typeof d === "number" && d >= 0 && d <= 6)
         .slice(0, 7)
     : base.daysOfWeek;
+  const sectionSet = new Set<string>(ADMIN_AI_BRIEFING_SECTIONS);
   const sections = Array.isArray(raw?.sections)
-    ? raw.sections
+    ? (raw.sections
         .filter((s): s is string => typeof s === "string" && Boolean(s.trim()))
-        .map((s) => s.trim().slice(0, 40))
-        .slice(0, 12)
+        .map((s) => s.trim().toLowerCase())
+        .filter((s): s is AdminAiBriefingSection => sectionSet.has(s))
+        .slice(0, 12) as AdminAiBriefingSection[])
     : base.sections;
-  return {
+  const dateOk = (value: unknown): string | null =>
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+      ? value.trim()
+      : null;
+
+  const draft: AdminAiBriefingConfig = {
     time,
+    timeZone,
     daysOfWeek: days.length ? days : base.daysOfWeek,
     sections: sections.length ? sections : base.sections,
+    startDate: dateOk(raw?.startDate) ?? null,
+    endDate: dateOk(raw?.endDate) ?? null,
+    nextRunAt:
+      typeof raw?.nextRunAt === "string" && raw.nextRunAt.trim()
+        ? raw.nextRunAt.trim()
+        : null,
+    lastRunAt:
+      typeof raw?.lastRunAt === "string" && raw.lastRunAt.trim()
+        ? raw.lastRunAt.trim()
+        : null,
   };
+
+  if (options?.recomputeNextRun !== false) {
+    const next = computeNextBriefingRunAt(draft, new Date());
+    draft.nextRunAt = next ? next.toISOString() : null;
+  }
+
+  return draft;
 }
 
 export class SettingsService {
@@ -133,7 +166,9 @@ export class SettingsService {
       reportBuilderEnabled: setting.adminAiReportBuilderEnabled ?? true,
       deepLinksEnabled: setting.adminAiDeepLinksEnabled ?? true,
       confirmedActionsEnabled: setting.adminAiConfirmedActionsEnabled ?? true,
-      briefingConfig: normalizeBriefingConfig(setting.adminAiBriefingConfig),
+      briefingConfig: normalizeBriefingConfig(setting.adminAiBriefingConfig, {
+        recomputeNextRun: false,
+      }),
     };
   }
 
@@ -171,10 +206,55 @@ export class SettingsService {
     setting.adminAiBriefingConfig = normalizeBriefingConfig({
       ...before.briefingConfig,
       ...(input.briefingConfig ?? {}),
+      // Always refresh schedule after settings edits.
+      nextRunAt: null,
     });
 
     await this.settingRepo.save(setting);
     return this.mapAdminAiCapabilitySettings(setting);
+  }
+
+  /** Scheduler claim: advance nextRunAt only if still due at expectedNextRunAt. */
+  async claimBriefingSchedule(expectedNextRunAt: string): Promise<{
+    claimed: boolean;
+    config: AdminAiBriefingConfig;
+  }> {
+    const setting = await this.getOrCreateDefault();
+    const current = normalizeBriefingConfig(setting.adminAiBriefingConfig, {
+      recomputeNextRun: false,
+    });
+    if (current.nextRunAt !== expectedNextRunAt) {
+      return { claimed: false, config: current };
+    }
+    const now = new Date();
+    const next = computeNextBriefingRunAt(
+      current,
+      new Date(new Date(expectedNextRunAt).getTime() + 60_000),
+    );
+    const updated: AdminAiBriefingConfig = {
+      ...current,
+      lastRunAt: now.toISOString(),
+      nextRunAt: next ? next.toISOString() : null,
+    };
+    setting.adminAiBriefingConfig = updated;
+    await this.settingRepo.save(setting);
+    return { claimed: true, config: updated };
+  }
+
+  async ensureBriefingNextRunAt(): Promise<AdminAiBriefingConfig> {
+    const setting = await this.getOrCreateDefault();
+    const current = normalizeBriefingConfig(setting.adminAiBriefingConfig, {
+      recomputeNextRun: false,
+    });
+    if (current.nextRunAt) return current;
+    const next = computeNextBriefingRunAt(current, new Date());
+    const updated: AdminAiBriefingConfig = {
+      ...current,
+      nextRunAt: next ? next.toISOString() : null,
+    };
+    setting.adminAiBriefingConfig = updated;
+    await this.settingRepo.save(setting);
+    return updated;
   }
 
   async getInstitutionSettings(): Promise<InstitutionSetting | null> {

@@ -26,6 +26,7 @@ import { adminAssessmentsService } from "./modules/admin/assessments/admin-asses
 import { startOcrWorker } from "./common/queues/ocr-queue.js";
 import { startSyllabusIngestWorker } from "./common/queues/syllabus-ingest-queue.js";
 import { startBulkActionsWorker } from "./common/queues/bulk-actions-queue.js";
+import { startBriefingsWorker } from "./common/queues/briefings-queue.js";
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
 const ASSESSMENT_STATUS_SYNC_MS = 60_000;
@@ -53,6 +54,7 @@ async function bootstrap() {
   startOcrWorker();
   startSyllabusIngestWorker();
   startBulkActionsWorker();
+  startBriefingsWorker();
 
   app.listen(port, "0.0.0.0", () => {
     logger.info({ port }, "API listening");

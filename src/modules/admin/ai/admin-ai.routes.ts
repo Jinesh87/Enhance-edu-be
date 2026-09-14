@@ -8,12 +8,14 @@ import { validate } from "../../../common/middleware/validate.js";
 import { adminAiController } from "./admin-ai.controller.js";
 import {
   adminAiBulkActionIdParamsSchema,
+  adminAiBriefingIdParamsSchema,
   adminAiDraftIdParamsSchema,
   adminAiMemoryIdParamsSchema,
   adminAiReportIdParamsSchema,
   adminAiThreadIdParamsSchema,
   confirmBulkActionSchema,
   confirmSendCommunicationSchema,
+  listAdminAiBriefingsQuerySchema,
   listAdminAiThreadsQuerySchema,
   previewBulkActionSchema,
   retryFailedBulkActionSchema,
@@ -113,6 +115,23 @@ router.post(
   "/messages/stream",
   validate(sendAdminAiMessageSchema),
   adminAiController.sendMessageStream,
+);
+
+router.get(
+  "/briefings",
+  validate(listAdminAiBriefingsQuerySchema, "query"),
+  adminAiController.listBriefings,
+);
+router.post("/briefings/preview", adminAiController.previewBriefing);
+router.patch(
+  "/briefings/:briefingId/read",
+  validate(adminAiBriefingIdParamsSchema, "params"),
+  adminAiController.markBriefingRead,
+);
+router.delete(
+  "/briefings/:briefingId",
+  validate(adminAiBriefingIdParamsSchema, "params"),
+  adminAiController.deleteBriefing,
 );
 
 export default router;

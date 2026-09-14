@@ -88,12 +88,17 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: true })
   adminAiConfirmedActionsEnabled!: boolean;
 
-  /** Schedule/sections for Admin AI proactive briefings (no timezone picker). */
+  /** Schedule/sections for Admin AI proactive briefings. */
   @Column({ type: "jsonb", nullable: true })
   adminAiBriefingConfig!: {
     time?: string | null;
+    timeZone?: string | null;
     daysOfWeek?: number[] | null;
     sections?: string[] | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    nextRunAt?: string | null;
+    lastRunAt?: string | null;
   } | null;
 
   @CreateDateColumn({ type: "timestamptz" })

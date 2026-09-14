@@ -1,5 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { adminAiService } from "./admin-ai.service.js";
+import { adminAiBriefingService } from "./briefings/briefing.service.js";
+import { resolveAdminAiActor } from "./authorization.js";
 
 type FlushableResponse = Response & { flush?: () => void };
 
@@ -378,6 +380,58 @@ class AdminAiController {
       }
     } finally {
       res.off("close", onResponseClose);
+    }
+  };
+
+  listBriefings = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const limit =
+        typeof req.query.limit === "string" ? Number(req.query.limit) : 10;
+      const data = await adminAiBriefingService.listForUser(
+        req.user!.id,
+        limit,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  markBriefingRead = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const briefing = await adminAiBriefingService.markRead(
+        req.user!.id,
+        req.params.briefingId as string,
+      );
+      res.status(200).json({ briefing });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteBriefing = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await adminAiBriefingService.deleteForUser(
+        req.user!.id,
+        req.params.briefingId as string,
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  previewBriefing = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const actor = await resolveAdminAiActor(req.user!.id);
+      const data = await adminAiBriefingService.previewForActor(actor);
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
     }
   };
 }

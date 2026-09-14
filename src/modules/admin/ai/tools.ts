@@ -1320,7 +1320,6 @@ const COMM_DRAFT_MODE_TOOLS = new Set([
   "getCommunicationDraft",
 ]);
 
-/** Draft tools that returned an error payload should not force DRAFT mode. */
 export function isFailedCommunicationDraftToolResult(
   toolName: string,
   data: unknown,
