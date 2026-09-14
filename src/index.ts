@@ -25,6 +25,7 @@ import { adminTasksService } from "./modules/admin/tasks/admin-tasks.service.js"
 import { adminAssessmentsService } from "./modules/admin/assessments/admin-assessments.service.js";
 import { startOcrWorker } from "./common/queues/ocr-queue.js";
 import { startSyllabusIngestWorker } from "./common/queues/syllabus-ingest-queue.js";
+import { startSessionResourceIngestWorker } from "./common/queues/session-resource-ingest-queue.js";
 import { startBulkActionsWorker } from "./common/queues/bulk-actions-queue.js";
 import { startBriefingsWorker } from "./common/queues/briefings-queue.js";
 const port = env.PORT;
@@ -53,6 +54,7 @@ async function bootstrap() {
   await seedSuperAdmin();
   startOcrWorker();
   startSyllabusIngestWorker();
+  startSessionResourceIngestWorker();
   startBulkActionsWorker();
   startBriefingsWorker();
 

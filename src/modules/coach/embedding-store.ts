@@ -96,3 +96,66 @@ export async function insertChunkWithEmbedding(row: {
     ],
   );
 }
+
+export async function insertSessionResourceChunkWithEmbedding(row: {
+  sessionId: string;
+  classId: string;
+  resourceId: string | null;
+  sourceType: string;
+  sourceLabel: string | null;
+  chunkIndex: number;
+  content: string;
+  embedding: number[];
+}) {
+  const vectorLiteral = `[${row.embedding.join(",")}]`;
+  const useVector = await hasPgVector();
+
+  if (useVector) {
+    try {
+      await AppDataSource.query(
+        `
+        INSERT INTO session_resource_chunks
+          ("id", "sessionId", "classId", "resourceId", "sourceType", "sourceLabel", "chunkIndex", "content", "embedding", "embeddingJson", "createdAt", "updatedAt")
+        VALUES
+          (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8::vector, $9::jsonb, now(), now())
+        `,
+        [
+          row.sessionId,
+          row.classId,
+          row.resourceId,
+          row.sourceType,
+          row.sourceLabel,
+          row.chunkIndex,
+          row.content,
+          vectorLiteral,
+          JSON.stringify(row.embedding),
+        ],
+      );
+      return;
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "pgvector insert failed for session resource chunk; falling back to embeddingJson",
+      );
+    }
+  }
+
+  await AppDataSource.query(
+    `
+    INSERT INTO session_resource_chunks
+      ("id", "sessionId", "classId", "resourceId", "sourceType", "sourceLabel", "chunkIndex", "content", "embeddingJson", "createdAt", "updatedAt")
+    VALUES
+      (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8::jsonb, now(), now())
+    `,
+    [
+      row.sessionId,
+      row.classId,
+      row.resourceId,
+      row.sourceType,
+      row.sourceLabel,
+      row.chunkIndex,
+      row.content,
+      JSON.stringify(row.embedding),
+    ],
+  );
+}
