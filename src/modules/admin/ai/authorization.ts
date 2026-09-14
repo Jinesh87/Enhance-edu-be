@@ -61,12 +61,11 @@ export async function resolveAdminAiActor(userId: string): Promise<AdminAiActor>
 
 export function canUseAdminAiModule(
   actor: AdminAiActor,
-  _moduleId: AdminModuleId,
+  moduleId: AdminModuleId,
 ): boolean {
-  // Console admins already passed Admin AI auth. Tools are read-only;
-  // do not block answers behind per-module gates inside chat.
-  void _moduleId;
-  return CONSOLE_ROLES.has(actor.role);
+  if (actor.role === UserRole.SUPER_ADMIN) return true;
+  if (actor.role !== UserRole.OFFICE_STAFF) return false;
+  return actor.modulePermissions.includes(moduleId);
 }
 
 export function assertAdminAiModule(

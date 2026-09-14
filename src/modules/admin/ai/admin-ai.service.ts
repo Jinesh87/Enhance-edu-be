@@ -40,11 +40,12 @@ import { communicationDraftService } from "./communications/communication-draft.
 import { bulkActionService } from "./bulk-actions/bulk-action.service.js";
 import { ensureCommunicationPreviewIfNeeded } from "./communications/ensure-communication-preview.js";
 import {
-  ADMIN_AI_TOOL_DEFINITIONS,
   executeAdminAiTool,
+  filterAdminAiToolsForActor,
   isFailedCommunicationDraftToolResult,
   resolveAssistantMode,
 } from "./tools.js";
+import { formatAllowedModulesForPrompt } from "./tool-modules.js";
 import { actionSource } from "./tool-helpers.js";
 
 const HISTORY_LIMIT = 12;
@@ -191,7 +192,8 @@ export class AdminAiService {
     const memories = await adminAiMemoryService.listForPrompt(actor);
     const memoryBlock = formatAdminAiMemoryPromptBlock(memories);
     const capabilityBlock = formatDisabledCapabilitiesForPrompt(settings);
-    return [ADMIN_AI_SYSTEM_PROMPT, capabilityBlock, memoryBlock]
+    const accessBlock = formatAllowedModulesForPrompt(actor);
+    return [ADMIN_AI_SYSTEM_PROMPT, accessBlock, capabilityBlock, memoryBlock]
       .filter(Boolean)
       .join("\n\n");
   }
@@ -639,7 +641,7 @@ export class AdminAiService {
             temperature: 0.2,
             max_tokens: MAX_COMPLETION_TOKENS,
             messages,
-            tools: ADMIN_AI_TOOL_DEFINITIONS,
+            tools: filterAdminAiToolsForActor(actor),
             tool_choice: "auto",
           },
           {
@@ -943,7 +945,7 @@ export class AdminAiService {
             temperature: 0.2,
             max_tokens: MAX_COMPLETION_TOKENS,
             messages,
-            tools: ADMIN_AI_TOOL_DEFINITIONS,
+            tools: filterAdminAiToolsForActor(actor),
             tool_choice: "auto",
           },
           {
