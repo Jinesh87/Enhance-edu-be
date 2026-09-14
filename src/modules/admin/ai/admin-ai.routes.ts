@@ -21,6 +21,8 @@ import {
   retryFailedBulkActionSchema,
   sendAdminAiMessageSchema,
   updateCommunicationDraftSchema,
+  previewAnnouncementSchema,
+  publishAnnouncementSchema,
 } from "./admin-ai.validation.js";
 
 const router = Router();
@@ -83,6 +85,16 @@ router.post(
   validate(adminAiDraftIdParamsSchema, "params"),
   validate(confirmSendCommunicationSchema),
   adminAiController.confirmSendCommunication,
+);
+router.post(
+  "/announcements/preview",
+  validate(previewAnnouncementSchema),
+  adminAiController.previewAnnouncement,
+);
+router.post(
+  "/announcements/publish",
+  validate(publishAnnouncementSchema),
+  adminAiController.publishAnnouncement,
 );
 router.post(
   "/bulk-actions/preview",

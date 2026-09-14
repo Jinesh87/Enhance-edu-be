@@ -162,6 +162,7 @@ const TOOL_CAPABILITY: Record<string, AdminAiCapability | null> = {
   updateCommunicationDraft: "emailDrafting",
   previewAudience: "emailDrafting",
   getCommunicationDraft: "emailDrafting",
+  createAnnouncementDraft: "messageDrafting",
   getOpsSnapshot: "dataInsights",
   getAcademicPerformanceSummary: "dataInsights",
   getAttendanceSummary: "dataInsights",

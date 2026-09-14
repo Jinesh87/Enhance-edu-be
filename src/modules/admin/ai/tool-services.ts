@@ -59,3 +59,5 @@ export {
   getCommunicationDraft,
 } from "./communications/communication.tools.js";
 
+export { createAnnouncementDraft } from "./announcements/announcement.tools.js";
+

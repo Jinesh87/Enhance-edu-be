@@ -18,6 +18,7 @@ export const NOTIFICATION_TYPES = [
   "ASSESSMENT_CREATED",
   "HOMEWORK_CREATED",
   "ADMIN_AI_BRIEFING",
+  "ANNOUNCEMENT",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

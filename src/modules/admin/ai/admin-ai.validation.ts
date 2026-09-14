@@ -98,3 +98,59 @@ export const retryFailedBulkActionSchema = Joi.object({
 export const listAdminAiThreadsQuerySchema = Joi.object({
   cursor: Joi.string().uuid().optional(),
 });
+
+export const previewAnnouncementSchema = Joi.object({
+  title: Joi.string().trim().max(200).allow("").optional(),
+  message: Joi.string().trim().max(4000).allow("").optional(),
+  audience: Joi.object({
+    roles: Joi.array().items(Joi.string().trim()).max(8).optional(),
+    groups: Joi.array().items(Joi.string().trim()).max(8).optional(),
+    recipientOf: Joi.string().valid("SELF", "PARENTS", "self", "parents").optional(),
+    yearLevel: Joi.string().trim().max(80).allow(null, "").optional(),
+    term: Joi.string().trim().max(80).allow(null, "").optional(),
+    subject: Joi.string().trim().max(80).allow(null, "").optional(),
+    className: Joi.string().trim().max(80).allow(null, "").optional(),
+    date: Joi.string().trim().max(32).allow(null, "").optional(),
+    nameQuery: Joi.string().trim().max(120).allow(null, "").optional(),
+    userIds: Joi.array().items(Joi.string().uuid()).max(500).optional(),
+    assessmentQuery: Joi.string().trim().max(120).allow(null, "").optional(),
+    enquiryStage: Joi.string().trim().max(80).allow(null, "").optional(),
+    status: Joi.string().trim().max(40).allow(null, "").optional(),
+    label: Joi.string().trim().max(180).allow(null, "").optional(),
+    ambiguous: Joi.boolean().optional(),
+    confirmed: Joi.boolean().optional(),
+    type: Joi.string().trim().max(64).allow(null, "").optional(),
+  })
+    .unknown(true)
+    .optional(),
+  threadId: Joi.string().uuid().allow(null, "").optional(),
+});
+
+export const publishAnnouncementSchema = Joi.object({
+  title: Joi.string().trim().min(1).max(200).required(),
+  message: Joi.string().trim().min(1).max(4000).required(),
+  deliveryChannel: Joi.string().valid("IN_APP").default("IN_APP"),
+  idempotencyKey: Joi.string().trim().max(100).optional(),
+  excludedUserIds: Joi.array().items(Joi.string().uuid()).max(2000).optional(),
+  audience: Joi.object({
+    roles: Joi.array().items(Joi.string().trim()).max(8).optional(),
+    groups: Joi.array().items(Joi.string().trim()).max(8).optional(),
+    recipientOf: Joi.string().valid("SELF", "PARENTS", "self", "parents").optional(),
+    yearLevel: Joi.string().trim().max(80).allow(null, "").optional(),
+    term: Joi.string().trim().max(80).allow(null, "").optional(),
+    subject: Joi.string().trim().max(80).allow(null, "").optional(),
+    className: Joi.string().trim().max(80).allow(null, "").optional(),
+    date: Joi.string().trim().max(32).allow(null, "").optional(),
+    nameQuery: Joi.string().trim().max(120).allow(null, "").optional(),
+    userIds: Joi.array().items(Joi.string().uuid()).max(500).optional(),
+    assessmentQuery: Joi.string().trim().max(120).allow(null, "").optional(),
+    enquiryStage: Joi.string().trim().max(80).allow(null, "").optional(),
+    status: Joi.string().trim().max(40).allow(null, "").optional(),
+    label: Joi.string().trim().max(180).allow(null, "").optional(),
+    ambiguous: Joi.boolean().optional(),
+    confirmed: Joi.boolean().optional(),
+    type: Joi.string().trim().max(64).allow(null, "").optional(),
+  })
+    .unknown(true)
+    .required(),
+});

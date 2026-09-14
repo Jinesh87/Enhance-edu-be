@@ -50,6 +50,26 @@ export type AdminAiSource = {
     draftId: string;
     label: string;
   } | null;
+  /** Present when kind is "action" and type is CONFIRM_ANNOUNCEMENT. */
+  confirmAnnouncement?: {
+    type: "CONFIRM_ANNOUNCEMENT";
+    draft: {
+      title: string;
+      message: string;
+      audience: Record<string, unknown>;
+      audienceLabel: string;
+      recipientCount: number;
+      deliveryChannel: "IN_APP";
+      requiresAudienceConfirm?: boolean;
+      audienceOptions?: Array<{
+        label: string;
+        roles?: string[];
+        groups?: string[];
+        recipientOf?: "SELF" | "PARENTS" | null;
+      }>;
+    };
+    label: string;
+  } | null;
 };
 
 @Entity("admin_ai_messages")

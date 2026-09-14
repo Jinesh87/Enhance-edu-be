@@ -92,3 +92,4 @@ export * from "./LearningRevisionQuestion.js";
 export * from "./LearningQuizAttempt.js";
 export * from "./LearningQuizAnswer.js";
 export * from "./LearningFlashcardProgress.js";
+export * from "./Announcement.js";

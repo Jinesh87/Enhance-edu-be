@@ -155,7 +155,7 @@ export class AudienceResolverService {
   private async resolveByRolesAndAcademic(
     audience: CommunicationAudience,
   ): Promise<UserRow[]> {
-    const roles = (audience.roles ?? [])
+    let roles = (audience.roles ?? [])
       .map((r) => r.trim().toUpperCase())
       .filter(Boolean);
     if (!roles.length && audience.nameQuery?.trim()) {
@@ -169,37 +169,49 @@ export class AudienceResolverService {
       );
     }
 
-    if (roles.includes(UserRole.STUDENT)) {
-      if (audience.className?.trim() || audience.subject?.trim()) {
-        return this.classRosterStudents(audience);
-      }
-      if (
-        audience.nameQuery?.trim() &&
-        !audience.yearLevel?.trim() &&
-        !audience.term?.trim()
-      ) {
-        return this.studentsByName(audience);
-      }
-      return this.enrolledStudents(audience);
-    }
-    if (roles.includes(UserRole.STAFF)) {
-      return this.teachers(audience);
-    }
-    if (roles.includes(UserRole.OFFICE_STAFF)) {
-      return this.officeStaff(audience);
-    }
-    if (roles.includes(UserRole.GUARDIAN)) {
-      return this.guardians(audience);
-    }
-    if (roles.includes(UserRole.SUPER_ADMIN)) {
-      return this.usersByRole(audience, UserRole.SUPER_ADMIN);
+    if (roles.includes("ALL")) {
+      roles = [
+        UserRole.STUDENT,
+        UserRole.STAFF,
+        UserRole.OFFICE_STAFF,
+        UserRole.GUARDIAN,
+        UserRole.SUPER_ADMIN,
+      ];
     }
 
-    throw new AppError(
-      400,
-      "That audience role is not available.",
-      "ADMIN_AI_COMM_AUDIENCE_INVALID",
-    );
+    const rows: UserRow[] = [];
+    const seenRoles = new Set<string>();
+
+    for (const role of roles) {
+      if (seenRoles.has(role)) continue;
+      seenRoles.add(role);
+
+      if (role === UserRole.STUDENT) {
+        if (audience.className?.trim() || audience.subject?.trim()) {
+          rows.push(...(await this.classRosterStudents(audience)));
+        } else if (
+          audience.nameQuery?.trim() &&
+          !audience.yearLevel?.trim() &&
+          !audience.term?.trim()
+        ) {
+          rows.push(...(await this.studentsByName(audience)));
+        } else {
+          rows.push(...(await this.enrolledStudents(audience)));
+        }
+      } else if (role === UserRole.STAFF) {
+        rows.push(...(await this.teachers(audience)));
+      } else if (role === UserRole.OFFICE_STAFF) {
+        rows.push(...(await this.officeStaff(audience)));
+      } else if (role === UserRole.GUARDIAN) {
+        rows.push(...(await this.guardians(audience)));
+      } else if (role === UserRole.SUPER_ADMIN) {
+        rows.push(...(await this.usersByRole(audience, UserRole.SUPER_ADMIN)));
+      } else {
+        rows.push(...(await this.usersByRole(audience, role as UserRole)));
+      }
+    }
+
+    return rows;
   }
 
   private async resolveUsersByIds(
