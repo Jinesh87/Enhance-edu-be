@@ -1,5 +1,6 @@
 import { createChatCompletion } from "../../../../common/ai/openai-client.js";
 import { logger } from "../../../../config/logger.js";
+import { fallbackFromSnapshot } from "./briefing-fallback.js";
 import type { BriefingSnapshot } from "./briefing-snapshot.service.js";
 
 export type BriefingGeneratedContent = {
@@ -7,26 +8,6 @@ export type BriefingGeneratedContent = {
   summary: string;
   usedAi: boolean;
 };
-
-function fallbackFromSnapshot(snapshot: BriefingSnapshot): BriefingGeneratedContent {
-  const lines: string[] = [];
-  for (const section of snapshot.sections) {
-    const payload = snapshot.data[section];
-    if (!payload || typeof payload !== "object") continue;
-    const json = JSON.stringify(payload);
-    lines.push(`• ${section}: ${json.slice(0, 220)}`);
-  }
-  return {
-    title: "Morning briefing",
-    summary:
-      lines.length > 0
-        ? ["Here is your scheduled briefing (fallback summary):", ...lines].join(
-            "\n",
-          )
-        : "No briefing metrics were available for the selected sections.",
-    usedAi: false,
-  };
-}
 
 /**
  * Single OpenAI summarization call — no tool loop.
@@ -48,6 +29,8 @@ export class AdminAiBriefingGenerator {
                 "Use ONLY the JSON metrics provided. Do not invent numbers.",
                 "Do not suggest sending emails, changing data, or running tools.",
                 "Return plain text with a first line title (max 80 chars), then a blank line, then 4-8 short bullet points.",
+                "Each bullet must be a human-readable sentence like 'Attendance: 7 records this week (5 absent, 2 pending). Present or late rate is 0%.'",
+                "Never paste raw JSON, field names, responseHint, or notes.",
                 "Never include emails, phone numbers, passwords, tokens, or raw IDs.",
               ].join(" "),
             },
@@ -68,6 +51,7 @@ export class AdminAiBriefingGenerator {
 
       const text = completion.choices[0]?.message?.content?.trim();
       if (!text) return fallback;
+      if (looksLikeRawJsonDump(text)) return fallback;
 
       const [first, ...rest] = text.split("\n");
       const title = (first || "Morning briefing").replace(/^#+\s*/, "").slice(0, 120);
@@ -78,6 +62,10 @@ export class AdminAiBriefingGenerator {
       return fallback;
     }
   }
+}
+
+function looksLikeRawJsonDump(text: string): boolean {
+  return /[{[]/.test(text) && /"(startDate|openTaskCount|responseHint|ops_snapshot|byStatus)"/.test(text);
 }
 
 export const adminAiBriefingGenerator = new AdminAiBriefingGenerator();

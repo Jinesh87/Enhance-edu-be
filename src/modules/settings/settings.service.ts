@@ -203,12 +203,13 @@ export class SettingsService {
     setting.adminAiConfirmedActionsEnabled = Boolean(
       input.confirmedActionsEnabled,
     );
-    setting.adminAiBriefingConfig = normalizeBriefingConfig({
-      ...before.briefingConfig,
-      ...(input.briefingConfig ?? {}),
-      // Always refresh schedule after settings edits.
-      nextRunAt: null,
-    });
+    if (input.briefingConfig != null) {
+      setting.adminAiBriefingConfig = normalizeBriefingConfig({
+        ...before.briefingConfig,
+        ...input.briefingConfig,
+        nextRunAt: null,
+      });
+    }
 
     await this.settingRepo.save(setting);
     return this.mapAdminAiCapabilitySettings(setting);
