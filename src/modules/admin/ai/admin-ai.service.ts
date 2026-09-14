@@ -812,12 +812,7 @@ export class AdminAiService {
       );
     }
   }
-
-  /**
-   * Same orchestration as sendMessage, but streams the final answer over SSE.
-   * Tool rounds stream internally; content deltas are only emitted for the
-   * final assistant text (when there are no tool_calls).
-   */
+  
   async sendMessageStream(
     userId: string,
     input: { content: string; threadId?: string | null },

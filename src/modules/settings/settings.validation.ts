@@ -41,11 +41,33 @@ export const updateAdminAiCapabilitySettingSchema = Joi.object({
       .pattern(/^\d{2}:\d{2}$/)
       .allow(null)
       .optional(),
+    timeZone: Joi.string().trim().max(64).allow(null, "").optional(),
     daysOfWeek: Joi.array()
       .items(Joi.number().integer().min(0).max(6))
       .max(7)
       .optional(),
-    sections: Joi.array().items(Joi.string().trim().max(40)).max(12).optional(),
+    sections: Joi.array()
+      .items(
+        Joi.string().valid(
+          "attendance",
+          "tasks",
+          "enquiries",
+          "homework",
+          "operations",
+        ),
+      )
+      .max(12)
+      .optional(),
+    startDate: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .allow(null)
+      .optional(),
+    endDate: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .allow(null)
+      .optional(),
+    nextRunAt: Joi.string().isoDate().allow(null).optional(),
+    lastRunAt: Joi.string().isoDate().allow(null).optional(),
   })
     .allow(null)
     .optional(),

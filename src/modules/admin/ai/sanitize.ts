@@ -17,7 +17,6 @@ const SENSITIVE_PATTERNS: Array<{ re: RegExp; replace: string }> = [
   },
 ];
 
-/** Exact keys (alphanumeric-normalised) never forwarded to the LLM. */
 const SENSITIVE_KEY_EXACT = new Set([
   "email",
   "mobile",
