@@ -36,7 +36,10 @@ export class CoachMessage {
 
   @Column({ type: "jsonb", nullable: true })
   sources!: Array<{
-    syllabusId: string;
+    kind?: "syllabus" | "session_note";
+    syllabusId?: string | null;
+    sessionId?: string | null;
+    classId?: string | null;
     sourceType: string;
     sourceLabel: string | null;
     excerpt: string;

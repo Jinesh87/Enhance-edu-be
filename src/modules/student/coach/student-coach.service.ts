@@ -9,6 +9,7 @@ import {
 import { AppError } from "../../../common/errors/AppError.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
+  ClassStudent,
   CoachMessage,
   CoachThread,
   Enrollment,
@@ -21,11 +22,15 @@ import {
 } from "../../coach/embedding-store.js";
 
 const HISTORY_LIMIT = 12;
-const RETRIEVAL_LIMIT = 8;
+const SYLLABUS_RETRIEVAL_LIMIT = 5;
+const SESSION_NOTE_RETRIEVAL_LIMIT = 5;
 
 type RetrievedChunk = {
   id: string;
-  syllabusId: string;
+  kind: "syllabus" | "session_note";
+  syllabusId?: string;
+  sessionId?: string;
+  classId?: string;
   sourceType: string;
   sourceLabel: string | null;
   content: string;
@@ -53,6 +58,7 @@ function toThreadDto(thread: CoachThread) {
 export class StudentCoachService {
   private readonly students = AppDataSource.getRepository(Student);
   private readonly enrollments = AppDataSource.getRepository(Enrollment);
+  private readonly classStudents = AppDataSource.getRepository(ClassStudent);
   private readonly syllabi = AppDataSource.getRepository(Syllabus);
   private readonly threads = AppDataSource.getRepository(CoachThread);
   private readonly messages = AppDataSource.getRepository(CoachMessage);
@@ -132,18 +138,19 @@ export class StudentCoachService {
     return rows.map((row) => row.id);
   }
 
-  private async retrieveChunks(
-    question: string,
+  private async enrolledClassIds(studentUserId: string): Promise<string[]> {
+    const rows = await this.classStudents.find({
+      where: { studentId: studentUserId },
+      select: { classId: true },
+    });
+    return [...new Set(rows.map((row) => row.classId))];
+  }
+
+  private async retrieveSyllabusChunks(
+    embedding: number[],
     syllabusIds: string[],
-    userId?: string,
   ): Promise<RetrievedChunk[]> {
     if (syllabusIds.length === 0) return [];
-
-    const embedding = await embedText(question, {
-      feature: "coach_retrieval",
-      userId,
-      metadata: { syllabusCount: syllabusIds.length },
-    });
 
     if (await hasPgVector()) {
       try {
@@ -162,9 +169,22 @@ export class StudentCoachService {
           ORDER BY embedding <=> $2::vector
           LIMIT $3
           `,
-          [syllabusIds, vector, RETRIEVAL_LIMIT],
-        )) as RetrievedChunk[];
-        return rows;
+          [syllabusIds, vector, SYLLABUS_RETRIEVAL_LIMIT],
+        )) as Array<{
+          id: string;
+          syllabusId: string;
+          sourceType: string;
+          sourceLabel: string | null;
+          content: string;
+        }>;
+        return rows.map((row) => ({
+          id: row.id,
+          kind: "syllabus" as const,
+          syllabusId: row.syllabusId,
+          sourceType: row.sourceType,
+          sourceLabel: row.sourceLabel,
+          content: row.content,
+        }));
       } catch {
         /* fall through to jsonb ranking */
       }
@@ -185,7 +205,14 @@ export class StudentCoachService {
       LIMIT 800
       `,
       [syllabusIds],
-    )) as Array<RetrievedChunk & { embeddingJson: number[] | string }>;
+    )) as Array<{
+      id: string;
+      syllabusId: string;
+      sourceType: string;
+      sourceLabel: string | null;
+      content: string;
+      embeddingJson: number[] | string;
+    }>;
 
     return rows
       .map((row) => {
@@ -194,6 +221,7 @@ export class StudentCoachService {
           : (JSON.parse(String(row.embeddingJson)) as number[]);
         return {
           id: row.id,
+          kind: "syllabus" as const,
           syllabusId: row.syllabusId,
           sourceType: row.sourceType,
           sourceLabel: row.sourceLabel,
@@ -202,14 +230,127 @@ export class StudentCoachService {
         };
       })
       .sort((a, b) => b.score - a.score)
-      .slice(0, RETRIEVAL_LIMIT)
-      .map((row) => ({
-        id: row.id,
-        syllabusId: row.syllabusId,
-        sourceType: row.sourceType,
-        sourceLabel: row.sourceLabel,
-        content: row.content,
-      }));
+      .slice(0, SYLLABUS_RETRIEVAL_LIMIT)
+      .map(({ score: _score, ...row }) => row);
+  }
+
+  private async retrieveSessionNoteChunks(
+    embedding: number[],
+    classIds: string[],
+  ): Promise<RetrievedChunk[]> {
+    if (classIds.length === 0) return [];
+
+    if (await hasPgVector()) {
+      try {
+        const vector = embeddingToPgVector(embedding);
+        const rows = (await AppDataSource.query(
+          `
+          SELECT
+            id,
+            "sessionId",
+            "classId",
+            "sourceType",
+            "sourceLabel",
+            content
+          FROM session_resource_chunks
+          WHERE "classId" = ANY($1::uuid[])
+            AND embedding IS NOT NULL
+          ORDER BY embedding <=> $2::vector
+          LIMIT $3
+          `,
+          [classIds, vector, SESSION_NOTE_RETRIEVAL_LIMIT],
+        )) as Array<{
+          id: string;
+          sessionId: string;
+          classId: string;
+          sourceType: string;
+          sourceLabel: string | null;
+          content: string;
+        }>;
+        return rows.map((row) => ({
+          id: row.id,
+          kind: "session_note" as const,
+          sessionId: row.sessionId,
+          classId: row.classId,
+          sourceType: row.sourceType,
+          sourceLabel: row.sourceLabel,
+          content: row.content,
+        }));
+      } catch {
+        /* fall through to jsonb ranking */
+      }
+    }
+
+    const rows = (await AppDataSource.query(
+      `
+      SELECT
+        id,
+        "sessionId",
+        "classId",
+        "sourceType",
+        "sourceLabel",
+        content,
+        "embeddingJson"
+      FROM session_resource_chunks
+      WHERE "classId" = ANY($1::uuid[])
+        AND "embeddingJson" IS NOT NULL
+      LIMIT 800
+      `,
+      [classIds],
+    )) as Array<{
+      id: string;
+      sessionId: string;
+      classId: string;
+      sourceType: string;
+      sourceLabel: string | null;
+      content: string;
+      embeddingJson: number[] | string;
+    }>;
+
+    return rows
+      .map((row) => {
+        const values = Array.isArray(row.embeddingJson)
+          ? row.embeddingJson
+          : (JSON.parse(String(row.embeddingJson)) as number[]);
+        return {
+          id: row.id,
+          kind: "session_note" as const,
+          sessionId: row.sessionId,
+          classId: row.classId,
+          sourceType: row.sourceType,
+          sourceLabel: row.sourceLabel,
+          content: row.content,
+          score: cosineSimilarity(embedding, values),
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, SESSION_NOTE_RETRIEVAL_LIMIT)
+      .map(({ score: _score, ...row }) => row);
+  }
+
+  private async retrieveChunks(
+    question: string,
+    syllabusIds: string[],
+    classIds: string[],
+    userId?: string,
+  ): Promise<RetrievedChunk[]> {
+    if (syllabusIds.length === 0 && classIds.length === 0) return [];
+
+    const embedding = await embedText(question, {
+      feature: "coach_retrieval",
+      userId,
+      metadata: {
+        syllabusCount: syllabusIds.length,
+        classCount: classIds.length,
+      },
+    });
+
+    const [syllabusChunks, sessionChunks] = await Promise.all([
+      this.retrieveSyllabusChunks(embedding, syllabusIds),
+      this.retrieveSessionNoteChunks(embedding, classIds),
+    ]);
+
+    return [...syllabusChunks, ...sessionChunks];
   }
 
   async getConversation(userId: string, threadId?: string | null) {
@@ -326,14 +467,25 @@ export class StudentCoachService {
     });
     await this.messages.save(userMessage);
 
-    const syllabusIds = await this.enrolledSyllabusIds(student.id);
+    const [syllabusIds, classIds] = await Promise.all([
+      this.enrolledSyllabusIds(student.id),
+      student.userId
+        ? this.enrolledClassIds(student.userId)
+        : Promise.resolve([] as string[]),
+    ]);
+
     let chunks: RetrievedChunk[] = [];
     try {
-      chunks = await this.retrieveChunks(content, syllabusIds, userId);
+      chunks = await this.retrieveChunks(
+        content,
+        syllabusIds,
+        classIds,
+        userId,
+      );
     } catch (error) {
       throw new AppError(
         503,
-        "Coach retrieval is unavailable. Ensure pgvector is installed and syllabi are indexed.",
+        "Coach retrieval is unavailable. Ensure pgvector is installed and materials are indexed.",
         "COACH_RETRIEVAL_UNAVAILABLE",
         error,
       );
@@ -349,22 +501,26 @@ export class StudentCoachService {
     const contextBlock =
       chunks.length > 0
         ? chunks
-            .map(
-              (chunk, index) =>
-                `[${index + 1}] (${chunk.sourceType}${
-                  chunk.sourceLabel ? `: ${chunk.sourceLabel}` : ""
-                })\n${chunk.content}`,
-            )
+            .map((chunk, index) => {
+              const origin =
+                chunk.kind === "session_note"
+                  ? "class study notes"
+                  : "syllabus";
+              return `[${index + 1}] (${origin} · ${chunk.sourceType}${
+                chunk.sourceLabel ? `: ${chunk.sourceLabel}` : ""
+              })\n${chunk.content}`;
+            })
             .join("\n\n")
-        : "No matching syllabus excerpts were found for this student's enrolled subjects.";
+        : "No matching syllabus or class study-note excerpts were found for this student.";
 
     const systemPrompt = [
       "You are an academic coach for a school student.",
-      "Answer using ONLY the provided syllabus context when possible.",
-      "If the context does not contain enough information, say so clearly and suggest what part of the syllabus to review.",
+      "Answer using ONLY the provided syllabus and class study-note context when possible.",
+      "Prefer class study notes for session-specific material when they are relevant; use the syllabus for broader curriculum context.",
+      "If the context does not contain enough information, say so clearly and suggest what part of the syllabus or class notes to review.",
       "Be concise, encouraging, and age-appropriate. Do not invent curriculum details.",
       "",
-      "Syllabus context:",
+      "Learning context:",
       contextBlock,
     ].join("\n");
 
@@ -400,7 +556,10 @@ export class StudentCoachService {
       "I could not generate a reply right now. Please try again.";
 
     const sources = chunks.map((chunk) => ({
-      syllabusId: chunk.syllabusId,
+      kind: chunk.kind,
+      syllabusId: chunk.syllabusId ?? null,
+      sessionId: chunk.sessionId ?? null,
+      classId: chunk.classId ?? null,
       sourceType: chunk.sourceType,
       sourceLabel: chunk.sourceLabel,
       excerpt: chunk.content.slice(0, 240),

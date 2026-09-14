@@ -15,6 +15,7 @@ import {
 } from "../../../entities/index.js";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
+import { sessionResourceIngestService } from "../../coach/session-resource-ingest.service.js";
 
 export type UploadedSessionResource = {
   buffer?: Buffer;
@@ -212,6 +213,7 @@ export class SessionLessonService {
     }
 
     const saved = await this.lessons.save(lesson);
+    sessionResourceIngestService.scheduleIndexLesson(sessionId);
     return { lesson: toLessonDto(saved) };
   }
 
@@ -269,6 +271,9 @@ export class SessionLessonService {
     }
 
     const saved = await this.resources.save(created);
+    for (const resource of saved) {
+      sessionResourceIngestService.scheduleIndexResource(resource.id);
+    }
     return { resources: saved.map(toResourceDto) };
   }
 
@@ -297,6 +302,7 @@ export class SessionLessonService {
       resource.description = input.description?.trim() || null;
     }
     const saved = await this.resources.save(resource);
+    sessionResourceIngestService.scheduleIndexResource(saved.id);
     return { resource: toResourceDto(saved) };
   }
 
@@ -313,6 +319,7 @@ export class SessionLessonService {
     if (!resource) {
       throw new AppError(404, "Resource not found", "RESOURCE_NOT_FOUND");
     }
+    await sessionResourceIngestService.deleteChunksForResource(resourceId);
     await deleteObject(resource.storageKey);
     await this.resources.remove(resource);
     return { ok: true };
