@@ -1,4 +1,4 @@
-import type { AdminAiActor } from "../authorization.js";
+import { assertAdminAiModule, type AdminAiActor } from "../authorization.js";
 import {
   disabledCapabilityMessage,
   isBulkRecipientAudience,
@@ -151,6 +151,8 @@ export async function createCommunicationDraft(
     threadId?: string;
   },
 ): Promise<ToolResult> {
+  assertAdminAiModule(actor, "messages");
+
   const suggested =
     args.ambiguous || (!args.roles && !args.groups && !args.audienceType)
       ? suggestAmbiguityOptions(args.userMessage)
@@ -213,6 +215,8 @@ export async function updateCommunicationDraft(
     refreshAudience?: boolean;
   },
 ): Promise<ToolResult> {
+  assertAdminAiModule(actor, "messages");
+
   if (!args.draftId?.trim()) {
     return {
       data: sanitizeToolPayload({
@@ -278,6 +282,7 @@ export async function previewAudience(
   actor: AdminAiActor,
   args: { draftId?: string },
 ): Promise<ToolResult> {
+  assertAdminAiModule(actor, "messages");
   if (!args.draftId?.trim()) {
     return {
       data: sanitizeToolPayload({
@@ -297,6 +302,7 @@ export async function getCommunicationDraft(
   actor: AdminAiActor,
   args: { draftId?: string },
 ): Promise<ToolResult> {
+  assertAdminAiModule(actor, "messages");
   if (!args.draftId?.trim()) {
     return {
       data: sanitizeToolPayload({

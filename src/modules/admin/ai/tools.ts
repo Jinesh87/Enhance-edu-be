@@ -13,6 +13,7 @@ import {
   normalizeToolArgs,
   type NormalizeToolArgsContext,
 } from "./query-normalize/index.js";
+import { canUseAdminAiTool } from "./tool-modules.js";
 import {
   getAcademicPerformanceSummary,
   getAttendanceSummary,
@@ -948,6 +949,15 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
     },
   ];
 
+export function filterAdminAiToolsForActor(
+  actor: AdminAiActor,
+): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  return ADMIN_AI_TOOL_DEFINITIONS.filter((tool) => {
+    if (tool.type !== "function") return false;
+    return canUseAdminAiTool(actor, tool.function.name);
+  });
+}
+
 const ALLOWED = new Set(
   ADMIN_AI_TOOL_DEFINITIONS.map((tool) =>
     tool.type === "function" ? tool.function.name : "",
@@ -996,6 +1006,14 @@ export async function executeAdminAiTool(
       400,
       "I could not find authorized data for that request.",
       "ADMIN_AI_TOOL_DENIED",
+    );
+  }
+
+  if (!canUseAdminAiTool(actor, name)) {
+    throw new AppError(
+      403,
+      "You do not have permission to access this information.",
+      "ADMIN_AI_MODULE_FORBIDDEN",
     );
   }
 
