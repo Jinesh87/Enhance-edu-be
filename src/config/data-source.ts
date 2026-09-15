@@ -7,6 +7,7 @@ import {
   Session,
   SessionLesson,
   SessionResource,
+  SessionResourceChunk,
   ClassStudent,
   Assessment,
   AssessmentStudent,
@@ -766,6 +767,44 @@ export async function ensureCoachSchema() {
       ON teacher_coach_messages ("threadId", "createdAt");
   `);
 
+  const [{ sessionsTable, sessionResourcesTable, classesTable }] =
+    await bootstrap.query(`
+      SELECT
+        to_regclass('public.sessions') IS NOT NULL AS "sessionsTable",
+        to_regclass('public.session_resources') IS NOT NULL AS "sessionResourcesTable",
+        to_regclass('public.classes') IS NOT NULL AS "classesTable"
+    `);
+
+  if (sessionsTable && sessionResourcesTable && classesTable) {
+    await bootstrap.query(`
+      CREATE TABLE IF NOT EXISTS session_resource_chunks (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "sessionId" uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        "classId" uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        "resourceId" uuid REFERENCES session_resources(id) ON DELETE CASCADE,
+        "sourceType" varchar(40) NOT NULL,
+        "sourceLabel" varchar(255),
+        "chunkIndex" integer NOT NULL,
+        "content" text NOT NULL,
+        "embeddingJson" jsonb,
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "updatedAt" timestamptz NOT NULL DEFAULT now()
+      );
+      ALTER TABLE session_resource_chunks
+        ADD COLUMN IF NOT EXISTS "embeddingJson" jsonb;
+      CREATE INDEX IF NOT EXISTS "IDX_session_resource_chunks_sessionId"
+        ON session_resource_chunks ("sessionId");
+      CREATE INDEX IF NOT EXISTS "IDX_session_resource_chunks_classId"
+        ON session_resource_chunks ("classId");
+      CREATE INDEX IF NOT EXISTS "IDX_session_resource_chunks_resourceId"
+        ON session_resource_chunks ("resourceId");
+      CREATE INDEX IF NOT EXISTS "IDX_session_resource_chunks_source"
+        ON session_resource_chunks ("sessionId", "sourceType", "chunkIndex");
+      CREATE INDEX IF NOT EXISTS "IDX_session_resource_chunks_class_chunk"
+        ON session_resource_chunks ("classId", "chunkIndex");
+    `);
+  }
+
   if (hasVector) {
     await bootstrap.query(`
       ALTER TABLE syllabus_chunks
@@ -782,6 +821,25 @@ export async function ensureCoachSchema() {
         { err: error },
         "Could not create HNSW index on syllabus_chunks.embedding",
       );
+    }
+
+    if (sessionsTable && sessionResourcesTable && classesTable) {
+      await bootstrap.query(`
+        ALTER TABLE session_resource_chunks
+          ADD COLUMN IF NOT EXISTS "embedding" vector(1536);
+      `);
+      try {
+        await bootstrap.query(`
+          CREATE INDEX IF NOT EXISTS "IDX_session_resource_chunks_embedding_hnsw"
+            ON session_resource_chunks
+            USING hnsw ("embedding" vector_cosine_ops);
+        `);
+      } catch (error) {
+        logger.warn(
+          { err: error },
+          "Could not create HNSW index on session_resource_chunks.embedding",
+        );
+      }
     }
 
     await bootstrap.query(`
@@ -1182,6 +1240,7 @@ export const AppDataSource = new DataSource({
     Session,
     SessionLesson,
     SessionResource,
+    SessionResourceChunk,
     ClassStudent,
     Assessment,
     AssessmentStudent,

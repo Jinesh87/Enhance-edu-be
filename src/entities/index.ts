@@ -57,6 +57,7 @@ export * from "./AssessmentSubmissionFile.js";
 export * from "./AssessmentResource.js";
 export * from "./SessionLesson.js";
 export * from "./SessionResource.js";
+export * from "./SessionResourceChunk.js";
 export * from "./Homework.js";
 export * from "./HomeworkAttachment.js";
 export * from "./HomeworkStudent.js";

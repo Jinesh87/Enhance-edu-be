@@ -8,6 +8,7 @@ import {
 } from "../../../../common/utils/timezone.js";
 import {
   assertAdminAiModule,
+  canUseAdminAiModule,
   type AdminAiActor,
 } from "../authorization.js";
 import { sanitizeToolPayload } from "../sanitize.js";
@@ -481,9 +482,13 @@ export async function getClassRoster(
       openPageAction("classes", "Open Classes", {
         filters: { yearLevel },
       }),
-      openPageAction("enrolments", "Open Enrolments", {
-        filters: { yearLevel },
-      }),
+      ...(canUseAdminAiModule(actor, "enrolments")
+        ? [
+            openPageAction("enrolments", "Open Enrolments", {
+              filters: { yearLevel },
+            }),
+          ]
+        : []),
     ],
   };
 }

@@ -40,11 +40,12 @@ import { communicationDraftService } from "./communications/communication-draft.
 import { bulkActionService } from "./bulk-actions/bulk-action.service.js";
 import { ensureCommunicationPreviewIfNeeded } from "./communications/ensure-communication-preview.js";
 import {
-  ADMIN_AI_TOOL_DEFINITIONS,
   executeAdminAiTool,
+  filterAdminAiToolsForActor,
   isFailedCommunicationDraftToolResult,
   resolveAssistantMode,
 } from "./tools.js";
+import { formatAllowedModulesForPrompt } from "./tool-modules.js";
 import { actionSource } from "./tool-helpers.js";
 
 const HISTORY_LIMIT = 12;
@@ -132,7 +133,10 @@ function toolErrorMessage(error: unknown): string {
     return error.message;
   }
   if (error.code === "ADMIN_AI_MODULE_FORBIDDEN") {
-    return "You do not have permission to access this information.";
+    return error.message || "You do not have permission to access this information.";
+  }
+  if (error.code === "ADMIN_AI_WRONG_ENTITY") {
+    return error.message;
   }
   if (error.code.startsWith("ADMIN_AI_MEMORY_")) {
     return error.message;
@@ -143,7 +147,7 @@ function toolErrorMessage(error: unknown): string {
   if (error.code.startsWith("ADMIN_AI_COMM_")) {
     return error.message;
   }
-  return "I could not find authorized data for that request.";
+  return error.message || "I could not find authorized data for that request.";
 }
 
 function filterSourcesByCapabilities(
@@ -195,7 +199,8 @@ export class AdminAiService {
     const memories = await adminAiMemoryService.listForPrompt(actor);
     const memoryBlock = formatAdminAiMemoryPromptBlock(memories);
     const capabilityBlock = formatDisabledCapabilitiesForPrompt(settings);
-    return [ADMIN_AI_SYSTEM_PROMPT, capabilityBlock, memoryBlock]
+    const accessBlock = formatAllowedModulesForPrompt(actor);
+    return [ADMIN_AI_SYSTEM_PROMPT, accessBlock, capabilityBlock, memoryBlock]
       .filter(Boolean)
       .join("\n\n");
   }
@@ -643,7 +648,7 @@ export class AdminAiService {
             temperature: 0.2,
             max_tokens: MAX_COMPLETION_TOKENS,
             messages,
-            tools: ADMIN_AI_TOOL_DEFINITIONS,
+            tools: filterAdminAiToolsForActor(actor),
             tool_choice: "auto",
           },
           {
@@ -947,7 +952,7 @@ export class AdminAiService {
             temperature: 0.2,
             max_tokens: MAX_COMPLETION_TOKENS,
             messages,
-            tools: ADMIN_AI_TOOL_DEFINITIONS,
+            tools: filterAdminAiToolsForActor(actor),
             tool_choice: "auto",
           },
           {

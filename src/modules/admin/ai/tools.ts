@@ -13,6 +13,11 @@ import {
   normalizeToolArgs,
   type NormalizeToolArgsContext,
 } from "./query-normalize/index.js";
+import { canUseAdminAiTool } from "./tool-modules.js";
+import {
+  assertNoCrossModuleSubstitutes,
+  canOpenAdminAiPage,
+} from "./module-intent.js";
 import {
   getAcademicPerformanceSummary,
   getAttendanceSummary,
@@ -1013,6 +1018,15 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
     },
   ];
 
+export function filterAdminAiToolsForActor(
+  actor: AdminAiActor,
+): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  return ADMIN_AI_TOOL_DEFINITIONS.filter((tool) => {
+    if (tool.type !== "function") return false;
+    return canUseAdminAiTool(actor, tool.function.name);
+  });
+}
+
 const ALLOWED = new Set(
   ADMIN_AI_TOOL_DEFINITIONS.map((tool) =>
     tool.type === "function" ? tool.function.name : "",
@@ -1064,6 +1078,16 @@ export async function executeAdminAiTool(
     );
   }
 
+  if (!canUseAdminAiTool(actor, name)) {
+    throw new AppError(
+      403,
+      "You do not have permission to access this information.",
+      "ADMIN_AI_MODULE_FORBIDDEN",
+    );
+  }
+
+  assertNoCrossModuleSubstitutes(actor, name, context.userMessage);
+
   const settings =
     capabilitySettings ?? (await loadAdminAiCapabilitySettings());
   const required = capabilityForTool(name);
@@ -1073,6 +1097,27 @@ export async function executeAdminAiTool(
 
   const args = normalizeToolArgs(name, parseArgs(rawArgs), context);
 
+  // Re-check with normalized args so unscoped teacher dumps cannot bypass
+  // People permissions via paraphrases like "current staff details".
+  assertNoCrossModuleSubstitutes(actor, name, context.userMessage, args);
+
+  const result = await runAdminAiTool(actor, name, args, context);
+  if (!result.actions?.length) return result;
+  return {
+    ...result,
+    actions: result.actions.filter((action) => {
+      if (action.type !== "OPEN_PAGE") return true;
+      return canOpenAdminAiPage(actor, action.resource);
+    }),
+  };
+}
+
+async function runAdminAiTool(
+  actor: AdminAiActor,
+  name: string,
+  args: Record<string, unknown>,
+  context: NormalizeToolArgsContext,
+): Promise<ToolResult> {
   switch (name) {
     case "getAttendanceSummary":
       return getAttendanceSummary(actor, {
