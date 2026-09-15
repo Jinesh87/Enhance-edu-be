@@ -4,7 +4,10 @@ import {
   getSignedUploadUrl,
   isBrowserDirectStorageEnabled,
 } from "../../common/storage/object-storage.js";
-import { assertPresignUploadMeta } from "../../common/validation/validate-upload.js";
+import {
+  assertPresignChatImageMeta,
+  assertPresignUploadMeta,
+} from "../../common/validation/validate-upload.js";
 import { AppError } from "../../common/errors/AppError.js";
 
 const ALLOWED_PURPOSES = new Set([
@@ -14,6 +17,7 @@ const ALLOWED_PURPOSES = new Set([
   "assessment-resource",
   "assessment-submission",
   "syllabus-document",
+  "chat-image",
 ]);
 
 class StorageController {
@@ -52,11 +56,18 @@ class StorageController {
         throw new AppError(400, "Invalid upload purpose", "INVALID_PURPOSE");
       }
 
-      const meta = assertPresignUploadMeta({
-        originalName: fileName,
-        mimeType: contentType,
-        size: byteSize,
-      });
+      const meta =
+        purpose === "chat-image"
+          ? assertPresignChatImageMeta({
+              originalName: fileName,
+              mimeType: contentType,
+              size: byteSize,
+            })
+          : assertPresignUploadMeta({
+              originalName: fileName,
+              mimeType: contentType,
+              size: byteSize,
+            });
 
       const storageKey = buildDirectUploadKey({
         purpose,

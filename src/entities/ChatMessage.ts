@@ -38,6 +38,18 @@ export class ChatMessage {
   @Column({ type: "text" })
   body!: string;
 
+  @Column({ type: "varchar", length: 512, nullable: true })
+  storageKey!: string | null;
+
+  @Column({ type: "varchar", length: 255, nullable: true })
+  originalName!: string | null;
+
+  @Column({ type: "varchar", length: 120, nullable: true })
+  mimeType!: string | null;
+
+  @Column({ type: "int", nullable: true })
+  byteSize!: number | null;
+
   @Column({ type: "timestamptz", nullable: true })
   deliveredAt!: Date | null;
 

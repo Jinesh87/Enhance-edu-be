@@ -15,6 +15,12 @@ import {
   type ChatPeer,
 } from "./chat-auth.js";
 import { emitToUser, isUserOnline } from "./chat-socket.js";
+import {
+  buildChatImageKey,
+  storeUploadedObject,
+  type IncomingStoredFile,
+} from "../../../common/storage/object-storage.js";
+import { assertValidChatImageBuffer } from "../../../common/validation/validate-upload.js";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_BODY_LENGTH = 4000;
@@ -24,6 +30,12 @@ export type ChatMessageDto = {
   conversationId: string;
   senderUserId: string;
   body: string;
+  hasImage: boolean;
+  image: {
+    originalName: string;
+    mimeType: string;
+    byteSize: number;
+  } | null;
   deliveredAt: string | null;
   readAt: string | null;
   createdAt: string;
@@ -36,12 +48,30 @@ function messageStatus(message: ChatMessage): ChatMessageDto["status"] {
   return "sent";
 }
 
+function messagePreview(message: ChatMessage | null | undefined): string | null {
+  if (!message) return null;
+  const body = message.body?.trim() ?? "";
+  if (body) return body.slice(0, 160);
+  if (message.storageKey) return "Photo";
+  return null;
+}
+
 function toMessageDto(message: ChatMessage): ChatMessageDto {
+  const hasImage = Boolean(message.storageKey);
   return {
     id: message.id,
     conversationId: message.conversationId,
     senderUserId: message.senderUserId,
     body: message.body,
+    hasImage,
+    image:
+      hasImage && message.originalName && message.mimeType
+        ? {
+            originalName: message.originalName,
+            mimeType: message.mimeType,
+            byteSize: message.byteSize ?? 0,
+          }
+        : null,
     deliveredAt: message.deliveredAt?.toISOString() ?? null,
     readAt: message.readAt?.toISOString() ?? null,
     createdAt: message.createdAt.toISOString(),
@@ -134,7 +164,7 @@ export class ChatService {
       peerName,
       peerOnline: isUserOnline(peerId),
       lastMessageAt: conversation.lastMessageAt?.toISOString() ?? null,
-      lastMessagePreview: lastMessage?.body?.slice(0, 160) ?? null,
+      lastMessagePreview: messagePreview(lastMessage),
       lastMessageStatus: lastMessage
         ? messageStatus(lastMessage)
         : null,
@@ -159,8 +189,8 @@ export class ChatService {
     const conversations = await this.conversations.find({
       where:
         role === UserRole.STUDENT
-          ? { studentUserId: userId }
-          : { teacherUserId: userId },
+          ? { studentUserId: userId, lastMessageAt: Not(IsNull()) }
+          : { teacherUserId: userId, lastMessageAt: Not(IsNull()) },
       order: { lastMessageAt: "DESC", updatedAt: "DESC" },
       take: 100,
     });
@@ -417,6 +447,7 @@ export class ChatService {
     role: UserRole,
     conversationId: string,
     bodyRaw: string,
+    imageUpload?: IncomingStoredFile | null,
   ) {
     if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
       throw new AppError(
@@ -427,7 +458,7 @@ export class ChatService {
     }
 
     const body = bodyRaw.trim();
-    if (!body) {
+    if (!body && !imageUpload) {
       throw new AppError(400, "Message is required", "VALIDATION_ERROR");
     }
     if (body.length > MAX_BODY_LENGTH) {
@@ -442,15 +473,59 @@ export class ChatService {
     const peerId = this.peerUserId(conversation, userId);
     await assertCanChat(userId, role, peerId);
 
+    if (imageUpload?.buffer) {
+      await assertValidChatImageBuffer({
+        buffer: imageUpload.buffer,
+        originalName: imageUpload.originalName,
+        mimeType: imageUpload.mimeType,
+        size: imageUpload.size,
+      });
+    } else if (imageUpload) {
+      const mime = imageUpload.mimeType.toLowerCase();
+      if (
+        !mime.startsWith("image/") ||
+        mime === "image/svg+xml"
+      ) {
+        throw new AppError(400, "Only image files are allowed", "INVALID_UPLOAD");
+      }
+      if (!imageUpload.directStorageKey) {
+        throw new AppError(400, "Image data is required", "INVALID_UPLOAD");
+      }
+    }
+
     const peerOnline = isUserOnline(peerId);
     const message = this.messages.create({
       conversationId: conversation.id,
       senderUserId: userId,
       body,
+      storageKey: null,
+      originalName: null,
+      mimeType: null,
+      byteSize: null,
       deliveredAt: peerOnline ? new Date() : null,
       readAt: null,
     });
     await this.messages.save(message);
+
+    if (imageUpload) {
+      const storageKey = buildChatImageKey({
+        conversationId: conversation.id,
+        messageId: message.id,
+        fileName: imageUpload.originalName,
+      });
+      const stored = await storeUploadedObject({
+        finalKey: storageKey,
+        contentType: imageUpload.mimeType,
+        buffer: imageUpload.buffer,
+        directStorageKey: imageUpload.directStorageKey,
+        byteSize: imageUpload.size,
+      });
+      message.storageKey = stored.key;
+      message.originalName = imageUpload.originalName;
+      message.mimeType = imageUpload.mimeType;
+      message.byteSize = stored.byteSize || imageUpload.size;
+      await this.messages.save(message);
+    }
 
     conversation.lastMessageAt = message.createdAt;
     conversation.updatedAt = new Date();
@@ -503,6 +578,35 @@ export class ChatService {
     }
 
     return { message: dto, conversation: senderConversation };
+  }
+
+  async getMessageMedia(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+    messageId: string,
+  ) {
+    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
+      throw new AppError(
+        403,
+        "Chat is not available for this role",
+        "CHAT_FORBIDDEN",
+      );
+    }
+
+    await this.requireParticipant(conversationId, userId);
+    const message = await this.messages.findOne({
+      where: { id: messageId, conversationId },
+    });
+    if (!message?.storageKey || !message.mimeType || !message.originalName) {
+      throw new AppError(404, "Image not found", "NOT_FOUND");
+    }
+
+    return {
+      storageKey: message.storageKey,
+      mimeType: message.mimeType,
+      originalName: message.originalName,
+    };
   }
 
   async markRead(userId: string, role: UserRole, conversationId: string) {

@@ -350,3 +350,87 @@ export function assertPresignUploadMeta(input: {
   }
   return { mimeType: mime };
 }
+
+const CHAT_IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/gif",
+]);
+
+const MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024;
+const MIN_CHAT_IMAGE_BYTES = 64;
+const CHAT_IMAGE_UNSUPPORTED =
+  "Unsupported image type. Please upload JPG, PNG, WEBP, HEIC, or GIF.";
+
+export async function validateChatImageBuffer(
+  input: ValidateUploadInput,
+): Promise<ValidateUploadResult> {
+  const filenameError = validateFilename(input.originalName);
+  if (filenameError) return filenameError;
+
+  if (isBlockedMime(input.mimeType)) {
+    return invalid(CHAT_IMAGE_UNSUPPORTED);
+  }
+
+  const detected = await fileTypeFromBuffer(input.buffer);
+  const mimeType = (detected?.mime || input.mimeType || "").toLowerCase();
+  if (!CHAT_IMAGE_MIME_TYPES.has(mimeType)) {
+    return invalid(CHAT_IMAGE_UNSUPPORTED);
+  }
+
+  if (input.size < MIN_CHAT_IMAGE_BYTES || input.size > MAX_CHAT_IMAGE_BYTES) {
+    return invalid("Image must be between 64 bytes and 10MB.");
+  }
+
+  try {
+    const metadata = await sharp(input.buffer, { failOn: "error" })
+      .rotate()
+      .metadata();
+    const width = metadata.width ?? 0;
+    const height = metadata.height ?? 0;
+    if (width < 16 || height < 16 || width > 8000 || height > 8000) {
+      return invalid("Image dimensions are not supported.");
+    }
+  } catch {
+    return invalid("This image appears to be corrupted. Please try again.");
+  }
+
+  return { valid: true, mimeType };
+}
+
+export async function assertValidChatImageBuffer(input: ValidateUploadInput) {
+  const result = await validateChatImageBuffer(input);
+  if (!result.valid) {
+    throw new AppError(400, result.error, "INVALID_UPLOAD");
+  }
+  return result.mimeType;
+}
+
+export function assertPresignChatImageMeta(input: {
+  originalName: string;
+  mimeType: string;
+  size?: number;
+}): { mimeType: string } {
+  const nameCheck = validateFilename(input.originalName);
+  if (nameCheck && !nameCheck.valid) {
+    throw new AppError(400, nameCheck.error, "INVALID_UPLOAD");
+  }
+  const mime = (input.mimeType || "").toLowerCase().trim();
+  if (!CHAT_IMAGE_MIME_TYPES.has(mime)) {
+    throw new AppError(400, CHAT_IMAGE_UNSUPPORTED, "INVALID_UPLOAD");
+  }
+  if (
+    input.size != null &&
+    (input.size < MIN_CHAT_IMAGE_BYTES || input.size > MAX_CHAT_IMAGE_BYTES)
+  ) {
+    throw new AppError(
+      400,
+      "Image must be between 64 bytes and 10MB.",
+      "INVALID_UPLOAD",
+    );
+  }
+  return { mimeType: mime };
+}

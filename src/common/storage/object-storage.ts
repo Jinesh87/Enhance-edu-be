@@ -303,6 +303,15 @@ export function buildSyllabusDocumentKey(parts: {
   return `syllabus/${parts.syllabusId}/${parts.documentId}/${Date.now()}-${safe}`;
 }
 
+export function buildChatImageKey(parts: {
+  conversationId: string;
+  messageId: string;
+  fileName: string;
+}): string {
+  const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
+  return `chat/${parts.conversationId}/${parts.messageId}/${Date.now()}-${safe}`;
+}
+
 /** Temporary key for direct uploads before DB row id exists. */
 export function buildDirectUploadKey(parts: {
   purpose: string;
