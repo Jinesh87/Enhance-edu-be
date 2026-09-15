@@ -1,6 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
 import { UserRole } from "../../../common/constants/roles.js";
-import { resolveIncomingFiles } from "../../../common/storage/object-storage.js";
+import {
+  resolveIncomingFiles,
+  respondWithStoredFile,
+} from "../../../common/storage/object-storage.js";
 import { sessionLessonService } from "../../shared/sessions/session-lesson.service.js";
 
 class TeacherSessionLessonController {
@@ -39,6 +42,29 @@ class TeacherSessionLessonController {
         req.user!.role as UserRole,
       );
       res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getResourceStream = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const resource = await sessionLessonService.getResourceForTeacher(
+        String(req.params.sessionId),
+        String(req.params.resourceId),
+        req.user!.id,
+        req.user!.role as UserRole,
+      );
+      await respondWithStoredFile(res, {
+        storageKey: resource.storageKey,
+        mimeType: resource.mimeType,
+        originalName: resource.originalName,
+        inline: true,
+      });
     } catch (error) {
       next(error);
     }

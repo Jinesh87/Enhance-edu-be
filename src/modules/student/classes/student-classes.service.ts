@@ -894,7 +894,7 @@ export class StudentClassesService {
           description: resource.description,
           releasedAt: resource.createdAt.toISOString(),
           released: true,
-          downloadable: true,
+          downloadable: Boolean(resource.downloadable),
         })),
       });
     }

@@ -54,6 +54,9 @@ export class SessionResource {
   @Column({ type: "integer", default: 0 })
   sortOrder!: number;
 
+  @Column({ type: "boolean", default: false })
+  downloadable!: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 
