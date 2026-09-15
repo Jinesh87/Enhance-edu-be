@@ -8,13 +8,21 @@ export const conversationIdParamsSchema = Joi.object({
   conversationId: Joi.string().uuid().required(),
 });
 
+export const messageMediaParamsSchema = Joi.object({
+  conversationId: Joi.string().uuid().required(),
+  messageId: Joi.string().uuid().required(),
+});
+
 export const listMessagesQuerySchema = Joi.object({
   before: Joi.string().uuid().optional(),
   limit: Joi.number().integer().min(1).max(100).optional(),
 });
 
 export const sendChatMessageSchema = Joi.object({
-  body: Joi.string().trim().min(1).max(4000).required(),
+  body: Joi.string().trim().allow("").max(4000).optional().default(""),
+  directUploads: Joi.alternatives()
+    .try(Joi.string(), Joi.array().items(Joi.object().unknown(true)))
+    .optional(),
 });
 
 export const searchChatQuerySchema = Joi.object({

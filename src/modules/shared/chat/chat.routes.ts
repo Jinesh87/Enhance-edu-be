@@ -5,10 +5,15 @@ import {
   authorize,
 } from "../../../common/middleware/authenticate.js";
 import { validate } from "../../../common/middleware/validate.js";
+import {
+  uploadMiddleware,
+  validateUploadedChatImages,
+} from "../../../common/middleware/upload-validation.js";
 import { chatController } from "./chat.controller.js";
 import {
   conversationIdParamsSchema,
   listMessagesQuerySchema,
+  messageMediaParamsSchema,
   openConversationSchema,
   searchChatQuerySchema,
   sendChatMessageSchema,
@@ -39,8 +44,15 @@ router.get(
 router.post(
   "/conversations/:conversationId/messages",
   validate(conversationIdParamsSchema, "params"),
+  uploadMiddleware.array("files", 1),
+  validateUploadedChatImages,
   validate(sendChatMessageSchema),
   chatController.sendMessage,
+);
+router.get(
+  "/conversations/:conversationId/messages/:messageId/media",
+  validate(messageMediaParamsSchema, "params"),
+  chatController.getMessageMedia,
 );
 router.post(
   "/conversations/:conversationId/read",

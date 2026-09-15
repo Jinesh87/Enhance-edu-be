@@ -1270,12 +1270,24 @@ export async function ensureChatSchema() {
       "conversationId" uuid NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
       "senderUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       "body" text NOT NULL,
+      "storageKey" varchar(512),
+      "originalName" varchar(255),
+      "mimeType" varchar(120),
+      "byteSize" int,
       "deliveredAt" timestamptz,
       "readAt" timestamptz,
       "createdAt" timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "deliveredAt" timestamptz;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "storageKey" varchar(512);
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "originalName" varchar(255);
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "mimeType" varchar(120);
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "byteSize" int;
     CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversation_created"
       ON chat_messages ("conversationId", "createdAt");
     CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversationId"

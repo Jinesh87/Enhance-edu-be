@@ -1,7 +1,10 @@
 import type { NextFunction, Request, Response } from "express";
 import multer from "multer";
 import { AppError } from "../errors/AppError.js";
-import { validateUploadBuffer } from "../validation/validate-upload.js";
+import {
+  validateChatImageBuffer,
+  validateUploadBuffer,
+} from "../validation/validate-upload.js";
 
 export const uploadMiddleware = multer({
   storage: multer.memoryStorage(),
@@ -25,6 +28,38 @@ export async function validateUploadedFiles(
       if (!result.valid) {
         throw new AppError(400, result.error, "INVALID_UPLOAD");
       }
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function validateUploadedChatImages(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+) {
+  try {
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length > 1) {
+      throw new AppError(
+        400,
+        "Only one image can be sent at a time",
+        "INVALID_UPLOAD",
+      );
+    }
+    for (const file of files) {
+      const result = await validateChatImageBuffer({
+        buffer: file.buffer,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+      });
+      if (!result.valid) {
+        throw new AppError(400, result.error, "INVALID_UPLOAD");
+      }
+      file.mimetype = result.mimeType;
     }
     next();
   } catch (error) {
