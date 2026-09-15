@@ -120,15 +120,23 @@ export const SECTION_REGISTRY: SectionDefinition[] = [
   },
   {
     id: "enquiries",
-    tools: ["searchEnquiries", "getEnquiryPipelineSummary"],
+    tools: [
+      "searchEnquiries",
+      "getEnquiryPipelineSummary",
+      "getParentFollowUpStatus",
+    ],
     aliases: ["enquiry", "enquiries", "inquiry", "inquiries", "lead", "leads"],
     noise: ["enquiry", "enquiries", "inquiry", "inquiries", "lead", "leads"],
   },
   {
     id: "tasks",
-    tools: ["listOpenTasks", "getOpenTasksSummary"],
-    aliases: ["task", "tasks", "todo", "todos"],
-    noise: ["task", "tasks", "todo", "todos", "open"],
+    tools: [
+      "listOpenTasks",
+      "getOpenTasksSummary",
+      "getParentFollowUpStatus",
+    ],
+    aliases: ["task", "tasks", "todo", "todos", "follow up", "follow-up"],
+    noise: ["task", "tasks", "todo", "todos", "open", "follow", "up"],
   },
   {
     id: "assessments",
@@ -138,7 +146,11 @@ export const SECTION_REGISTRY: SectionDefinition[] = [
   },
   {
     id: "homework",
-    tools: ["listHomework", "getPendingHomeworkSummary"],
+    tools: [
+      "listHomework",
+      "getPendingHomeworkSummary",
+      "getStudentHomeworkStatus",
+    ],
     aliases: ["homework", "assignment", "assignments"],
     noise: ["homework", "assignment", "assignments"],
   },

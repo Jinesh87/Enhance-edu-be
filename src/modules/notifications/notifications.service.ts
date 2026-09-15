@@ -75,25 +75,53 @@ export class NotificationsService {
 
   async listForUser(
     userId: string,
-    options: { limit?: number; unreadOnly?: boolean } = {},
+    options: {
+      limit?: number;
+      unreadOnly?: boolean;
+      cursor?: string | null;
+      type?: string | null;
+    } = {},
   ) {
     const limit = Math.min(100, Math.max(1, Number(options.limit) || 30));
-    const where = options.unreadOnly
-      ? { userId, readAt: IsNull() }
-      : { userId };
+    const qb = this.repo
+      .createQueryBuilder("n")
+      .where("n.userId = :userId", { userId })
+      .orderBy("n.createdAt", "DESC")
+      .addOrderBy("n.id", "DESC")
+      .take(limit + 1);
+
+    if (options.unreadOnly) {
+      qb.andWhere("n.readAt IS NULL");
+    }
+
+    if (options.type && options.type.trim()) {
+      qb.andWhere("n.type = :type", { type: options.type.trim() });
+    }
+
+    if (options.cursor && options.cursor.trim()) {
+      const cursorDate = new Date(options.cursor.trim());
+      if (!isNaN(cursorDate.getTime())) {
+        qb.andWhere("n.createdAt < :cursorDate", { cursorDate });
+      }
+    }
 
     const [rows, unreadCount] = await Promise.all([
-      this.repo.find({
-        where,
-        order: { createdAt: "DESC" },
-        take: limit,
-      }),
+      qb.getMany(),
       this.countUnread(userId),
     ]);
 
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor =
+      hasMore && items.length > 0
+        ? items[items.length - 1]!.createdAt.toISOString()
+        : null;
+
     return {
-      notifications: rows.map(toDto),
+      notifications: items.map(toDto),
       unreadCount,
+      nextCursor,
+      hasMore,
     };
   }
 

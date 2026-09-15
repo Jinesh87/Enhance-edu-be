@@ -17,6 +17,7 @@ import {
   confirmSendCommunicationSchema,
   listAdminAiBriefingsQuerySchema,
   listAdminAiThreadsQuerySchema,
+  listPeopleMentionsQuerySchema,
   previewBulkActionSchema,
   retryFailedBulkActionSchema,
   sendAdminAiMessageSchema,
@@ -30,6 +31,12 @@ const router = Router();
 router.use(
   authenticate,
   authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
+);
+
+router.get(
+  "/people-mentions",
+  validate(listPeopleMentionsQuerySchema, "query"),
+  adminAiController.searchPeopleMentions,
 );
 
 router.get(

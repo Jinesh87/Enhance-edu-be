@@ -101,20 +101,15 @@ export class AudienceResolverService {
 
     let rows: UserRow[] = [];
 
-    if (groups.length) {
+    if (audience.userIds?.length) {
+      rows = await this.resolveUsersByIds(audience);
+    } else if (groups.length) {
       rows = await this.resolveGroup(groups[0]!, audience);
       for (const group of groups.slice(1)) {
         rows = intersectByUserId(rows, await this.resolveGroup(group, audience));
       }
-    } else if (audience.userIds?.length) {
-      rows = await this.resolveUsersByIds(audience);
     } else {
       rows = await this.resolveByRolesAndAcademic(audience);
-    }
-
-    if (audience.userIds?.length && groups.length) {
-      const allowed = new Set(audience.userIds);
-      rows = rows.filter((row) => allowed.has(row.userId));
     }
 
     if ((audience.recipientOf ?? "SELF").toUpperCase() === "PARENTS") {

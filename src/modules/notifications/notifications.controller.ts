@@ -8,9 +8,13 @@ class NotificationsController {
       const unreadOnly =
         String(req.query.unreadOnly ?? "").toLowerCase() === "true";
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+      const type = typeof req.query.type === "string" ? req.query.type : undefined;
       const data = await notificationsService.listForUser(req.user!.id, {
         limit,
         unreadOnly,
+        cursor,
+        type,
       });
       res.status(200).json(data);
     } catch (error) {
