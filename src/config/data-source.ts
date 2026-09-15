@@ -76,6 +76,8 @@ import {
   LearningQuizAnswer,
   LearningFlashcardProgress,
   Announcement,
+  ChatConversation,
+  ChatMessage,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -1228,6 +1230,63 @@ export async function ensureLearningSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureChatSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+
+  const [{ usersTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.users') IS NOT NULL AS "usersTable"
+  `);
+  if (!usersTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS chat_conversations (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "studentUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "teacherUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "lastMessageAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      UNIQUE ("studentUserId", "teacherUserId")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_student_last"
+      ON chat_conversations ("studentUserId", "lastMessageAt");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_teacher_last"
+      ON chat_conversations ("teacherUserId", "lastMessageAt");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_studentUserId"
+      ON chat_conversations ("studentUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_teacherUserId"
+      ON chat_conversations ("teacherUserId");
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "conversationId" uuid NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+      "senderUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "body" text NOT NULL,
+      "deliveredAt" timestamptz,
+      "readAt" timestamptz,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "deliveredAt" timestamptz;
+    CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversation_created"
+      ON chat_messages ("conversationId", "createdAt");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversationId"
+      ON chat_messages ("conversationId");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_messages_senderUserId"
+      ON chat_messages ("senderUserId");
+  `);
+
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -1309,6 +1368,8 @@ export const AppDataSource = new DataSource({
     LearningQuizAnswer,
     LearningFlashcardProgress,
     Announcement,
+    ChatConversation,
+    ChatMessage,
   ],
   migrations: [],
   subscribers: [],

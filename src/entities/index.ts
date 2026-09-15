@@ -94,3 +94,5 @@ export * from "./LearningQuizAttempt.js";
 export * from "./LearningQuizAnswer.js";
 export * from "./LearningFlashcardProgress.js";
 export * from "./Announcement.js";
+export * from "./ChatConversation.js";
+export * from "./ChatMessage.js";

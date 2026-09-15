@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import http from "node:http";
 import { env } from "./config/env.js";
 import app from "./app.js";
 import {
@@ -16,6 +17,7 @@ import {
   ensureAdminAiSchema,
   ensureEnquiryConstraints,
   ensureLearningSchema,
+  ensureChatSchema,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
 import { connectRedis } from "./config/redis.js";
@@ -28,6 +30,8 @@ import { startSyllabusIngestWorker } from "./common/queues/syllabus-ingest-queue
 import { startSessionResourceIngestWorker } from "./common/queues/session-resource-ingest-queue.js";
 import { startBulkActionsWorker } from "./common/queues/bulk-actions-queue.js";
 import { startBriefingsWorker } from "./common/queues/briefings-queue.js";
+import { attachChatSocket } from "./modules/shared/chat/chat-socket.js";
+
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
 const ASSESSMENT_STATUS_SYNC_MS = 60_000;
@@ -47,6 +51,7 @@ async function bootstrap() {
   await ensureCoachSchema();
   await ensureAdminAiSchema();
   await ensureLearningSchema();
+  await ensureChatSchema();
   await seedEnquiryCatalogue();
   await ensureEnquiryConstraints();
 
@@ -58,7 +63,10 @@ async function bootstrap() {
   startBulkActionsWorker();
   startBriefingsWorker();
 
-  app.listen(port, "0.0.0.0", () => {
+  const server = http.createServer(app);
+  attachChatSocket(server);
+
+  server.listen(port, "0.0.0.0", () => {
     logger.info({ port }, "API listening");
   });
 
