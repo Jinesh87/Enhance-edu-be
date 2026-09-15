@@ -9,4 +9,6 @@ export const listNotificationsQuerySchema = Joi.object({
   unreadOnly: Joi.alternatives()
     .try(Joi.boolean(), Joi.string().valid("true", "false"))
     .optional(),
+  cursor: Joi.string().isoDate().optional(),
+  type: Joi.string().trim().max(60).optional(),
 });
