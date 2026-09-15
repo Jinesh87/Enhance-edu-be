@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { logger } from "../../../config/logger.js";
 import {
   resolveIncomingFiles,
   respondWithStoredFile,
@@ -322,10 +323,17 @@ class StudentClassesController {
         String(req.params.resourceId),
         req.user!.id,
       );
+      logger.info({
+        action: "STUDENT_VIEW_LESSON_RESOURCE",
+        studentId: req.user!.id,
+        sessionId: req.params.sessionId,
+        resourceId: req.params.resourceId,
+      });
       await respondWithStoredFile(res, {
         storageKey: resource.storageKey,
         mimeType: resource.mimeType,
         originalName: resource.originalName,
+        inline: true,
       });
     } catch (error) {
       next(error);

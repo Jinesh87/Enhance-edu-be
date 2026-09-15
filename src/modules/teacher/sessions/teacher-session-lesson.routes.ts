@@ -52,6 +52,13 @@ router.post(
   teacherSessionLessonController.uploadResources,
 );
 
+router.get(
+  "/tutor/sessions/:sessionId/resources/:resourceId/stream",
+  staffOnly,
+  validate(sessionLessonResourceParamsSchema, "params"),
+  teacherSessionLessonController.getResourceStream,
+);
+
 router.patch(
   "/tutor/sessions/:sessionId/resources/:resourceId",
   staffOnly,

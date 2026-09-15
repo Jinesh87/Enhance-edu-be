@@ -21,4 +21,5 @@ export const upsertSessionLessonSchema = Joi.object({
 export const updateSessionResourceSchema = Joi.object({
   title: Joi.string().trim().min(1).max(255).optional(),
   description: Joi.string().trim().max(5000).allow("", null).optional(),
+  downloadable: Joi.boolean().optional(),
 });

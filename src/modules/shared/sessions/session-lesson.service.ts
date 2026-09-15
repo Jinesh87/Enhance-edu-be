@@ -60,6 +60,7 @@ function toResourceDto(resource: SessionResource) {
     originalName: resource.originalName,
     mimeType: resource.mimeType,
     byteSize: resource.byteSize,
+    downloadable: Boolean(resource.downloadable),
     sortOrder: resource.sortOrder,
     createdAt: resource.createdAt.toISOString(),
   };
@@ -282,7 +283,11 @@ export class SessionLessonService {
     resourceId: string,
     userId: string,
     role: UserRole,
-    input: { title?: string; description?: string | null },
+    input: {
+      title?: string;
+      description?: string | null;
+      downloadable?: boolean;
+    },
   ) {
     await this.assertTeacherAccess(sessionId, userId, role);
     const resource = await this.resources.findOne({
@@ -300,6 +305,9 @@ export class SessionLessonService {
     }
     if (input.description !== undefined) {
       resource.description = input.description?.trim() || null;
+    }
+    if (input.downloadable !== undefined) {
+      resource.downloadable = Boolean(input.downloadable);
     }
     const saved = await this.resources.save(resource);
     sessionResourceIngestService.scheduleIndexResource(saved.id);
@@ -331,7 +339,6 @@ export class SessionLessonService {
       where: { sessionId },
       order: { sortOrder: "ASC", createdAt: "ASC" },
     });
-    const now = Date.now();
     return rows.map((resource) => ({
       id: resource.id,
       title: resource.title,
@@ -339,7 +346,7 @@ export class SessionLessonService {
       description: resource.description,
       releasedAt: resource.createdAt.toISOString(),
       released: true,
-      downloadable: true,
+      downloadable: Boolean(resource.downloadable),
     }));
   }
 
@@ -355,6 +362,26 @@ export class SessionLessonService {
     studentUserId: string,
   ) {
     await this.assertStudentEnrolled(sessionId, studentUserId);
+    const resource = await this.resources.findOne({
+      where: { id: resourceId, sessionId },
+    });
+    if (!resource) {
+      throw new AppError(404, "Resource not found", "RESOURCE_NOT_FOUND");
+    }
+    return {
+      storageKey: resource.storageKey,
+      originalName: resource.originalName,
+      mimeType: resource.mimeType,
+    };
+  }
+
+  async getResourceForTeacher(
+    sessionId: string,
+    resourceId: string,
+    userId: string,
+    role: UserRole,
+  ) {
+    await this.assertTeacherAccess(sessionId, userId, role);
     const resource = await this.resources.findOne({
       where: { id: resourceId, sessionId },
     });
