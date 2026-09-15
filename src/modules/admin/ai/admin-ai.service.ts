@@ -8,6 +8,7 @@ import {
 import { AppError } from "../../../common/errors/AppError.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import { env } from "../../../config/env.js";
+import { UserRole } from "../../../common/constants/roles.js";
 import {
   AdminAiMessage,
   type AdminAiMode,
@@ -20,6 +21,7 @@ import {
   resolveAdminAiActor,
   type AdminAiActor,
 } from "./authorization.js";
+import { adminAiRepository } from "./admin-ai.repository.js";
 import {
   assertBulkCommunicationIfNeeded,
   assertCapabilityEnabled,
@@ -192,17 +194,225 @@ export class AdminAiService {
     return thread;
   }
 
+  private async resolveValidatedMentions(
+    rawMentions?: Array<{
+      type: string;
+      userId: string;
+      role?: string;
+      label: string;
+    }>,
+  ) {
+    if (!rawMentions || !rawMentions.length) return [];
+    const userIds = rawMentions.map((m) => m.userId);
+    const users = await adminAiRepository.findActiveUsersByIds(userIds);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    const valid: Array<{
+      type: string;
+      userId: string;
+      role?: string;
+      label: string;
+      fullName: string;
+    }> = [];
+
+    for (const m of rawMentions) {
+      const user = userMap.get(m.userId);
+      if (!user) continue;
+      valid.push({
+        type: m.type,
+        userId: m.userId,
+        role: m.role || user.role,
+        label: m.label,
+        fullName: user.fullName,
+      });
+    }
+
+    return valid;
+  }
+
+  private async resolveAllMentions(
+    content: string,
+    rawMentions?: Array<{
+      type: string;
+      userId: string;
+      role?: string;
+      label: string;
+    }>,
+  ) {
+    const valid = await this.resolveValidatedMentions(rawMentions);
+    const resolvedUserIds = new Set(valid.map((m) => m.userId));
+    const resolvedLabels = new Set(valid.map((m) => m.label.toLowerCase()));
+
+    const atMatches = [
+      ...content.matchAll(/@([^\s@,;.!?]+(?:\s+[^\s@,;.!?]+)*)/g),
+    ];
+    if (!atMatches.length) return valid;
+
+    const stopWords = new Set([
+      "and",
+      "or",
+      "about",
+      "regarding",
+      "to",
+      "for",
+      "with",
+      "on",
+      "in",
+      "from",
+      "the",
+      "a",
+      "an",
+      "is",
+      "are",
+      "was",
+      "were",
+      "please",
+      "can",
+      "could",
+      "would",
+      "should",
+    ]);
+
+    for (const match of atMatches) {
+      const rawCandidate = match[1]?.trim();
+      if (!rawCandidate) continue;
+
+      const words = rawCandidate.split(/\s+/);
+      const candidatesToTry: string[] = [];
+
+      for (let len = Math.min(words.length, 5); len >= 1; len--) {
+        const slice = words.slice(0, len);
+        if (len > 1 && stopWords.has(slice[len - 1].toLowerCase())) {
+          continue;
+        }
+        candidatesToTry.push(slice.join(" "));
+      }
+
+      for (const query of candidatesToTry) {
+        if (!query || stopWords.has(query.toLowerCase())) continue;
+        if (resolvedLabels.has(query.toLowerCase())) break;
+
+        const results = await adminAiRepository.searchPeopleMentions({
+          query,
+          limit: 5,
+        });
+
+        const matched =
+          results.find(
+            (r) => r.displayName.toLowerCase() === query.toLowerCase(),
+          ) ||
+          (results.length === 1 && query.length >= 3
+            ? results[0]
+            : undefined);
+
+        if (matched && !resolvedUserIds.has(matched.id)) {
+          resolvedUserIds.add(matched.id);
+          resolvedLabels.add(matched.displayName.toLowerCase());
+          valid.push({
+            type: "person",
+            userId: matched.id,
+            role: matched.role,
+            label: matched.displayName,
+            fullName: matched.displayName,
+          });
+          break;
+        }
+      }
+    }
+
+    return valid;
+  }
+
+  private formatMentionContextPromptBlock(
+    mentions: Array<{
+      type: string;
+      userId: string;
+      role?: string;
+      label: string;
+      fullName: string;
+    }>,
+  ): string {
+    if (!mentions.length) return "";
+    const lines = mentions.map(
+      (m) =>
+        `- Mentioned Person: "${m.label}" (Full Name: ${m.fullName}, User ID: ${m.userId}, Role: ${m.role ?? "UNKNOWN"})`,
+    );
+    return `### EXPLICIT USER MENTIONS IN CURRENT QUERY\nThe user explicitly selected these specific people from the directory using @mentions:\n${lines.join("\n")}\n\nSTRICT REQUIREMENT:\n1. When calling tools, use these exact User IDs, names, and roles directly.\n2. When creating an announcement (createAnnouncementDraft) or email (createCommunicationDraft) targeting these mentioned people, pass userIds: [${mentions.map((m) => `"${m.userId}"`).join(", ")}] as the exact target audience. Do NOT restrict with single-role filters (like roles: ["STUDENT"]) or group filters that would exclude other mentioned recipients. The requested topic (e.g. absence, homework, reminder, event) belongs in the title/subject and message body.`;
+  }
+
+  private formatActionCommandPromptBlock(
+    actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message",
+  ): string {
+    if (!actionCommand) return "";
+    switch (actionCommand) {
+      case "email":
+        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /email\nThe user initiated this message with action "/email".\nSTRICT INSTRUCTION:\n1. Call createCommunicationDraft to generate an interactive Email Preview for the user.\n2. Do NOT send email directly. The UI will render the email draft card for review and send confirmation.`;
+      case "announcement":
+        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /announcement\nThe user initiated this message with action "/announcement".\nSTRICT INSTRUCTION:\n1. Call createAnnouncementDraft to generate an interactive Platform Notice Preview for the user.\n2. Delivery channel is IN_APP.\n3. Do NOT publish notice directly. The UI will render the announcement draft card for review and publish confirmation.`;
+      case "bulk-email":
+        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /bulk-email\nThe user initiated this message with action "/bulk-email".\nSTRICT INSTRUCTION:\n1. Target the requested group or audience and create an email draft preview (via createCommunicationDraft or bulk action tools).\n2. Do NOT send immediately; present the interactive draft card for review.`;
+      case "bulk-message":
+        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /bulk-message\nThe user initiated this message with action "/bulk-message".\nSTRICT INSTRUCTION:\n1. Target the requested audience and create an in-app notice/announcement preview (via createAnnouncementDraft).\n2. Present the interactive draft card for review and publish confirmation.`;
+    }
+  }
+
   private async buildSystemContent(
     actor: AdminAiActor,
     settings: AdminAiCapabilitySettings,
+    mentions?: Array<{
+      type: string;
+      userId: string;
+      role?: string;
+      label: string;
+      fullName: string;
+    }>,
+    actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message",
   ): Promise<string> {
     const memories = await adminAiMemoryService.listForPrompt(actor);
     const memoryBlock = formatAdminAiMemoryPromptBlock(memories);
     const capabilityBlock = formatDisabledCapabilitiesForPrompt(settings);
     const accessBlock = formatAllowedModulesForPrompt(actor);
-    return [ADMIN_AI_SYSTEM_PROMPT, accessBlock, capabilityBlock, memoryBlock]
+    const mentionBlock = mentions?.length
+      ? this.formatMentionContextPromptBlock(mentions)
+      : "";
+    const actionBlock = this.formatActionCommandPromptBlock(actionCommand);
+    return [
+      ADMIN_AI_SYSTEM_PROMPT,
+      accessBlock,
+      capabilityBlock,
+      memoryBlock,
+      mentionBlock,
+      actionBlock,
+    ]
       .filter(Boolean)
       .join("\n\n");
+  }
+
+  async searchPeopleMentions(
+    userId: string,
+    options: { q?: string; roles?: string | string[]; limit?: number },
+  ) {
+    await this.requireActor(userId);
+    let rolesList: UserRole[] | undefined;
+    if (options.roles) {
+      const rawRoles = Array.isArray(options.roles)
+        ? options.roles
+        : String(options.roles).split(",");
+      const validRoles = rawRoles
+        .map((r) => r.trim().toUpperCase())
+        .filter((r): r is UserRole =>
+          Object.values(UserRole).includes(r as UserRole),
+        );
+      if (validRoles.length > 0) {
+        rolesList = validRoles;
+      }
+    }
+    const results = await adminAiRepository.searchPeopleMentions({
+      query: options.q ?? null,
+      roles: rolesList ?? null,
+      limit: options.limit,
+    });
+    return { results };
   }
 
   async listMemories(userId: string) {
@@ -549,7 +759,17 @@ export class AdminAiService {
 
   async sendMessage(
     userId: string,
-    input: { content: string; threadId?: string | null },
+    input: {
+      content: string;
+      threadId?: string | null;
+      mentions?: Array<{
+        type: string;
+        userId: string;
+        role?: string;
+        label: string;
+      }>;
+      actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message";
+    },
   ) {
     const requestId = crypto.randomUUID();
     const actor = await this.requireActor(userId);
@@ -575,6 +795,8 @@ export class AdminAiService {
         requestId,
       );
     }
+
+    const validMentions = await this.resolveAllMentions(content, input.mentions);
 
     let thread: AdminAiThread;
     if (input.threadId) {
@@ -609,6 +831,9 @@ export class AdminAiService {
       conversationId: thread.id,
       eventType: "AI_REQUEST_CREATED",
       resultStatus: "started",
+      scopeMetadata: validMentions.length
+        ? { mentionedUserIds: validMentions.map((m) => m.userId) }
+        : undefined,
     });
 
     const history = await this.messages.find({
@@ -619,7 +844,15 @@ export class AdminAiService {
     history.reverse();
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: await this.buildSystemContent(actor, capabilitySettings) },
+      {
+        role: "system",
+        content: await this.buildSystemContent(
+          actor,
+          capabilitySettings,
+          validMentions,
+          input.actionCommand,
+        ),
+      },
       ...history
         .filter(
           (msg) =>
@@ -779,15 +1012,19 @@ export class AdminAiService {
                   ? Object.keys(rawArgs)
                   : [];
               const dataObj = result.data as Record<string, unknown> | null;
+              const studentCount = dataObj?.studentCount;
+              const recordCount = dataObj?.recordCount;
+              const students = dataObj?.students;
+              const followUps = dataObj?.followUps;
               const count =
-                typeof dataObj?.studentCount === "number"
-                  ? dataObj.studentCount
-                  : typeof dataObj?.recordCount === "number"
-                    ? dataObj.recordCount
-                    : Array.isArray(dataObj?.students)
-                      ? dataObj.students.length
-                      : Array.isArray(dataObj?.followUps)
-                        ? dataObj.followUps.length
+                typeof studentCount === "number"
+                  ? studentCount
+                  : typeof recordCount === "number"
+                    ? recordCount
+                    : Array.isArray(students)
+                      ? students.length
+                      : Array.isArray(followUps)
+                        ? followUps.length
                         : undefined;
               toolAuditSummaries.push({
                 name,
@@ -858,7 +1095,17 @@ export class AdminAiService {
   
   async sendMessageStream(
     userId: string,
-    input: { content: string; threadId?: string | null },
+    input: {
+      content: string;
+      threadId?: string | null;
+      mentions?: Array<{
+        type: string;
+        userId: string;
+        role?: string;
+        label: string;
+      }>;
+      actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message";
+    },
     emit: (event: string, data: unknown) => void,
     signal?: AbortSignal,
   ) {
@@ -900,6 +1147,8 @@ export class AdminAiService {
       return;
     }
 
+    const validMentions = await this.resolveAllMentions(content, input.mentions);
+
     let thread: AdminAiThread;
     if (input.threadId) {
       thread = await this.requireOwnedThread(actor.id, input.threadId);
@@ -933,6 +1182,9 @@ export class AdminAiService {
       conversationId: thread.id,
       eventType: "AI_REQUEST_CREATED",
       resultStatus: "started",
+      scopeMetadata: validMentions.length
+        ? { mentionedUserIds: validMentions.map((m) => m.userId) }
+        : undefined,
     });
 
     emit("meta", {
@@ -950,7 +1202,15 @@ export class AdminAiService {
     history.reverse();
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: await this.buildSystemContent(actor, capabilitySettings) },
+      {
+        role: "system",
+        content: await this.buildSystemContent(
+          actor,
+          capabilitySettings,
+          validMentions,
+          input.actionCommand,
+        ),
+      },
       ...history
         .filter(
           (msg) =>
@@ -1095,9 +1355,9 @@ export class AdminAiService {
           emit("clear", {});
         }
 
-        const names = toolCalls
-          .filter((call) => call.type === "function")
-          .map((call) => call.function.name);
+        const names = toolCalls.flatMap((call) =>
+          call.type === "function" ? [call.function.name] : [],
+        );
         emit("status", { phase: "tools", tools: names });
 
         messages.push({
@@ -1130,15 +1390,19 @@ export class AdminAiService {
                   ? Object.keys(rawArgs)
                   : [];
               const dataObj = result.data as Record<string, unknown> | null;
+              const studentCount = dataObj?.studentCount;
+              const recordCount = dataObj?.recordCount;
+              const students = dataObj?.students;
+              const followUps = dataObj?.followUps;
               const count =
-                typeof dataObj?.studentCount === "number"
-                  ? dataObj.studentCount
-                  : typeof dataObj?.recordCount === "number"
-                    ? dataObj.recordCount
-                    : Array.isArray(dataObj?.students)
-                      ? dataObj.students.length
-                      : Array.isArray(dataObj?.followUps)
-                        ? dataObj.followUps.length
+                typeof studentCount === "number"
+                  ? studentCount
+                  : typeof recordCount === "number"
+                    ? recordCount
+                    : Array.isArray(students)
+                      ? students.length
+                      : Array.isArray(followUps)
+                        ? followUps.length
                         : undefined;
               toolAuditSummaries.push({
                 name,

@@ -19,11 +19,14 @@ import { HomeworkStudent } from "../../../entities/HomeworkStudent.js";
 import { HomeworkSubmission } from "../../../entities/HomeworkSubmission.js";
 import { PendingEnrollment } from "../../../entities/PendingEnrollment.js";
 import { Session } from "../../../entities/Session.js";
+import { Student } from "../../../entities/Student.js";
 import { Subject } from "../../../entities/Subject.js";
 import { Syllabus } from "../../../entities/Syllabus.js";
 import { Task, TaskStatus } from "../../../entities/Task.js";
+import { TeacherSubject } from "../../../entities/TeacherSubject.js";
 import { Term } from "../../../entities/Term.js";
 import { User } from "../../../entities/User.js";
+import { GuardianStudent } from "../../../entities/GuardianStudent.js";
 
 const MAX_ROWS = 40;
 const LIST_MAX_ROWS = 60;
@@ -207,6 +210,11 @@ export class AdminAiRepository {
   private readonly assessmentSubmissions =
     AppDataSource.getRepository(AssessmentSubmission);
   private readonly holidays = AppDataSource.getRepository(Holiday);
+  private readonly students = AppDataSource.getRepository(Student);
+  private readonly guardianStudents =
+    AppDataSource.getRepository(GuardianStudent);
+  private readonly teacherSubjects =
+    AppDataSource.getRepository(TeacherSubject);
 
   async getAttendanceStatusCounts(
     start: Date,
@@ -1568,6 +1576,160 @@ export class AdminAiRepository {
       take: 100,
     });
   }
+
+  async findActiveUsersByIds(userIds: string[]): Promise<User[]> {
+    if (!userIds.length) return [];
+    return this.users.find({
+      where: {
+        id: In(userIds),
+      },
+    });
+  }
+
+  async searchPeopleMentions(filters: {
+    query?: string | null;
+    roles?: UserRole[] | null;
+    limit?: number;
+  }): Promise<PeopleMentionResultDto[]> {
+    const limit = Math.min(Math.max(filters.limit ?? 10, 1), 30);
+    const qb = this.users
+      .createQueryBuilder("user")
+      .where("user.status != :deactivatedStatus", {
+        deactivatedStatus: UserStatus.DEACTIVATED,
+      })
+      .orderBy("user.fullName", "ASC")
+      .take(limit);
+
+    if (filters.roles && filters.roles.length > 0) {
+      qb.andWhere("user.role IN (:...roles)", { roles: filters.roles });
+    }
+
+    if (filters.query?.trim()) {
+      const q = `%${filters.query.trim()}%`;
+      qb.andWhere(
+        `(user.fullName ILIKE :q OR user.preferredName ILIKE :q OR user.email ILIKE :q)`,
+        { q },
+      );
+    }
+
+    const matchedUsers = await qb.getMany();
+    if (!matchedUsers.length) return [];
+
+    const teacherUserIds = matchedUsers
+      .filter((u) => u.role === UserRole.STAFF)
+      .map((u) => u.id);
+    const guardianUserIds = matchedUsers
+      .filter((u) => u.role === UserRole.GUARDIAN)
+      .map((u) => u.id);
+    const studentUserIds = matchedUsers
+      .filter((u) => u.role === UserRole.STUDENT)
+      .map((u) => u.id);
+
+    const [teacherSubjects, guardianLinks, studentRecords] = await Promise.all([
+      teacherUserIds.length > 0
+        ? this.teacherSubjects.find({
+            where: { teacherId: In(teacherUserIds) },
+            relations: { subject: true },
+          })
+        : [],
+      guardianUserIds.length > 0
+        ? this.guardianStudents.find({
+            where: { guardianId: In(guardianUserIds) },
+            relations: { student: true },
+          })
+        : [],
+      studentUserIds.length > 0
+        ? this.students.find({
+            where: { userId: In(studentUserIds) },
+          })
+        : [],
+    ]);
+
+    const teacherSubMap = new Map<string, string[]>();
+    for (const ts of teacherSubjects) {
+      const name = ts.subject?.name?.trim();
+      if (name) {
+        const list = teacherSubMap.get(ts.teacherId) ?? [];
+        list.push(name);
+        teacherSubMap.set(ts.teacherId, list);
+      }
+    }
+
+    const guardianLinkMap = new Map<string, string[]>();
+    for (const link of guardianLinks) {
+      const name = link.student?.fullName?.trim();
+      if (name) {
+        const list = guardianLinkMap.get(link.guardianId) ?? [];
+        list.push(name);
+        guardianLinkMap.set(link.guardianId, list);
+      }
+    }
+
+    const studentMap = new Map<string, Student>();
+    for (const s of studentRecords) {
+      if (s.userId) studentMap.set(s.userId, s);
+    }
+
+    return matchedUsers.map((u) => {
+      let roleLabel = "Person";
+      let secondaryLabel: string | null = null;
+
+      switch (u.role) {
+        case UserRole.STUDENT: {
+          roleLabel = "Student";
+          const st = studentMap.get(u.id);
+          if (st?.yearLevel) {
+            secondaryLabel = `Year ${st.yearLevel}`;
+          }
+          break;
+        }
+        case UserRole.GUARDIAN: {
+          roleLabel = "Parent / Guardian";
+          const linkedStudents = guardianLinkMap.get(u.id);
+          if (linkedStudents && linkedStudents.length > 0) {
+            secondaryLabel = `Parent of ${linkedStudents.join(", ")}`;
+          }
+          break;
+        }
+        case UserRole.STAFF: {
+          roleLabel = "Teacher";
+          const subjects = teacherSubMap.get(u.id);
+          if (subjects && subjects.length > 0) {
+            secondaryLabel = subjects.join(", ");
+          }
+          break;
+        }
+        case UserRole.OFFICE_STAFF: {
+          roleLabel = "Office Staff";
+          secondaryLabel = "Administration";
+          break;
+        }
+        case UserRole.SUPER_ADMIN: {
+          roleLabel = "Application Owner";
+          secondaryLabel = "Super Admin";
+          break;
+        }
+      }
+
+      return {
+        id: u.id,
+        displayName: u.fullName,
+        role: u.role,
+        roleLabel,
+        secondaryLabel,
+        avatarUrl: null,
+      };
+    });
+  }
 }
+
+export type PeopleMentionResultDto = {
+  id: string;
+  displayName: string;
+  role: UserRole;
+  roleLabel: string;
+  secondaryLabel: string | null;
+  avatarUrl: string | null;
+};
 
 export const adminAiRepository = new AdminAiRepository();
