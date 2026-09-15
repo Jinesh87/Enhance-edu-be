@@ -308,11 +308,33 @@ class AdminAiController {
     }
   };
 
+  searchPeopleMentions = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : undefined;
+      const roles = req.query.roles;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const data = await adminAiService.searchPeopleMentions(req.user!.id, {
+        q,
+        roles: roles as string | string[] | undefined,
+        limit,
+      });
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   sendMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await adminAiService.sendMessage(req.user!.id, {
         content: String(req.body.content ?? ""),
         threadId: req.body.threadId ?? null,
+        mentions: req.body.mentions,
+        actionCommand: req.body.actionCommand,
       });
       res.status(200).json(data);
     } catch (error) {
@@ -351,6 +373,8 @@ class AdminAiController {
         {
           content: String(req.body.content ?? ""),
           threadId: req.body.threadId ?? null,
+          mentions: req.body.mentions,
+          actionCommand: req.body.actionCommand,
         },
         emit,
         abort.signal,

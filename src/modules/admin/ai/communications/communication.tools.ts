@@ -154,7 +154,8 @@ export async function createCommunicationDraft(
   assertAdminAiModule(actor, "messages");
 
   const suggested =
-    args.ambiguous || (!args.roles && !args.groups && !args.audienceType)
+    args.ambiguous ||
+    (!args.roles && !args.groups && !args.audienceType && !args.userIds)
       ? suggestAmbiguityOptions(args.userMessage)
       : null;
 

@@ -1,6 +1,13 @@
 import Joi from "joi";
 import { env } from "../../../config/env.js";
 
+export const adminAiMentionItemSchema = Joi.object({
+  type: Joi.string().valid("person").required(),
+  userId: Joi.string().uuid().required(),
+  role: Joi.string().trim().max(40).optional(),
+  label: Joi.string().trim().max(120).required(),
+});
+
 export const sendAdminAiMessageSchema = Joi.object({
   content: Joi.string()
     .trim()
@@ -8,6 +15,21 @@ export const sendAdminAiMessageSchema = Joi.object({
     .max(env.ADMIN_AI_MAX_MESSAGE_CHARS)
     .required(),
   threadId: Joi.string().uuid().allow(null).optional(),
+  mentions: Joi.array().items(adminAiMentionItemSchema).max(10).optional(),
+  actionCommand: Joi.string()
+    .valid("email", "announcement", "bulk-email", "bulk-message")
+    .optional(),
+});
+
+export const listPeopleMentionsQuerySchema = Joi.object({
+  q: Joi.string().trim().max(100).allow("").optional(),
+  roles: Joi.alternatives()
+    .try(
+      Joi.array().items(Joi.string().trim().max(40)).max(10),
+      Joi.string().trim().max(200),
+    )
+    .optional(),
+  limit: Joi.number().integer().min(1).max(30).default(10),
 });
 
 export const adminAiThreadIdParamsSchema = Joi.object({

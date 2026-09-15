@@ -19,11 +19,14 @@ import { HomeworkStudent } from "../../../entities/HomeworkStudent.js";
 import { HomeworkSubmission } from "../../../entities/HomeworkSubmission.js";
 import { PendingEnrollment } from "../../../entities/PendingEnrollment.js";
 import { Session } from "../../../entities/Session.js";
+import { Student } from "../../../entities/Student.js";
 import { Subject } from "../../../entities/Subject.js";
 import { Syllabus } from "../../../entities/Syllabus.js";
 import { Task, TaskStatus } from "../../../entities/Task.js";
+import { TeacherSubject } from "../../../entities/TeacherSubject.js";
 import { Term } from "../../../entities/Term.js";
 import { User } from "../../../entities/User.js";
+import { GuardianStudent } from "../../../entities/GuardianStudent.js";
 
 const MAX_ROWS = 40;
 const LIST_MAX_ROWS = 60;
@@ -45,6 +48,31 @@ export type LowAttendanceStudentRow = {
   presentOrLate: number;
   primarySubject: string | null;
   primaryClassName: string | null;
+};
+
+export type StudentHomeworkStatusRow = {
+  studentId: string;
+  studentName: string;
+  yearLevel: string | null;
+  subject: string | null;
+  assignedCount: number;
+  submittedCount: number;
+  pendingCount: number;
+  pendingTitles: string[];
+  hasPending: boolean;
+};
+
+export type ParentFollowUpRow = {
+  studentId: string;
+  studentName: string;
+  guardianName: string | null;
+  yearLevel: string | null;
+  subject: string | null;
+  overdueTasksCount: number;
+  overdueTasks: Array<{ title: string; dueDate: string }>;
+  enquiryStage: string | null;
+  enquirySubject: string | null;
+  hasOverdueFollowUp: boolean;
 };
 
 export type TeacherClassFilters = {
@@ -182,6 +210,11 @@ export class AdminAiRepository {
   private readonly assessmentSubmissions =
     AppDataSource.getRepository(AssessmentSubmission);
   private readonly holidays = AppDataSource.getRepository(Holiday);
+  private readonly students = AppDataSource.getRepository(Student);
+  private readonly guardianStudents =
+    AppDataSource.getRepository(GuardianStudent);
+  private readonly teacherSubjects =
+    AppDataSource.getRepository(TeacherSubject);
 
   async getAttendanceStatusCounts(
     start: Date,
@@ -239,6 +272,10 @@ export class AdminAiRepository {
       thresholdPercent: number;
       subject?: string | null;
       studentName?: string | null;
+      yearLevel?: string | null;
+      term?: string | null;
+      academicYear?: string | null;
+      studentIds?: string[] | null;
       limit?: number;
     },
   ): Promise<LowAttendanceStudentRow[]> {
@@ -263,9 +300,46 @@ export class AdminAiRepository {
       AND u."fullName" ILIKE $${params.length}
       `);
     }
+    if (options.yearLevel?.trim()) {
+      params.push(`%${options.yearLevel.trim()}%`);
+      const ylIdx = params.length;
+      const ylExact =
+        options.yearLevel.replace(/[^0-9]/g, "") || options.yearLevel.trim();
+      params.push(ylExact);
+      const ylExactIdx = params.length;
+      extraFilters.push(`
+      AND (
+        yl.name ILIKE $${ylIdx}
+        OR CAST(yl.sequence AS text) = $${ylExactIdx}
+        OR c.name ILIKE $${ylIdx}
+        OR c."contentGroup" ILIKE $${ylIdx}
+      )
+      `);
+    }
+    if (options.term?.trim()) {
+      params.push(`%${options.term.trim()}%`);
+      extraFilters.push(`
+      AND (t.name ILIKE $${params.length} OR c."termName" ILIKE $${params.length})
+      `);
+    }
+    if (options.academicYear?.trim()) {
+      params.push(`%${options.academicYear.trim()}%`);
+      extraFilters.push(`
+      AND (ay.name ILIKE $${params.length} OR c."termName" ILIKE $${params.length})
+      `);
+    }
+    if (options.studentIds && options.studentIds.length > 0) {
+      params.push(options.studentIds);
+      extraFilters.push(`
+      AND u.id = ANY($${params.length})
+      `);
+    }
 
-    // When scoping to a named student, include their attendance even if not "low".
-    const havingClause = studentName
+    // When scoping to a named student or specific student IDs, include their attendance even if not "low".
+    const hasStudentScope = Boolean(
+      studentName || (options.studentIds && options.studentIds.length > 0),
+    );
+    const havingClause = hasStudentScope
       ? `HAVING COUNT(ar.id) > 0`
       : `HAVING COUNT(ar.id) > 0
       AND (
@@ -288,6 +362,9 @@ export class AdminAiRepository {
     INNER JOIN sessions s ON s.id = ar."sessionId"
     INNER JOIN users u ON u.id = ar."studentId"
     INNER JOIN classes c ON c.id = s."classId"
+    LEFT JOIN terms t ON t.id = c."termId"
+    LEFT JOIN year_levels yl ON yl.id = t."yearLevelId"
+    LEFT JOIN academic_years ay ON ay.id = t."academicYearId"
     WHERE s."startAt" >= $1 AND s."startAt" < $2
       ${extraFilters.join("")}
     GROUP BY u.id, u."fullName"
@@ -303,6 +380,263 @@ export class AdminAiRepository {
       params,
     );
     return rows as LowAttendanceStudentRow[];
+  }
+
+  async getStudentHomeworkStatusAggregates(options: {
+    studentIds?: string[] | null;
+    studentName?: string | null;
+    yearLevel?: string | null;
+    subject?: string | null;
+    term?: string | null;
+    academicYear?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    status?: string | null;
+    limit?: number;
+  }): Promise<StudentHomeworkStatusRow[]> {
+    const limit = options.limit ?? LIST_MAX_ROWS;
+    const params: unknown[] = [limit];
+    const extraFilters: string[] = [];
+
+    if (options.studentIds && options.studentIds.length > 0) {
+      params.push(options.studentIds);
+      extraFilters.push(` AND u.id = ANY($${params.length})`);
+    }
+    if (options.studentName?.trim()) {
+      params.push(`%${options.studentName.trim()}%`);
+      extraFilters.push(` AND u."fullName" ILIKE $${params.length}`);
+    }
+    if (options.subject?.trim()) {
+      params.push(`%${options.subject.trim()}%`);
+      extraFilters.push(
+        ` AND (s.name ILIKE $${params.length} OR h.title ILIKE $${params.length})`,
+      );
+    }
+    if (options.yearLevel?.trim()) {
+      params.push(`%${options.yearLevel.trim()}%`);
+      const ylIdx = params.length;
+      const ylExact =
+        options.yearLevel.replace(/[^0-9]/g, "") || options.yearLevel.trim();
+      params.push(ylExact);
+      const ylExactIdx = params.length;
+      extraFilters.push(`
+      AND (
+        h."yearGroup" ILIKE $${ylIdx}
+        OR yl.name ILIKE $${ylIdx}
+        OR CAST(yl.sequence AS text) = $${ylExactIdx}
+      )
+      `);
+    }
+    if (options.term?.trim()) {
+      params.push(`%${options.term.trim()}%`);
+      extraFilters.push(` AND t.name ILIKE $${params.length}`);
+    }
+    if (options.academicYear?.trim()) {
+      params.push(`%${options.academicYear.trim()}%`);
+      extraFilters.push(` AND ay.name ILIKE $${params.length}`);
+    }
+    if (options.startDate?.trim()) {
+      params.push(options.startDate.trim());
+      extraFilters.push(` AND h."dueDate" >= $${params.length}`);
+    }
+    if (options.endDate?.trim()) {
+      params.push(options.endDate.trim());
+      extraFilters.push(` AND h."dueDate" <= $${params.length}`);
+    }
+
+    const statusUpper = options.status?.trim().toUpperCase();
+    let havingClause = "";
+    if (statusUpper === "PENDING") {
+      havingClause = `HAVING (COUNT(h.id) - COUNT(sub.id) FILTER (WHERE sub.status = 'SUBMITTED' OR sub."isCompleted" = true)) > 0`;
+    } else if (statusUpper === "COMPLETED") {
+      havingClause = `HAVING COUNT(sub.id) FILTER (WHERE sub.status = 'SUBMITTED' OR sub."isCompleted" = true) > 0`;
+    }
+
+    const rows = await AppDataSource.query(
+      `
+    SELECT
+      u.id AS "studentId",
+      COALESCE(u."fullName", 'Unknown') AS "studentName",
+      MIN(h."yearGroup") AS "yearLevel",
+      MIN(s.name) AS "subject",
+      COUNT(h.id)::int AS "assignedCount",
+      COUNT(sub.id) FILTER (
+        WHERE sub.status = 'SUBMITTED' OR sub."isCompleted" = true
+      )::int AS "submittedCount",
+      (
+        COUNT(h.id) - COUNT(sub.id) FILTER (
+          WHERE sub.status = 'SUBMITTED' OR sub."isCompleted" = true
+        )
+      )::int AS "pendingCount",
+      ARRAY_AGG(DISTINCT h.title) FILTER (
+        WHERE sub.id IS NULL OR (sub.status != 'SUBMITTED' AND sub."isCompleted" = false)
+      ) AS "pendingTitles"
+    FROM homework_students hs
+    INNER JOIN homework h ON h.id = hs."homeworkId"
+    INNER JOIN users u ON u.id = hs."studentId"
+    LEFT JOIN subjects s ON s.id = h."subjectId"
+    LEFT JOIN terms t ON t.id = h."termId"
+    LEFT JOIN year_levels yl ON yl.id = t."yearLevelId"
+    LEFT JOIN academic_years ay ON ay.id = t."academicYearId"
+    LEFT JOIN homework_submissions sub ON sub."homeworkId" = hs."homeworkId" AND sub."studentId" = hs."studentId"
+    WHERE 1=1
+      ${extraFilters.join("")}
+    GROUP BY u.id, u."fullName"
+    ${havingClause}
+    ORDER BY "pendingCount" DESC, u."fullName" ASC
+    LIMIT $1
+    `,
+      params,
+    );
+
+    return (
+      rows as Array<{
+        studentId: string;
+        studentName: string;
+        yearLevel: string | null;
+        subject: string | null;
+        assignedCount: number;
+        submittedCount: number;
+        pendingCount: number;
+        pendingTitles: string[] | null;
+      }>
+    ).map((row) => ({
+      studentId: row.studentId,
+      studentName: row.studentName,
+      yearLevel: row.yearLevel,
+      subject: row.subject,
+      assignedCount: Number(row.assignedCount) || 0,
+      submittedCount: Number(row.submittedCount) || 0,
+      pendingCount: Number(row.pendingCount) || 0,
+      pendingTitles: (row.pendingTitles || []).slice(0, 5),
+      hasPending: (Number(row.pendingCount) || 0) > 0,
+    }));
+  }
+
+  async getParentFollowUpAggregates(options: {
+    studentIds?: string[] | null;
+    studentName?: string | null;
+    guardianName?: string | null;
+    yearLevel?: string | null;
+    subject?: string | null;
+    overdueOnly?: boolean;
+    limit?: number;
+  }): Promise<ParentFollowUpRow[]> {
+    const limit = options.limit ?? LIST_MAX_ROWS;
+    const now = new Date();
+
+    const taskQb = this.tasks
+      .createQueryBuilder("task")
+      .leftJoinAndSelect("task.student", "student")
+      .leftJoinAndSelect("task.session", "session")
+      .leftJoinAndSelect("session.class", "class")
+      .where("task.status = :status", { status: TaskStatus.OPEN })
+      .orderBy("task.dueAt", "ASC");
+
+    if (options.overdueOnly !== false) {
+      taskQb.andWhere("task.dueAt < :now", { now });
+    }
+    if (options.studentIds && options.studentIds.length > 0) {
+      taskQb.andWhere("task.studentId IN (:...sIds)", {
+        sIds: options.studentIds,
+      });
+    }
+    if (options.studentName?.trim()) {
+      taskQb.andWhere("student.fullName ILIKE :sName", {
+        sName: `%${options.studentName.trim()}%`,
+      });
+    }
+    if (options.subject?.trim()) {
+      taskQb.andWhere("class.subject ILIKE :subj OR class.name ILIKE :subj", {
+        subj: `%${options.subject.trim()}%`,
+      });
+    }
+
+    const openTasks = await taskQb.take(limit).getMany();
+
+    const enquiryFilters: EnquirySearchFilters = {
+      studentName: options.studentName,
+      guardianName: options.guardianName,
+      yearLevel: options.yearLevel,
+      subject: options.subject,
+    };
+    const enquiries = await this.findEnquiries(enquiryFilters);
+
+    const studentMap = new Map<string, ParentFollowUpRow>();
+
+    for (const task of openTasks) {
+      const sId = task.studentId;
+      const sName = task.student?.fullName?.trim() || "Unknown Student";
+      const isOverdue = task.dueAt < now;
+      const dueStr = task.dueAt.toISOString().slice(0, 10);
+
+      let record = studentMap.get(sId);
+      if (!record) {
+        record = {
+          studentId: sId,
+          studentName: sName,
+          guardianName: null,
+          yearLevel: options.yearLevel ?? null,
+          subject: task.session?.class?.subject ?? null,
+          overdueTasksCount: 0,
+          overdueTasks: [],
+          enquiryStage: null,
+          enquirySubject: null,
+          hasOverdueFollowUp: false,
+        };
+        studentMap.set(sId, record);
+      }
+
+      if (isOverdue) {
+        record.overdueTasksCount += 1;
+        record.hasOverdueFollowUp = true;
+        if (record.overdueTasks.length < 5) {
+          record.overdueTasks.push({
+            title: task.title,
+            dueDate: dueStr,
+          });
+        }
+      }
+    }
+
+    for (const enquiry of enquiries) {
+      const sName = enquiry.studentFullName?.trim();
+      if (!sName) continue;
+      let matchedRecord: ParentFollowUpRow | undefined;
+      for (const record of studentMap.values()) {
+        if (record.studentName.toLowerCase() === sName.toLowerCase()) {
+          matchedRecord = record;
+          break;
+        }
+      }
+
+      if (!matchedRecord) {
+        const yl =
+          enquiry.yearLevel != null ? `Year ${enquiry.yearLevel}` : null;
+        matchedRecord = {
+          studentId: enquiry.id,
+          studentName: sName,
+          guardianName: enquiry.guardianFullName?.trim() || null,
+          yearLevel: yl,
+          subject: enquiry.subjectOfInterest?.trim() || null,
+          overdueTasksCount: 0,
+          overdueTasks: [],
+          enquiryStage: enquiry.currentStage?.name ?? null,
+          enquirySubject: enquiry.subjectOfInterest?.trim() || null,
+          hasOverdueFollowUp: false,
+        };
+        studentMap.set(enquiry.id, matchedRecord);
+      } else {
+        matchedRecord.guardianName =
+          enquiry.guardianFullName?.trim() || matchedRecord.guardianName;
+        matchedRecord.enquiryStage =
+          enquiry.currentStage?.name ?? matchedRecord.enquiryStage;
+        matchedRecord.enquirySubject =
+          enquiry.subjectOfInterest?.trim() || matchedRecord.enquirySubject;
+      }
+    }
+
+    return Array.from(studentMap.values()).slice(0, limit);
   }
 
   async findSessionsForDay(
@@ -1242,6 +1576,160 @@ export class AdminAiRepository {
       take: 100,
     });
   }
+
+  async findActiveUsersByIds(userIds: string[]): Promise<User[]> {
+    if (!userIds.length) return [];
+    return this.users.find({
+      where: {
+        id: In(userIds),
+      },
+    });
+  }
+
+  async searchPeopleMentions(filters: {
+    query?: string | null;
+    roles?: UserRole[] | null;
+    limit?: number;
+  }): Promise<PeopleMentionResultDto[]> {
+    const limit = Math.min(Math.max(filters.limit ?? 10, 1), 30);
+    const qb = this.users
+      .createQueryBuilder("user")
+      .where("user.status != :deactivatedStatus", {
+        deactivatedStatus: UserStatus.DEACTIVATED,
+      })
+      .orderBy("user.fullName", "ASC")
+      .take(limit);
+
+    if (filters.roles && filters.roles.length > 0) {
+      qb.andWhere("user.role IN (:...roles)", { roles: filters.roles });
+    }
+
+    if (filters.query?.trim()) {
+      const q = `%${filters.query.trim()}%`;
+      qb.andWhere(
+        `(user.fullName ILIKE :q OR user.preferredName ILIKE :q OR user.email ILIKE :q)`,
+        { q },
+      );
+    }
+
+    const matchedUsers = await qb.getMany();
+    if (!matchedUsers.length) return [];
+
+    const teacherUserIds = matchedUsers
+      .filter((u) => u.role === UserRole.STAFF)
+      .map((u) => u.id);
+    const guardianUserIds = matchedUsers
+      .filter((u) => u.role === UserRole.GUARDIAN)
+      .map((u) => u.id);
+    const studentUserIds = matchedUsers
+      .filter((u) => u.role === UserRole.STUDENT)
+      .map((u) => u.id);
+
+    const [teacherSubjects, guardianLinks, studentRecords] = await Promise.all([
+      teacherUserIds.length > 0
+        ? this.teacherSubjects.find({
+            where: { teacherId: In(teacherUserIds) },
+            relations: { subject: true },
+          })
+        : [],
+      guardianUserIds.length > 0
+        ? this.guardianStudents.find({
+            where: { guardianId: In(guardianUserIds) },
+            relations: { student: true },
+          })
+        : [],
+      studentUserIds.length > 0
+        ? this.students.find({
+            where: { userId: In(studentUserIds) },
+          })
+        : [],
+    ]);
+
+    const teacherSubMap = new Map<string, string[]>();
+    for (const ts of teacherSubjects) {
+      const name = ts.subject?.name?.trim();
+      if (name) {
+        const list = teacherSubMap.get(ts.teacherId) ?? [];
+        list.push(name);
+        teacherSubMap.set(ts.teacherId, list);
+      }
+    }
+
+    const guardianLinkMap = new Map<string, string[]>();
+    for (const link of guardianLinks) {
+      const name = link.student?.fullName?.trim();
+      if (name) {
+        const list = guardianLinkMap.get(link.guardianId) ?? [];
+        list.push(name);
+        guardianLinkMap.set(link.guardianId, list);
+      }
+    }
+
+    const studentMap = new Map<string, Student>();
+    for (const s of studentRecords) {
+      if (s.userId) studentMap.set(s.userId, s);
+    }
+
+    return matchedUsers.map((u) => {
+      let roleLabel = "Person";
+      let secondaryLabel: string | null = null;
+
+      switch (u.role) {
+        case UserRole.STUDENT: {
+          roleLabel = "Student";
+          const st = studentMap.get(u.id);
+          if (st?.yearLevel) {
+            secondaryLabel = `Year ${st.yearLevel}`;
+          }
+          break;
+        }
+        case UserRole.GUARDIAN: {
+          roleLabel = "Parent / Guardian";
+          const linkedStudents = guardianLinkMap.get(u.id);
+          if (linkedStudents && linkedStudents.length > 0) {
+            secondaryLabel = `Parent of ${linkedStudents.join(", ")}`;
+          }
+          break;
+        }
+        case UserRole.STAFF: {
+          roleLabel = "Teacher";
+          const subjects = teacherSubMap.get(u.id);
+          if (subjects && subjects.length > 0) {
+            secondaryLabel = subjects.join(", ");
+          }
+          break;
+        }
+        case UserRole.OFFICE_STAFF: {
+          roleLabel = "Office Staff";
+          secondaryLabel = "Administration";
+          break;
+        }
+        case UserRole.SUPER_ADMIN: {
+          roleLabel = "Application Owner";
+          secondaryLabel = "Super Admin";
+          break;
+        }
+      }
+
+      return {
+        id: u.id,
+        displayName: u.fullName,
+        role: u.role,
+        roleLabel,
+        secondaryLabel,
+        avatarUrl: null,
+      };
+    });
+  }
 }
+
+export type PeopleMentionResultDto = {
+  id: string;
+  displayName: string;
+  role: UserRole;
+  roleLabel: string;
+  secondaryLabel: string | null;
+  avatarUrl: string | null;
+};
 
 export const adminAiRepository = new AdminAiRepository();

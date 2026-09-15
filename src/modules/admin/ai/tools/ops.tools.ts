@@ -1,7 +1,6 @@
-import {
-  calendarDateInTimeZone,
-} from "../../../../common/utils/timezone.js";
+import { calendarDateInTimeZone } from "../../../../common/utils/timezone.js";
 import { UserRole } from "../../../../common/constants/roles.js";
+import { AppError } from "../../../../common/errors/AppError.js";
 import {
   assertAdminAiModule,
   canUseAdminAiModule,
@@ -18,9 +17,6 @@ import {
   type ToolResult,
 } from "../tool-helpers.js";
 
-/**
- * Enrolments list: ACTIVE enrolments and/or pending invitations (no fees/PII).
- */
 export async function searchEnrolments(
   actor: AdminAiActor,
   args: {
@@ -206,8 +202,7 @@ export async function searchEnquiries(
       guardianName: enquiry.guardianFullName,
       stage: enquiry.currentStage?.name ?? null,
       subject: enquiry.subjectOfInterest?.trim() || null,
-      yearLevel:
-        enquiry.yearLevel != null ? `Year ${enquiry.yearLevel}` : null,
+      yearLevel: enquiry.yearLevel != null ? `Year ${enquiry.yearLevel}` : null,
       owner: enquiry.owner?.fullName?.trim() || null,
     });
     if (rows.length >= LIST_MAX_ROWS) break;
@@ -242,9 +237,7 @@ export async function searchEnquiries(
       truncated: enquiries.length >= 200 || rows.length >= LIST_MAX_ROWS,
       enquiries: rows,
       columns: ["Student", "Guardian", "Stage", "Subject", "Year", "Owner"],
-      exactNote: rows.length
-        ? null
-        : `No enquiries found for ${filterLabel}.`,
+      exactNote: rows.length ? null : `No enquiries found for ${filterLabel}.`,
       responseHint:
         "Entity is enquiries. Table: Student | Guardian | Stage | Subject | Year | Owner. Never show emails, phones, or IDs.",
     }),
@@ -405,9 +398,6 @@ export async function listAssessments(
   };
 }
 
-/**
- * Session list for an explicit date range (default: today). Max 14 days.
- */
 export async function listSessions(
   actor: AdminAiActor,
   args: {
@@ -459,21 +449,12 @@ export async function listSessions(
     return {
       date: calendarDateInTimeZone(session.startAt, session.class?.timeZone),
       time: local.time,
-      className:
-        session.class?.name ??
-        session.assessment?.name ??
-        null,
-      subject:
-        session.class?.subject ??
-        session.assessment?.subject ??
-        null,
+      className: session.class?.name ?? session.assessment?.name ?? null,
+      subject: session.class?.subject ?? session.assessment?.subject ?? null,
       yearLevel: session.class?.term?.yearLevel?.name ?? null,
       teacherName: teacher,
       room:
-        session.classroom?.name ??
-        session.room ??
-        session.class?.room ??
-        null,
+        session.classroom?.name ?? session.room ?? session.class?.room ?? null,
     };
   });
 
@@ -486,9 +467,7 @@ export async function listSessions(
       truncated: sessions.length > LIST_MAX_ROWS,
       sessions: rows,
       columns: ["Date", "Time", "Class", "Subject", "Teacher", "Room"],
-      exactNote: rows.length
-        ? null
-        : `No sessions found for ${label}.`,
+      exactNote: rows.length ? null : `No sessions found for ${label}.`,
       responseHint:
         "Entity is sessions. Table: Date | Time | Class | Subject | Teacher | Room. Use only when the user asked for sessions/timetable for dates.",
       displayNote:
@@ -509,9 +488,6 @@ export async function listSessions(
   };
 }
 
-/**
- * Recent change-history entries (metadata only — no before/after payloads).
- */
 export async function searchChangeHistory(
   actor: AdminAiActor,
   args: {
@@ -622,9 +598,7 @@ export async function listHomework(
       truncated: totalMatched > rows.length,
       homework: rows,
       columns: ["Title", "Due", "Subject", "Year"],
-      exactNote: rows.length
-        ? null
-        : `No homework found for ${filterLabel}.`,
+      exactNote: rows.length ? null : `No homework found for ${filterLabel}.`,
       responseHint:
         "Entity is homework. Table: Title | Due | Subject | Year. Use totalMatched for counts. No descriptions, marks, fees, or student lists.",
     }),
@@ -696,8 +670,7 @@ export async function getPendingHomeworkSummary(
       assignedStudents: assigned,
       submittedCount: submitted,
       pendingCount: Math.max(0, assigned - submitted),
-      note:
-        "Submission counts cover the returned homework rows only when the list is truncated.",
+      note: "Submission counts cover the returned homework rows only when the list is truncated.",
       items: homework.slice(0, 15).map((h) => ({
         title: h.title,
         dueDate: h.dueDate,
@@ -788,8 +761,7 @@ export async function getPendingEnrollmentSummary(
   return {
     data: sanitizeToolPayload({
       pendingCount: pending,
-      note:
-        "Counts pending enrolment invitations / incomplete enrolments only. No fee-arrears ledger is available.",
+      note: "Counts pending enrolment invitations / incomplete enrolments only. No fee-arrears ledger is available.",
     }),
     sources: [
       {
@@ -829,13 +801,7 @@ export async function getOpenTasksSummary(
   };
 }
 
-/**
- * Compact read-only ops KPIs for dashboard-style questions.
- * Aggregates only — no PII, fees, or credentials.
- */
-export async function getOpsSnapshot(
-  actor: AdminAiActor,
-): Promise<ToolResult> {
+export async function getOpsSnapshot(actor: AdminAiActor): Promise<ToolResult> {
   assertAdminAiModule(actor, "classes");
 
   const canEnrolments = canUseAdminAiModule(actor, "enrolments");
@@ -873,22 +839,28 @@ export async function getOpsSnapshot(
     adminAiRepository.countClasses(),
     canEnquiries
       ? adminAiRepository.getEnquiryPipelineAggregates()
-      : Promise.resolve([] as Awaited<
-          ReturnType<typeof adminAiRepository.getEnquiryPipelineAggregates>
-        >),
+      : Promise.resolve(
+          [] as Awaited<
+            ReturnType<typeof adminAiRepository.getEnquiryPipelineAggregates>
+          >,
+        ),
     canAttendance
       ? adminAiRepository.getAttendanceStatusCounts(
           week.start,
           week.endExclusive,
         )
-      : Promise.resolve([] as Awaited<
-          ReturnType<typeof adminAiRepository.getAttendanceStatusCounts>
-        >),
+      : Promise.resolve(
+          [] as Awaited<
+            ReturnType<typeof adminAiRepository.getAttendanceStatusCounts>
+          >,
+        ),
     canAttendance
       ? adminAiRepository.findTodaysAbsences(day.start, day.end, null)
-      : Promise.resolve([] as Awaited<
-          ReturnType<typeof adminAiRepository.findTodaysAbsences>
-        >),
+      : Promise.resolve(
+          [] as Awaited<
+            ReturnType<typeof adminAiRepository.findTodaysAbsences>
+          >,
+        ),
   ]);
 
   const attendanceByStatus: Record<string, number> = {};
@@ -970,6 +942,180 @@ export async function getOpsSnapshot(
         kind: "database",
         label: "Ops snapshot",
         detail: "Aggregates only (module-scoped)",
+      },
+    ],
+    actions,
+  };
+}
+
+/**
+ * Student-level homework status (pending vs completed assignments) for cross-module reasoning.
+ */
+export async function getStudentHomeworkStatus(
+  actor: AdminAiActor,
+  args: {
+    studentIds?: string[];
+    studentName?: string;
+    yearLevel?: string;
+    subject?: string;
+    term?: string;
+    academicYear?: string;
+    startDate?: string;
+    endDate?: string;
+    status?: string;
+  },
+): Promise<ToolResult> {
+  assertAdminAiModule(actor, "classes");
+
+  const studentIds =
+    Array.isArray(args.studentIds) && args.studentIds.length > 0
+      ? args.studentIds
+      : null;
+  const studentName = args.studentName?.trim() || null;
+  const yearLevel = args.yearLevel?.trim() || null;
+  const subject = args.subject?.trim() || null;
+  const term = args.term?.trim() || null;
+  const academicYear = args.academicYear?.trim() || null;
+  const startDate = args.startDate?.trim() || null;
+  const endDate = args.endDate?.trim() || null;
+  const status = args.status?.trim() || null;
+
+  const rows = await adminAiRepository.getStudentHomeworkStatusAggregates({
+    studentIds,
+    studentName,
+    yearLevel,
+    subject,
+    term,
+    academicYear,
+    startDate,
+    endDate,
+    status,
+    limit: LIST_MAX_ROWS,
+  });
+
+  const filterLabel =
+    [studentName, yearLevel, subject, term, status]
+      .filter(Boolean)
+      .join(", ") || "all homework";
+
+  return {
+    data: sanitizeToolPayload({
+      entity: "student_homework_status",
+      matchLevel: rows.length ? "exact" : "none",
+      studentCount: rows.length,
+      truncated: rows.length >= LIST_MAX_ROWS,
+      students: rows,
+      columns: [
+        "Student",
+        "Year",
+        "Subject",
+        "Pending Homework",
+        "Completed Homework",
+        "Pending Titles",
+      ],
+      exactNote: rows.length
+        ? null
+        : `No homework status records found for ${filterLabel}.`,
+      responseHint:
+        "Entity is student homework completion status. Table: Student | Year | Subject | Pending | Completed | Pending Titles. Never show marks or private student notes.",
+    }),
+    sources: [
+      {
+        kind: "database",
+        label: "Student homework status",
+        detail: filterLabel,
+      },
+    ],
+    actions: [
+      openPageAction("homework", "Open Homework", {
+        filters: { yearLevel },
+      }),
+    ],
+  };
+}
+
+export async function getParentFollowUpStatus(
+  actor: AdminAiActor,
+  args: {
+    studentIds?: string[];
+    studentName?: string;
+    guardianName?: string;
+    yearLevel?: string;
+    subject?: string;
+    overdueOnly?: boolean;
+  },
+): Promise<ToolResult> {
+  const hasTasks = canUseAdminAiModule(actor, "tasks");
+  const hasEnquiries = canUseAdminAiModule(actor, "enquiries");
+
+  if (!hasTasks && !hasEnquiries) {
+    throw new AppError(
+      403,
+      "You do not have permission to access Tasks or Enquiries for parent follow-up status.",
+      "ADMIN_AI_MODULE_FORBIDDEN",
+    );
+  }
+
+  const studentIds =
+    Array.isArray(args.studentIds) && args.studentIds.length > 0
+      ? args.studentIds
+      : null;
+  const studentName = args.studentName?.trim() || null;
+  const guardianName = args.guardianName?.trim() || null;
+  const yearLevel = args.yearLevel?.trim() || null;
+  const subject = args.subject?.trim() || null;
+  const overdueOnly = args.overdueOnly !== false;
+
+  const rows = await adminAiRepository.getParentFollowUpAggregates({
+    studentIds,
+    studentName,
+    guardianName,
+    yearLevel,
+    subject,
+    overdueOnly,
+    limit: LIST_MAX_ROWS,
+  });
+
+  const filterLabel =
+    [
+      studentName,
+      guardianName,
+      yearLevel,
+      subject,
+      overdueOnly ? "overdue" : null,
+    ]
+      .filter(Boolean)
+      .join(", ") || "parent follow-ups";
+
+  const actions: ToolResult["actions"] = [];
+  if (hasTasks) actions.push(openPageAction("tasks", "Open Tasks"));
+  if (hasEnquiries) actions.push(openPageAction("enquiries", "Open Enquiries"));
+
+  return {
+    data: sanitizeToolPayload({
+      entity: "parent_follow_up_status",
+      matchLevel: rows.length ? "exact" : "none",
+      recordCount: rows.length,
+      truncated: rows.length >= LIST_MAX_ROWS,
+      followUps: rows,
+      columns: [
+        "Student",
+        "Guardian",
+        "Overdue Tasks",
+        "Enquiry Stage",
+        "Subject",
+      ],
+      exactNote: rows.length
+        ? null
+        : `No parent follow-ups found for ${filterLabel}.`,
+      responseHint:
+        "Entity is parent follow-up status. Table: Student | Guardian | Overdue Follow-ups | Enquiry Stage | Subject. Never show phone numbers, emails, or student IDs.",
+    }),
+    sources: [
+      {
+        kind: "database",
+        label: "Parent follow-ups",
+        detail: filterLabel,
       },
     ],
     actions,
