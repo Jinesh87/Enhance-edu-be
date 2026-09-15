@@ -45,12 +45,33 @@ export type AdminAiConfirmSendAction = {
   label: string;
 };
 
+export type AdminAiConfirmAnnouncementAction = {
+  type: "CONFIRM_ANNOUNCEMENT";
+  draft: {
+    title: string;
+    message: string;
+    audience: Record<string, unknown>;
+    audienceLabel: string;
+    recipientCount: number;
+    deliveryChannel: "IN_APP";
+    requiresAudienceConfirm?: boolean;
+    audienceOptions?: Array<{
+      label: string;
+      roles?: string[];
+      groups?: string[];
+      recipientOf?: "SELF" | "PARENTS" | null;
+    }>;
+  };
+  label: string;
+};
+
 export type AdminAiUiAction =
   | AdminAiOpenPageAction
   | AdminAiDownloadReportAction
   | AdminAiGenerateReportAction
   | AdminAiAdjustReportAction
-  | AdminAiConfirmSendAction;
+  | AdminAiConfirmSendAction
+  | AdminAiConfirmAnnouncementAction;
 
 export type ToolResult = {
   data: unknown;
@@ -129,6 +150,17 @@ export function confirmSendCommunicationAction(
   };
 }
 
+export function confirmAnnouncementAction(
+  draft: AdminAiConfirmAnnouncementAction["draft"],
+  label = "Approve & Publish",
+): AdminAiConfirmAnnouncementAction {
+  return {
+    type: "CONFIRM_ANNOUNCEMENT",
+    draft,
+    label,
+  };
+}
+
 export function actionSource(action: AdminAiUiAction): AdminAiSource {
   if (action.type === "DOWNLOAD_REPORT") {
     return {
@@ -156,6 +188,13 @@ export function actionSource(action: AdminAiUiAction): AdminAiSource {
       kind: "action",
       label: action.label,
       confirmSend: action,
+    };
+  }
+  if (action.type === "CONFIRM_ANNOUNCEMENT") {
+    return {
+      kind: "action",
+      label: action.label,
+      confirmAnnouncement: action,
     };
   }
   return {

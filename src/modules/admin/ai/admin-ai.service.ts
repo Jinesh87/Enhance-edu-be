@@ -73,7 +73,8 @@ function toMessageDto(message: AdminAiMessage) {
           source.downloadReport ||
           source.generateReport ||
           source.adjustReport ||
-          source.confirmSend),
+          source.confirmSend ||
+          source.confirmAnnouncement),
     )
     .map(
       (source) =>
@@ -81,7 +82,8 @@ function toMessageDto(message: AdminAiMessage) {
         source.downloadReport ??
         source.generateReport ??
         source.adjustReport ??
-        source.confirmSend!,
+        source.confirmSend ??
+        source.confirmAnnouncement!,
     )
     .slice(0, 8);
   const sources = allSources.filter((source) => source.kind !== "action");
@@ -111,9 +113,11 @@ function mergeSources(parts: AdminAiSource[]): AdminAiSource[] {
             ? `action|adjust|${source.adjustReport.draftId}|${source.adjustReport.label}`
             : source.kind === "action" && source.confirmSend
               ? `action|confirmSend|${source.confirmSend.draftId}|${source.confirmSend.label}`
-              : source.kind === "action" && source.openPage
-              ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
-              : `${source.kind}|${source.label}|${source.detail ?? ""}`;
+              : source.kind === "action" && source.confirmAnnouncement
+                ? `action|confirmAnnouncement|${source.confirmAnnouncement.draft.title}|${source.confirmAnnouncement.draft.recipientCount}`
+                : source.kind === "action" && source.openPage
+                ? `action|${source.openPage.resource}|${source.openPage.id ?? ""}|${JSON.stringify(source.openPage.filters ?? {})}|${source.openPage.label}`
+                : `${source.kind}|${source.label}|${source.detail ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(source);
@@ -154,7 +158,7 @@ function filterSourcesByCapabilities(
     if (source.kind !== "action") return true;
     if (source.openPage && !settings.deepLinksEnabled) return false;
     if (
-      (source.confirmSend || source.generateReport) &&
+      (source.confirmSend || source.confirmAnnouncement || source.generateReport) &&
       !settings.confirmedActionsEnabled
     ) {
       return false;

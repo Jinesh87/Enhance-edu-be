@@ -75,6 +75,7 @@ import {
   LearningQuizAttempt,
   LearningQuizAnswer,
   LearningFlashcardProgress,
+  Announcement,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -1023,6 +1024,27 @@ export async function ensureAdminAiSchema() {
       ON admin_ai_briefings ("userId", "createdAt");
     CREATE INDEX IF NOT EXISTS "IDX_admin_ai_briefings_user_read"
       ON admin_ai_briefings ("userId", "readAt");
+
+    CREATE TABLE IF NOT EXISTS announcements (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "title" varchar(200) NOT NULL,
+      "message" text NOT NULL,
+      "createdBy" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "approvedBy" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "publishedAt" timestamptz NOT NULL,
+      "status" varchar(24) NOT NULL DEFAULT 'PUBLISHED',
+      "audienceSnapshot" jsonb NOT NULL,
+      "recipientCount" int NOT NULL DEFAULT 0,
+      "deliveryChannel" varchar(24) NOT NULL DEFAULT 'IN_APP',
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_announcements_publishedAt"
+      ON announcements ("publishedAt");
+    CREATE INDEX IF NOT EXISTS "IDX_announcements_createdBy"
+      ON announcements ("createdBy");
+    CREATE INDEX IF NOT EXISTS "IDX_announcements_approvedBy"
+      ON announcements ("approvedBy");
   `);
 
   await bootstrap.query(`
@@ -1286,6 +1308,7 @@ export const AppDataSource = new DataSource({
     LearningQuizAttempt,
     LearningQuizAnswer,
     LearningFlashcardProgress,
+    Announcement,
   ],
   migrations: [],
   subscribers: [],

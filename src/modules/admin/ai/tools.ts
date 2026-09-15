@@ -59,6 +59,7 @@ import {
   updateCommunicationDraft,
   previewAudience,
   getCommunicationDraft,
+  createAnnouncementDraft,
   type ToolResult,
 } from "./tool-services.js";
 
@@ -775,6 +776,70 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
     {
       type: "function",
       function: {
+        name: "createAnnouncementDraft",
+        description:
+          "Create an in-app school ANNOUNCEMENT or NOTICE draft for a target audience and open the Announcement Preview UI immediately (never publishes directly). Delivery channel is IN_APP only. Use this whenever the admin asks to create an announcement, notice, or broadcast for students, parents, teachers, or a specific year/class/subject (e.g. class cancelled, holiday, reminder). Do NOT ask separate chat questions for title or message — the preview UI displays them for editing and approval. Filter examples: Year 10 Biology students -> roles:[STUDENT], yearLevel:'10', subjectFilter:'Biology'.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: {
+              type: "string",
+              description:
+                "Short clear title for the announcement (e.g. 'Biology Class Cancelled').",
+            },
+            message: {
+              type: "string",
+              description:
+                "Professional concise announcement message body.",
+            },
+            roles: {
+              type: "array",
+              items: { type: "string" },
+              description: "ALL | STUDENT | STAFF | OFFICE_STAFF | GUARDIAN. Use ['ALL'] when targeting everyone or all users.",
+            },
+            groups: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "OVERDUE_HOMEWORK | ABSENCES | SESSION_TEACHERS | ASSESSMENT_PARTICIPANTS | ENQUIRY_CONTACTS | CLASS_ROSTER | ENROLLED",
+            },
+            yearLevel: { type: "string" },
+            term: { type: "string" },
+            subjectFilter: { type: "string" },
+            className: { type: "string" },
+            date: {
+              type: "string",
+              description: "YYYY-MM-DD for date-based targeting",
+            },
+            nameQuery: {
+              type: "string",
+              description: "Name search if targeting specific person",
+            },
+            userIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Target user UUIDs",
+            },
+            recipientOf: {
+              type: "string",
+              description: "SELF or PARENTS",
+            },
+            assessmentQuery: { type: "string" },
+            enquiryStage: { type: "string" },
+            status: { type: "string" },
+            label: {
+              type: "string",
+              description: "Short human audience label",
+            },
+            ambiguous: { type: "boolean" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "createCommunicationDraft",
         description:
           "Create an EMAIL draft and open the Email Preview UI immediately (never sends). Call as soon as the admin wants to email/message/remind/notify — do NOT ask chat questions for subject or body. Pass whatever you can parse: empty subject/body are OK (preview UI edits them). If the user included a message (e.g. 'saying hi'), put it in body and suggest a short subject. Individual parent: roles:[STUDENT], nameQuery:student name, recipientOf:PARENTS (never roles:GUARDIAN for 'X parent'). Bulk parents: roles:[STUDENT], yearLevel/subject/className, recipientOf:PARENTS. Groups: OVERDUE_HOMEWORK | ABSENCES | SESSION_TEACHERS | ASSESSMENT_PARTICIPANTS | ENQUIRY_CONTACTS | CLASS_ROSTER | ENROLLED. Set ambiguous=true only if students vs parents is unclear.",
@@ -1241,6 +1306,29 @@ async function runAdminAiTool(
         content: asString(args.content),
         kind: asString(args.kind),
       });
+    case "createAnnouncementDraft":
+      return createAnnouncementDraft(actor, {
+        audienceType: asString(args.audienceType),
+        roles: args.roles,
+        groups: args.groups,
+        title: asString(args.title),
+        message: asString(args.message),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        subjectFilter: asString(args.subjectFilter),
+        className: asString(args.className),
+        date: asString(args.date),
+        nameQuery: asString(args.nameQuery),
+        userIds: args.userIds,
+        recipientOf: asString(args.recipientOf),
+        assessmentQuery: asString(args.assessmentQuery),
+        enquiryStage: asString(args.enquiryStage),
+        status: asString(args.status),
+        label: asString(args.label),
+        ambiguous:
+          typeof args.ambiguous === "boolean" ? args.ambiguous : undefined,
+        userMessage: context.userMessage ?? undefined,
+      });
     case "createCommunicationDraft":
       return createCommunicationDraft(actor, {
         audienceType: asString(args.audienceType),
@@ -1347,6 +1435,7 @@ export function inferModeFromTools(toolNames: string[]): string {
   if (toolNames.includes("searchAuthorizedSyllabusDocuments")) return "DOCUMENT";
   if (
     toolNames.includes("getDraftContext") ||
+    toolNames.includes("createAnnouncementDraft") ||
     toolNames.includes("createCommunicationDraft") ||
     toolNames.includes("updateCommunicationDraft") ||
     toolNames.includes("previewAudience") ||
@@ -1359,6 +1448,7 @@ export function inferModeFromTools(toolNames: string[]): string {
 }
 
 const COMM_DRAFT_MODE_TOOLS = new Set([
+  "createAnnouncementDraft",
   "createCommunicationDraft",
   "updateCommunicationDraft",
   "previewAudience",

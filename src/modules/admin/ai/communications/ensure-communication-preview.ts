@@ -9,9 +9,12 @@ import {
 } from "../admin-ai-capabilities.js";
 import { actionSource } from "../tool-helpers.js";
 import { createCommunicationDraft } from "./communication.tools.js";
+import { createAnnouncementDraft } from "../announcements/announcement.tools.js";
 
 const FALLBACK_REPLY =
   "I've prepared the email. Review and finalize it in the preview below.";
+const FALLBACK_ANNOUNCEMENT_REPLY =
+  "I've prepared the announcement draft. Review and approve it in the preview below.";
 
 /** Normalize common typos before intent checks. */
 function normalizeCommText(raw: string) {
@@ -22,8 +25,21 @@ function normalizeCommText(raw: string) {
     .replace(/\bwana\b/g, "want")
     .replace(/\bmsg\b/g, "message")
     .replace(/\be-mails?\b/g, "email")
+    .replace(/\byaer\b/g, "year")
+    .replace(/\btommorw\b/g, "tomorrow")
+    .replace(/\btmrw\b/g, "tomorrow")
+    .replace(/\btmro\b/g, "tomorrow")
+    .replace(/\bcraete\b/g, "create")
+    .replace(/\bannoucement\b/g, "announcement")
+    .replace(/\bannouce\b/g, "announce")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function looksLikeAnnouncementIntent(raw: string): boolean {
+  const t = normalizeCommText(raw);
+  if (!t) return false;
+  return /\b(announcement|announcements|notice|notices|broadcast|platform notice)\b/.test(t);
 }
 
 /**
@@ -47,7 +63,8 @@ export function looksLikeCommunicationIntent(raw: string): boolean {
   const hasVerb =
     /\b(email|message|notify|remind)\b/.test(t) ||
     /\bsend\b/.test(t) ||
-    /\b(mail|text)\b/.test(t);
+    /\b(mail|text)\b/.test(t) ||
+    /\b(announcement|announcements|notice|notices|broadcast|announce)\b/.test(t);
 
   const hasAudience =
     /\b(students?|parents?|guardians?|teachers?|staff|tutors?|class|year\s*\d+|everyone)\b/.test(
@@ -63,17 +80,38 @@ function hasConfirmSendAction(sources: AdminAiSource[]) {
   );
 }
 
+function hasConfirmAnnouncementAction(sources: AdminAiSource[]) {
+  return sources.some(
+    (source) => source.kind === "action" && Boolean(source.confirmAnnouncement),
+  );
+}
+
 function inferFallbackAudience(raw: string) {
   const t = normalizeCommText(raw);
+  const wantsAll = /\b(all|everyone|everybody)\b/.test(t);
   const wantsParents = /\b(parents?|guardians?)\b/.test(t);
   const wantsStudents = /\bstudents?\b/.test(t);
   const wantsTeachers = /\b(teachers?|tutors?|staff)\b/.test(t);
 
+  const yearMatch = t.match(/\byear\s*(\d{1,2})\b/);
+  const yearLevel = yearMatch ? `${yearMatch[1]}` : undefined;
+  const yearLabel = yearMatch ? `Year ${yearMatch[1]}` : "";
+
+  if (wantsAll && !wantsParents && !wantsStudents && !wantsTeachers) {
+    return {
+      roles: ["ALL"],
+      recipientOf: "SELF" as const,
+      label: "All",
+      ambiguous: false,
+    };
+  }
+
   if (wantsParents && !wantsStudents) {
     return {
       roles: [UserRole.STUDENT],
+      yearLevel,
       recipientOf: "PARENTS" as const,
-      label: "Parents / guardians",
+      label: yearLabel ? `${yearLabel} Parents` : "Parents / guardians",
       ambiguous: false,
     };
   }
@@ -85,17 +123,26 @@ function inferFallbackAudience(raw: string) {
       ambiguous: false,
     };
   }
-  // Default: students (covers "all student", "message to students", etc.)
+  // Default: students
   return {
     roles: [UserRole.STUDENT],
+    yearLevel,
     recipientOf: "SELF" as const,
-    label: "All active students",
+    label: yearLabel ? `${yearLabel} Students` : "All active students",
     ambiguous: false,
   };
 }
 
 function inferSubjectAndBody(raw: string) {
   const t = normalizeCommText(raw);
+  const yearMatch = t.match(/\byear\s*(\d{1,2})\b/);
+  const yearLabel = yearMatch ? `Year ${yearMatch[1]}` : "";
+
+  if (/\b(no\s+class|no\s+classes|cancelled|canceled)\b/.test(t)) {
+    const title = yearLabel ? `${yearLabel} Classes Cancelled` : "Classes Cancelled";
+    const body = `Please be advised that all ${yearLabel ? `${yearLabel} ` : ""}classes have been cancelled for tomorrow. Regular classes will resume on the next scheduled school day.`;
+    return { subject: title, body };
+  }
   if (/\battendance\b/.test(t)) {
     return {
       subject: "Attendance reminder",
@@ -105,15 +152,18 @@ function inferSubjectAndBody(raw: string) {
   if (/\bhomework\b/.test(t)) {
     return {
       subject: "Homework reminder",
-      body: "",
+      body: "This is a reminder regarding upcoming homework submissions. Please submit all pending work on time.",
     };
   }
-  return { subject: "", body: "" };
+  return {
+    subject: yearLabel ? `${yearLabel} Notice` : "Platform Announcement",
+    body: raw.trim(),
+  };
 }
 
 /**
- * If the user asked to email/message someone but the model skipped
- * createCommunicationDraft, create the draft server-side and attach CONFIRM_SEND.
+ * If the user asked to email/message or announce to someone but the model skipped
+ * the draft tool, create the draft server-side and attach the confirm action.
  */
 export async function ensureCommunicationPreviewIfNeeded(input: {
   actor: AdminAiActor;
@@ -130,16 +180,50 @@ export async function ensureCommunicationPreviewIfNeeded(input: {
   const { actor, userMessage, threadId, settings } = input;
   let { sources, replyText } = input;
 
-  if (hasConfirmSendAction(sources)) {
+  if (hasConfirmSendAction(sources) || hasConfirmAnnouncementAction(sources)) {
     return { sources, replyText, ensured: false };
   }
   if (!looksLikeCommunicationIntent(userMessage)) {
     return { sources, replyText, ensured: false };
   }
-  if (!isCapabilityEnabled(settings, "emailDrafting")) {
+  if (!isCapabilityEnabled(settings, "confirmedActions")) {
     return { sources, replyText, ensured: false };
   }
-  if (!isCapabilityEnabled(settings, "confirmedActions")) {
+
+  const isAnnouncement = looksLikeAnnouncementIntent(userMessage);
+
+  if (isAnnouncement) {
+    try {
+      const audience = inferFallbackAudience(userMessage);
+      const { subject, body } = inferSubjectAndBody(userMessage);
+      const result = await createAnnouncementDraft(actor, {
+        title: subject || "Platform Announcement",
+        message: body || userMessage,
+        roles: audience.roles,
+        recipientOf: audience.recipientOf,
+        label: audience.label,
+        ambiguous: audience.ambiguous,
+        userMessage,
+        threadId: threadId ?? undefined,
+      });
+
+      const nextSources = [
+        ...sources,
+        ...result.sources,
+        ...(result.actions ?? []).map((action) => actionSource(action)),
+      ];
+
+      return {
+        sources: nextSources,
+        replyText: FALLBACK_ANNOUNCEMENT_REPLY,
+        ensured: true,
+      };
+    } catch {
+      return { sources, replyText, ensured: false };
+    }
+  }
+
+  if (!isCapabilityEnabled(settings, "emailDrafting")) {
     return { sources, replyText, ensured: false };
   }
 

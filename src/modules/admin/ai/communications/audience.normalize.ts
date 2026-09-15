@@ -82,6 +82,8 @@ const ROLE_ALIASES: Record<string, string> = {
   APPLICATION_OWNER: UserRole.SUPER_ADMIN,
   OWNER: UserRole.SUPER_ADMIN,
   SUPER_ADMIN: UserRole.SUPER_ADMIN,
+  ALL: "ALL",
+  EVERYONE: "ALL",
 };
 
 const GROUP_ALIASES: Record<string, AudienceGroup> = {

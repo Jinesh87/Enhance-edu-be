@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { adminAiService } from "./admin-ai.service.js";
 import { adminAiBriefingService } from "./briefings/briefing.service.js";
+import { announcementService } from "./announcements/announcement.service.js";
 import { resolveAdminAiActor } from "./authorization.js";
 
 type FlushableResponse = Response & { flush?: () => void };
@@ -429,6 +430,45 @@ class AdminAiController {
     try {
       const actor = await resolveAdminAiActor(req.user!.id);
       const data = await adminAiBriefingService.previewForActor(actor);
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  previewAnnouncement = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const actor = await resolveAdminAiActor(req.user!.id);
+      const data = await announcementService.previewDraft(actor, {
+        title: req.body?.title,
+        message: req.body?.message,
+        audience: req.body?.audience,
+        threadId: req.body?.threadId,
+      });
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  publishAnnouncement = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const actor = await resolveAdminAiActor(req.user!.id);
+      const data = await announcementService.publishAnnouncement(actor, {
+        title: req.body?.title,
+        message: req.body?.message,
+        audience: req.body?.audience,
+        excludedUserIds: req.body?.excludedUserIds,
+        idempotencyKey: req.body?.idempotencyKey,
+      });
       res.status(200).json(data);
     } catch (error) {
       next(error);
