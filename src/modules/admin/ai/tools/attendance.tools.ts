@@ -135,17 +135,36 @@ export async function getLowAttendanceStudents(
     startDate?: string;
     endDate?: string;
     subject?: string;
+    studentName?: string;
+    yearLevel?: string;
+    term?: string;
+    academicYear?: string;
+    studentIds?: string[];
   },
 ): Promise<ToolResult> {
   assertAdminAiModule(actor, "attendance");
   const threshold = Math.min(100, Math.max(1, Number(args.threshold) || 80));
   const subject = args.subject?.trim() || null;
+  const studentName = args.studentName?.trim() || null;
+  const yearLevel = args.yearLevel?.trim() || null;
+  const term = args.term?.trim() || null;
+  const academicYear = args.academicYear?.trim() || null;
+  const studentIds = Array.isArray(args.studentIds) && args.studentIds.length > 0 ? args.studentIds : null;
   const { start, end, endExclusive } = clampRange(args.startDate, args.endDate);
 
   const rows = await adminAiRepository.getLowAttendanceStudentAggregates(
     start,
     endExclusive,
-    { thresholdPercent: threshold, subject, limit: MAX_ROWS },
+    {
+      thresholdPercent: threshold,
+      subject,
+      studentName,
+      yearLevel,
+      term,
+      academicYear,
+      studentIds,
+      limit: MAX_ROWS,
+    },
   );
 
   const students = rows.map((row) => {
@@ -153,6 +172,7 @@ export async function getLowAttendanceStudents(
     const present = Number(row.presentOrLate) || 0;
     const rate = total > 0 ? (present / total) * 100 : 0;
     return {
+      studentId: row.studentId,
       studentName: String(row.studentName ?? "Unknown"),
       subject: row.primarySubject ? String(row.primarySubject) : null,
       className: row.primaryClassName ? String(row.primaryClassName) : null,
@@ -169,11 +189,14 @@ export async function getLowAttendanceStudents(
     );
   }
 
+  const filterSummary = [yearLevel, subject, term, studentName].filter(Boolean).join(" · ");
+
   return {
     data: sanitizeToolPayload({
       entity: "low_attendance_student",
       thresholdPercent: threshold,
       subjectFilter: subject,
+      yearLevelFilter: yearLevel,
       startDate: start.toISOString().slice(0, 10),
       endDate: end.toISOString().slice(0, 10),
       studentCount: students.length,
@@ -181,15 +204,15 @@ export async function getLowAttendanceStudents(
       columns: ["Student", "Subject", "Class", "Attendance Rate", "Present/Sessions"],
       exactNote: students.length
         ? null
-        : `No students below ${threshold}% attendance for the selected period.`,
+        : `No students below ${threshold}% attendance${filterSummary ? ` for ${filterSummary}` : ""} for the selected period.`,
       responseHint:
-        "Entity is students with low attendance. Table: Student | Subject | Class | Attendance Rate | Present/Sessions. Never use class-only tools for this question. No emails, phones, or IDs.",
+        "Entity is students with low attendance. Table: Student | Subject | Class | Attendance Rate | Present/Sessions. Never use class-only tools for this question. No emails or phones in response.",
     }),
     sources: [
       {
         kind: "database",
         label: "Student attendance",
-        detail: `Below ${threshold}% · ${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
+        detail: `Below ${threshold}%${filterSummary ? ` · ${filterSummary}` : ""} · ${start.toISOString().slice(0, 10)}–${end.toISOString().slice(0, 10)}`,
       },
     ],
     actions,

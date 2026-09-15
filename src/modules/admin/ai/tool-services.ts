@@ -31,6 +31,8 @@ export {
   searchChangeHistory,
   listHomework,
   getPendingHomeworkSummary,
+  getStudentHomeworkStatus,
+  getParentFollowUpStatus,
   getAcademicPerformanceSummary,
   getEnquiryPipelineSummary,
   getPendingEnrollmentSummary,

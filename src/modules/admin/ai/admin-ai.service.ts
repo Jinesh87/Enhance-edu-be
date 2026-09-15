@@ -637,6 +637,12 @@ export class AdminAiService {
 
     const toolNames: string[] = [];
     const modeToolNames: string[] = [];
+    const toolAuditSummaries: Array<{
+      name: string;
+      filterKeys?: string[];
+      resultCount?: number;
+      success: boolean;
+    }> = [];
     const collectedSources: AdminAiSource[] = [];
     const documentIds: string[] = [];
 
@@ -729,6 +735,7 @@ export class AdminAiService {
             scopeMetadata: {
               sourceCount: sources.length,
               communicationPreviewEnsured: ensured.ensured,
+              toolExecutions: toolAuditSummaries.length ? toolAuditSummaries : undefined,
             },
             documentIds: documentIds.length ? documentIds : null,
             resultStatus: "success",
@@ -763,6 +770,34 @@ export class AdminAiService {
             if (!isFailedCommunicationDraftToolResult(name, result.data)) {
               modeToolNames.push(name);
             }
+            try {
+              const rawArgs = call.function.arguments
+                ? JSON.parse(call.function.arguments)
+                : {};
+              const filterKeys =
+                rawArgs && typeof rawArgs === "object"
+                  ? Object.keys(rawArgs)
+                  : [];
+              const dataObj = result.data as Record<string, unknown> | null;
+              const count =
+                typeof dataObj?.studentCount === "number"
+                  ? dataObj.studentCount
+                  : typeof dataObj?.recordCount === "number"
+                    ? dataObj.recordCount
+                    : Array.isArray(dataObj?.students)
+                      ? dataObj.students.length
+                      : Array.isArray(dataObj?.followUps)
+                        ? dataObj.followUps.length
+                        : undefined;
+              toolAuditSummaries.push({
+                name,
+                filterKeys,
+                resultCount: count,
+                success: true,
+              });
+            } catch {
+              toolAuditSummaries.push({ name, success: true });
+            }
             collectedSources.push(...result.sources);
             if (result.actions?.length) {
               collectedSources.push(
@@ -778,6 +813,7 @@ export class AdminAiService {
               content: JSON.stringify(result.data),
             });
           } catch (error) {
+            toolAuditSummaries.push({ name, success: false });
             messages.push({
               role: "tool",
               tool_call_id: call.id,
@@ -932,6 +968,12 @@ export class AdminAiService {
 
     const toolNames: string[] = [];
     const modeToolNames: string[] = [];
+    const toolAuditSummaries: Array<{
+      name: string;
+      filterKeys?: string[];
+      resultCount?: number;
+      success: boolean;
+    }> = [];
     const collectedSources: AdminAiSource[] = [];
     const documentIds: string[] = [];
 
@@ -1034,6 +1076,7 @@ export class AdminAiService {
             scopeMetadata: {
               sourceCount: sources.length,
               communicationPreviewEnsured: ensured.ensured,
+              toolExecutions: toolAuditSummaries.length ? toolAuditSummaries : undefined,
             },
             documentIds: documentIds.length ? documentIds : null,
             resultStatus: "success",
@@ -1078,6 +1121,34 @@ export class AdminAiService {
             if (!isFailedCommunicationDraftToolResult(name, result.data)) {
               modeToolNames.push(name);
             }
+            try {
+              const rawArgs = call.function.arguments
+                ? JSON.parse(call.function.arguments)
+                : {};
+              const filterKeys =
+                rawArgs && typeof rawArgs === "object"
+                  ? Object.keys(rawArgs)
+                  : [];
+              const dataObj = result.data as Record<string, unknown> | null;
+              const count =
+                typeof dataObj?.studentCount === "number"
+                  ? dataObj.studentCount
+                  : typeof dataObj?.recordCount === "number"
+                    ? dataObj.recordCount
+                    : Array.isArray(dataObj?.students)
+                      ? dataObj.students.length
+                      : Array.isArray(dataObj?.followUps)
+                        ? dataObj.followUps.length
+                        : undefined;
+              toolAuditSummaries.push({
+                name,
+                filterKeys,
+                resultCount: count,
+                success: true,
+              });
+            } catch {
+              toolAuditSummaries.push({ name, success: true });
+            }
             collectedSources.push(...result.sources);
             if (result.actions?.length) {
               collectedSources.push(
@@ -1093,6 +1164,7 @@ export class AdminAiService {
               content: JSON.stringify(result.data),
             });
           } catch (error) {
+            toolAuditSummaries.push({ name, success: false });
             messages.push({
               role: "tool",
               tool_call_id: call.id,

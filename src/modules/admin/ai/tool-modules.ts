@@ -39,6 +39,8 @@ export const ADMIN_AI_TOOL_MODULES: Record<string, AdminModuleId[]> = {
   getTodaysAbsences: ["attendance"],
   getClassRoster: ["classes"],
   getPendingHomeworkSummary: ["classes"],
+  getStudentHomeworkStatus: ["classes"],
+  getParentFollowUpStatus: ["tasks"],
   listHomework: ["classes"],
   getOpsSnapshot: ["classes"],
   getAcademicPerformanceSummary: ["classes"],
@@ -92,6 +94,14 @@ export function canUseAdminAiTool(
 ): boolean {
   if (toolName === "getAiUsageSummary") {
     return actor.role === UserRole.SUPER_ADMIN;
+  }
+
+  if (toolName === "getParentFollowUpStatus") {
+    if (actor.role === UserRole.SUPER_ADMIN) return true;
+    return (
+      canUseAdminAiModule(actor, "tasks") ||
+      canUseAdminAiModule(actor, "enquiries")
+    );
   }
 
   if (

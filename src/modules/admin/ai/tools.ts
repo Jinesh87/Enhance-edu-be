@@ -30,6 +30,8 @@ import {
   getOpsSnapshot,
   getPendingEnrollmentSummary,
   getPendingHomeworkSummary,
+  getStudentHomeworkStatus,
+  getParentFollowUpStatus,
   getHolidays,
   getTermClassSchedule,
   getTodaysAbsences,
@@ -117,6 +119,15 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
             subject: {
               type: "string",
               description: "Optional subject or class name filter",
+            },
+            studentName: { type: "string", description: "Student full name" },
+            yearLevel: { type: "string", description: "Year level e.g. Year 10" },
+            term: { type: "string" },
+            academicYear: { type: "string" },
+            studentIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "List of student UUIDs",
             },
           },
         },
@@ -521,6 +532,64 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
           properties: {
             startDate: { type: "string" },
             endDate: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "getStudentHomeworkStatus",
+        description:
+          "Student-level homework completion status (assigned, submitted, pending counts and pending homework titles). Essential for cross-module queries linking attendance or other criteria with pending homework.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            studentIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional list of student UUIDs to filter or check",
+            },
+            studentName: { type: "string", description: "Student full name filter" },
+            yearLevel: { type: "string", description: "Year level e.g. 'Year 10'" },
+            subject: { type: "string", description: "Subject name filter e.g. 'Maths'" },
+            term: { type: "string" },
+            academicYear: { type: "string" },
+            startDate: { type: "string", description: "YYYY-MM-DD" },
+            endDate: { type: "string", description: "YYYY-MM-DD" },
+            status: {
+              type: "string",
+              enum: ["PENDING", "COMPLETED", "ALL"],
+              description: "Filter by status: PENDING (has pending assignments), COMPLETED, or ALL",
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "getParentFollowUpStatus",
+        description:
+          "Parent follow-up and chase status per student, including overdue absence chase tasks and active enquiry pipeline stages. Essential for cross-module queries asking about pending follow-ups or overdue tasks.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            studentIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional list of student UUIDs",
+            },
+            studentName: { type: "string", description: "Student full name" },
+            guardianName: { type: "string", description: "Guardian name" },
+            yearLevel: { type: "string" },
+            subject: { type: "string" },
+            overdueOnly: {
+              type: "boolean",
+              description: "Default true: return only records with overdue follow-ups or tasks",
+            },
           },
         },
       },
@@ -1136,6 +1205,11 @@ async function runAdminAiTool(
         startDate: asString(args.startDate),
         endDate: asString(args.endDate),
         subject: asString(args.subject),
+        studentName: asString(args.studentName),
+        yearLevel: asString(args.yearLevel),
+        term: asString(args.term),
+        academicYear: asString(args.academicYear),
+        studentIds: asStringArray(args.studentIds),
       });
     case "getTodayTimetable":
       return getTodayTimetable(actor, {
@@ -1267,6 +1341,28 @@ async function runAdminAiTool(
       return getPendingHomeworkSummary(actor, {
         startDate: asString(args.startDate),
         endDate: asString(args.endDate),
+      });
+    case "getStudentHomeworkStatus":
+      return getStudentHomeworkStatus(actor, {
+        studentIds: asStringArray(args.studentIds),
+        studentName: asString(args.studentName),
+        yearLevel: asString(args.yearLevel),
+        subject: asString(args.subject),
+        term: asString(args.term),
+        academicYear: asString(args.academicYear),
+        startDate: asString(args.startDate),
+        endDate: asString(args.endDate),
+        status: asString(args.status),
+      });
+    case "getParentFollowUpStatus":
+      return getParentFollowUpStatus(actor, {
+        studentIds: asStringArray(args.studentIds),
+        studentName: asString(args.studentName),
+        guardianName: asString(args.guardianName),
+        yearLevel: asString(args.yearLevel),
+        subject: asString(args.subject),
+        overdueOnly:
+          typeof args.overdueOnly === "boolean" ? args.overdueOnly : undefined,
       });
     case "listHomework":
       return listHomework(actor, {
