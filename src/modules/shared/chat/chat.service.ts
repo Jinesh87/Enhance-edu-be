@@ -26,6 +26,19 @@ import { assertValidChatAttachmentBuffer, isChatAttachmentMime, isChatAudioMime,
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_BODY_LENGTH = 4000;
 
+export type ChatReplyPreviewDto = {
+  id: string;
+  senderUserId: string;
+  body: string;
+  hasImage: boolean;
+  image: {
+    originalName: string;
+    mimeType: string;
+    byteSize: number;
+  } | null;
+  deletedAt: string | null;
+};
+
 export type ChatMessageDto = {
   id: string;
   conversationId: string;
@@ -41,6 +54,8 @@ export type ChatMessageDto = {
   readAt: string | null;
   voicePlayedAt: string | null;
   deletedAt: string | null;
+  replyToMessageId: string | null;
+  replyTo: ChatReplyPreviewDto | null;
   createdAt: string;
   status: "sent" | "delivered" | "read";
 };
@@ -66,9 +81,33 @@ function messagePreview(message: ChatMessage | null | undefined): string | null 
   return null;
 }
 
-function toMessageDto(message: ChatMessage): ChatMessageDto {
+function toReplyPreviewDto(message: ChatMessage): ChatReplyPreviewDto {
   const deleted = Boolean(message.deletedAt);
   const hasImage = !deleted && Boolean(message.storageKey);
+  return {
+    id: message.id,
+    senderUserId: message.senderUserId,
+    body: deleted ? "" : (message.body ?? "").slice(0, 160),
+    hasImage,
+    image:
+      hasImage && message.originalName && message.mimeType
+        ? {
+            originalName: message.originalName,
+            mimeType: message.mimeType,
+            byteSize: message.byteSize ?? 0,
+          }
+        : null,
+    deletedAt: message.deletedAt?.toISOString() ?? null,
+  };
+}
+
+function toMessageDto(
+  message: ChatMessage,
+  replyTo?: ChatMessage | null,
+): ChatMessageDto {
+  const deleted = Boolean(message.deletedAt);
+  const hasImage = !deleted && Boolean(message.storageKey);
+  const replyToMessageId = message.replyToMessageId ?? null;
   return {
     id: message.id,
     conversationId: message.conversationId,
@@ -87,6 +126,20 @@ function toMessageDto(message: ChatMessage): ChatMessageDto {
     readAt: message.readAt?.toISOString() ?? null,
     voicePlayedAt: message.voicePlayedAt?.toISOString() ?? null,
     deletedAt: message.deletedAt?.toISOString() ?? null,
+    replyToMessageId,
+    replyTo:
+      replyToMessageId == null
+        ? null
+        : replyTo
+          ? toReplyPreviewDto(replyTo)
+          : {
+              id: replyToMessageId,
+              senderUserId: "",
+              body: "",
+              hasImage: false,
+              image: null,
+              deletedAt: new Date(0).toISOString(),
+            },
     createdAt: message.createdAt.toISOString(),
     status: messageStatus(message),
   };
@@ -97,6 +150,27 @@ export class ChatService {
     AppDataSource.getRepository(ChatConversation);
   private readonly messages = AppDataSource.getRepository(ChatMessage);
   private readonly users = AppDataSource.getRepository(User);
+
+  private async toMessageDtos(messages: ChatMessage[]): Promise<ChatMessageDto[]> {
+    const replyIds = [
+      ...new Set(
+        messages
+          .map((row) => row.replyToMessageId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const replies =
+      replyIds.length > 0
+        ? await this.messages.find({ where: { id: In(replyIds) } })
+        : [];
+    const replyById = new Map(replies.map((row) => [row.id, row]));
+    return messages.map((row) =>
+      toMessageDto(
+        row,
+        row.replyToMessageId ? replyById.get(row.replyToMessageId) ?? null : null,
+      ),
+    );
+  }
 
   async listContacts(userId: string, role: UserRole) {
     const contacts =
@@ -310,15 +384,17 @@ export class ChatService {
           })
         : [];
     const peerById = new Map(peers.map((peer) => [peer.id, peer]));
+    const messageDtos = await this.toMessageDtos(messageRows);
 
     return {
       conversations: matchedConversations,
       contacts: matchedContacts,
-      messages: messageRows.map((row) => {
+      messages: messageDtos.map((dto, index) => {
+        const row = messageRows[index]!;
         const peerId = this.peerUserId(row.conversation, userId);
         const peer = peerById.get(peerId);
         return {
-          ...toMessageDto(row),
+          ...dto,
           conversationId: row.conversationId,
           peerUserId: peerId,
           peerName: peer
@@ -450,7 +526,7 @@ export class ChatService {
     }
 
     return {
-      messages: rows.reverse().map(toMessageDto),
+      messages: await this.toMessageDtos(rows.reverse()),
       hasMore: rows.length === limit,
       peerOnline: isUserOnline(peerId),
     };
@@ -495,7 +571,7 @@ export class ChatService {
       .getManyAndCount();
 
     return {
-      messages: rows.map(toMessageDto),
+      messages: await this.toMessageDtos(rows),
       total,
     };
   }
@@ -506,6 +582,7 @@ export class ChatService {
     conversationId: string,
     bodyRaw: string,
     fileUpload?: IncomingStoredFile | null,
+    replyToMessageIdRaw?: string | null,
   ) {
     if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
       throw new AppError(
@@ -530,6 +607,21 @@ export class ChatService {
     const conversation = await this.requireParticipant(conversationId, userId);
     const peerId = this.peerUserId(conversation, userId);
     await assertCanChat(userId, role, peerId);
+
+    let replyTarget: ChatMessage | null = null;
+    const replyToMessageId = replyToMessageIdRaw?.trim() || null;
+    if (replyToMessageId) {
+      replyTarget = await this.messages.findOne({
+        where: { id: replyToMessageId, conversationId: conversation.id },
+      });
+      if (!replyTarget) {
+        throw new AppError(
+          400,
+          "Reply target message was not found",
+          "VALIDATION_ERROR",
+        );
+      }
+    }
 
     if (fileUpload?.buffer) {
       const mimeType = await assertValidChatAttachmentBuffer({
@@ -566,6 +658,7 @@ export class ChatService {
       readAt: null,
       voicePlayedAt: null,
       deletedAt: null,
+      replyToMessageId: replyTarget?.id ?? null,
     });
     await this.messages.save(message);
 
@@ -599,7 +692,7 @@ export class ChatService {
     conversation.updatedAt = new Date();
     await this.conversations.save(conversation);
 
-    const dto = toMessageDto(message);
+    const dto = toMessageDto(message, replyTarget);
     const peerUnread = await this.unreadCountForUser(peerId);
     const senderUnread = await this.unreadCountForUser(userId);
 
@@ -765,8 +858,9 @@ export class ChatService {
       );
     }
     if (message.deletedAt) {
+      const [dto] = await this.toMessageDtos([message]);
       return {
-        message: toMessageDto(message),
+        message: dto!,
         conversation: await this.toConversationDto(
           conversation,
           userId,
@@ -807,7 +901,7 @@ export class ChatService {
       select: { id: true, fullName: true, preferredName: true },
     });
 
-    const dto = toMessageDto(message);
+    const [dto] = await this.toMessageDtos([message]);
     const senderConversation = await this.toConversationDto(
       conversation,
       userId,

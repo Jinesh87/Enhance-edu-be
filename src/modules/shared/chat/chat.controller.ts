@@ -113,6 +113,10 @@ class ChatController {
         String(req.params.conversationId),
         String(req.body.body ?? ""),
         uploads[0] ?? null,
+        typeof req.body.replyToMessageId === "string" &&
+          req.body.replyToMessageId.trim()
+          ? String(req.body.replyToMessageId).trim()
+          : null,
       );
       res.status(201).json(data);
     } catch (error) {

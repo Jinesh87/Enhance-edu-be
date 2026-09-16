@@ -20,6 +20,7 @@ export const listMessagesQuerySchema = Joi.object({
 
 export const sendChatMessageSchema = Joi.object({
   body: Joi.string().trim().allow("").max(4000).optional().default(""),
+  replyToMessageId: Joi.string().uuid().optional().allow(null, ""),
   directUploads: Joi.alternatives()
     .try(Joi.string(), Joi.array().items(Joi.object().unknown(true)))
     .optional(),
