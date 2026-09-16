@@ -456,6 +456,50 @@ export class ChatService {
     };
   }
 
+  async searchInConversation(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+    queryRaw: string,
+    options?: { limit?: number },
+  ) {
+    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
+      throw new AppError(
+        403,
+        "Chat is not available for this role",
+        "CHAT_FORBIDDEN",
+      );
+    }
+
+    const query = queryRaw.trim();
+    if (query.length < 1) {
+      return { messages: [] as ReturnType<typeof toMessageDto>[], total: 0 };
+    }
+
+    const conversation = await this.requireParticipant(conversationId, userId);
+    const peerId = this.peerUserId(conversation, userId);
+    await assertCanChat(userId, role, peerId);
+
+    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 100);
+
+    const [rows, total] = await this.messages
+      .createQueryBuilder("message")
+      .where("message.conversationId = :conversationId", { conversationId })
+      .andWhere("message.deletedAt IS NULL")
+      .andWhere(
+        "(message.body ILIKE :needle OR COALESCE(message.originalName, '') ILIKE :needle)",
+        { needle: `%${query}%` },
+      )
+      .orderBy("message.createdAt", "DESC")
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      messages: rows.map(toMessageDto),
+      total,
+    };
+  }
+
   async sendMessage(
     userId: string,
     role: UserRole,

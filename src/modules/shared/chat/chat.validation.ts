@@ -28,3 +28,8 @@ export const sendChatMessageSchema = Joi.object({
 export const searchChatQuerySchema = Joi.object({
   q: Joi.string().trim().min(1).max(120).required(),
 });
+
+export const searchConversationMessagesQuerySchema = Joi.object({
+  q: Joi.string().trim().min(1).max(120).required(),
+  limit: Joi.number().integer().min(1).max(100).optional(),
+});

@@ -16,6 +16,7 @@ import {
   messageMediaParamsSchema,
   openConversationSchema,
   searchChatQuerySchema,
+  searchConversationMessagesQuerySchema,
   sendChatMessageSchema,
 } from "./chat.validation.js";
 
@@ -40,6 +41,12 @@ router.get(
   validate(conversationIdParamsSchema, "params"),
   validate(listMessagesQuerySchema, "query"),
   chatController.listMessages,
+);
+router.get(
+  "/conversations/:conversationId/messages/search",
+  validate(conversationIdParamsSchema, "params"),
+  validate(searchConversationMessagesQuerySchema, "query"),
+  chatController.searchInConversation,
 );
 router.post(
   "/conversations/:conversationId/messages",

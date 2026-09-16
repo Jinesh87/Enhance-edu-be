@@ -79,6 +79,27 @@ class ChatController {
     }
   };
 
+  searchInConversation = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await chatService.searchInConversation(
+        req.user!.id,
+        req.user!.role,
+        String(req.params.conversationId),
+        String(req.query.q ?? ""),
+        {
+          limit: req.query.limit ? Number(req.query.limit) : undefined,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   sendMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const uploads = resolveIncomingFiles(
