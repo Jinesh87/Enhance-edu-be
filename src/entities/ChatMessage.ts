@@ -56,6 +56,12 @@ export class ChatMessage {
   @Column({ type: "timestamptz", nullable: true })
   readAt!: Date | null;
 
+  @Column({ type: "timestamptz", nullable: true })
+  voicePlayedAt!: Date | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  deletedAt!: Date | null;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 }

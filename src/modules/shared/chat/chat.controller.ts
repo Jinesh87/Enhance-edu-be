@@ -115,7 +115,11 @@ class ChatController {
         storageKey: media.storageKey,
         mimeType: media.mimeType,
         originalName: media.originalName,
-        inline: true,
+        inline:
+          media.mimeType.toLowerCase().startsWith("image/") ||
+          media.mimeType.toLowerCase().startsWith("audio/") ||
+          media.mimeType.toLowerCase() === "video/webm" ||
+          media.mimeType.toLowerCase() === "video/mp4",
       });
     } catch (error) {
       next(error);
@@ -128,6 +132,38 @@ class ChatController {
         req.user!.id,
         req.user!.role,
         String(req.params.conversationId),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteMessage = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await chatService.deleteMessage(
+        req.user!.id,
+        req.user!.role,
+        String(req.params.conversationId),
+        String(req.params.messageId),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  markVoicePlayed = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await chatService.markVoicePlayed(
+        req.user!.id,
+        req.user!.role,
+        String(req.params.conversationId),
+        String(req.params.messageId),
       );
       res.status(200).json(data);
     } catch (error) {

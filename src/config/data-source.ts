@@ -1288,6 +1288,10 @@ export async function ensureChatSchema() {
       ADD COLUMN IF NOT EXISTS "mimeType" varchar(120);
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "byteSize" int;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "voicePlayedAt" timestamptz;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "deletedAt" timestamptz;
     CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversation_created"
       ON chat_messages ("conversationId", "createdAt");
     CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversationId"

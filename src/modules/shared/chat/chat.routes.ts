@@ -7,7 +7,7 @@ import {
 import { validate } from "../../../common/middleware/validate.js";
 import {
   uploadMiddleware,
-  validateUploadedChatImages,
+  validateUploadedChatAttachments,
 } from "../../../common/middleware/upload-validation.js";
 import { chatController } from "./chat.controller.js";
 import {
@@ -45,7 +45,7 @@ router.post(
   "/conversations/:conversationId/messages",
   validate(conversationIdParamsSchema, "params"),
   uploadMiddleware.array("files", 1),
-  validateUploadedChatImages,
+  validateUploadedChatAttachments,
   validate(sendChatMessageSchema),
   chatController.sendMessage,
 );
@@ -58,6 +58,16 @@ router.post(
   "/conversations/:conversationId/read",
   validate(conversationIdParamsSchema, "params"),
   chatController.markRead,
+);
+router.delete(
+  "/conversations/:conversationId/messages/:messageId",
+  validate(messageMediaParamsSchema, "params"),
+  chatController.deleteMessage,
+);
+router.post(
+  "/conversations/:conversationId/messages/:messageId/voice-played",
+  validate(messageMediaParamsSchema, "params"),
+  chatController.markVoicePlayed,
 );
 router.get("/unread-count", chatController.unreadCount);
 

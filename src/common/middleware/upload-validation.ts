@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import multer from "multer";
 import { AppError } from "../errors/AppError.js";
 import {
-  validateChatImageBuffer,
+  validateChatAttachmentBuffer,
   validateUploadBuffer,
 } from "../validation/validate-upload.js";
 
@@ -35,7 +35,7 @@ export async function validateUploadedFiles(
   }
 }
 
-export async function validateUploadedChatImages(
+export async function validateUploadedChatAttachments(
   req: Request,
   _res: Response,
   next: NextFunction,
@@ -45,12 +45,12 @@ export async function validateUploadedChatImages(
     if (files.length > 1) {
       throw new AppError(
         400,
-        "Only one image can be sent at a time",
+        "Only one file can be sent at a time",
         "INVALID_UPLOAD",
       );
     }
     for (const file of files) {
-      const result = await validateChatImageBuffer({
+      const result = await validateChatAttachmentBuffer({
         buffer: file.buffer,
         originalName: file.originalname,
         mimeType: file.mimetype,
@@ -66,3 +66,6 @@ export async function validateUploadedChatImages(
     next(error);
   }
 }
+
+/** @deprecated Use validateUploadedChatAttachments */
+export const validateUploadedChatImages = validateUploadedChatAttachments;

@@ -17,10 +17,11 @@ import {
 import { emitToUser, isUserOnline } from "./chat-socket.js";
 import {
   buildChatImageKey,
+  deleteObject,
   storeUploadedObject,
   type IncomingStoredFile,
 } from "../../../common/storage/object-storage.js";
-import { assertValidChatImageBuffer } from "../../../common/validation/validate-upload.js";
+import { assertValidChatAttachmentBuffer, isChatAttachmentMime, isChatAudioMime, isChatImageMime } from "../../../common/validation/validate-upload.js";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_BODY_LENGTH = 4000;
@@ -38,6 +39,8 @@ export type ChatMessageDto = {
   } | null;
   deliveredAt: string | null;
   readAt: string | null;
+  voicePlayedAt: string | null;
+  deletedAt: string | null;
   createdAt: string;
   status: "sent" | "delivered" | "read";
 };
@@ -50,19 +53,27 @@ function messageStatus(message: ChatMessage): ChatMessageDto["status"] {
 
 function messagePreview(message: ChatMessage | null | undefined): string | null {
   if (!message) return null;
+  if (message.deletedAt) return "Message deleted";
   const body = message.body?.trim() ?? "";
   if (body) return body.slice(0, 160);
-  if (message.storageKey) return "Photo";
+  if (message.storageKey) {
+    if (message.mimeType && isChatImageMime(message.mimeType)) return "Photo";
+    if (message.mimeType && isChatAudioMime(message.mimeType)) {
+      return "Voice message";
+    }
+    return "Document";
+  }
   return null;
 }
 
 function toMessageDto(message: ChatMessage): ChatMessageDto {
-  const hasImage = Boolean(message.storageKey);
+  const deleted = Boolean(message.deletedAt);
+  const hasImage = !deleted && Boolean(message.storageKey);
   return {
     id: message.id,
     conversationId: message.conversationId,
     senderUserId: message.senderUserId,
-    body: message.body,
+    body: deleted ? "" : message.body,
     hasImage,
     image:
       hasImage && message.originalName && message.mimeType
@@ -74,6 +85,8 @@ function toMessageDto(message: ChatMessage): ChatMessageDto {
         : null,
     deliveredAt: message.deliveredAt?.toISOString() ?? null,
     readAt: message.readAt?.toISOString() ?? null,
+    voicePlayedAt: message.voicePlayedAt?.toISOString() ?? null,
+    deletedAt: message.deletedAt?.toISOString() ?? null,
     createdAt: message.createdAt.toISOString(),
     status: messageStatus(message),
   };
@@ -115,6 +128,7 @@ export class ChatService {
       .innerJoin("message.conversation", "conversation")
       .where("message.senderUserId != :userId", { userId })
       .andWhere("message.readAt IS NULL")
+      .andWhere("message.deletedAt IS NULL")
       .andWhere(
         "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId)",
         { userId },
@@ -447,7 +461,7 @@ export class ChatService {
     role: UserRole,
     conversationId: string,
     bodyRaw: string,
-    imageUpload?: IncomingStoredFile | null,
+    fileUpload?: IncomingStoredFile | null,
   ) {
     if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
       throw new AppError(
@@ -458,7 +472,7 @@ export class ChatService {
     }
 
     const body = bodyRaw.trim();
-    if (!body && !imageUpload) {
+    if (!body && !fileUpload) {
       throw new AppError(400, "Message is required", "VALIDATION_ERROR");
     }
     if (body.length > MAX_BODY_LENGTH) {
@@ -473,23 +487,25 @@ export class ChatService {
     const peerId = this.peerUserId(conversation, userId);
     await assertCanChat(userId, role, peerId);
 
-    if (imageUpload?.buffer) {
-      await assertValidChatImageBuffer({
-        buffer: imageUpload.buffer,
-        originalName: imageUpload.originalName,
-        mimeType: imageUpload.mimeType,
-        size: imageUpload.size,
+    if (fileUpload?.buffer) {
+      const mimeType = await assertValidChatAttachmentBuffer({
+        buffer: fileUpload.buffer,
+        originalName: fileUpload.originalName,
+        mimeType: fileUpload.mimeType,
+        size: fileUpload.size,
       });
-    } else if (imageUpload) {
-      const mime = imageUpload.mimeType.toLowerCase();
-      if (
-        !mime.startsWith("image/") ||
-        mime === "image/svg+xml"
-      ) {
-        throw new AppError(400, "Only image files are allowed", "INVALID_UPLOAD");
+      fileUpload.mimeType = mimeType;
+    } else if (fileUpload) {
+      const mime = fileUpload.mimeType.toLowerCase();
+      if (!isChatAttachmentMime(mime)) {
+        throw new AppError(
+          400,
+          "Only images, documents, or voice messages are allowed",
+          "INVALID_UPLOAD",
+        );
       }
-      if (!imageUpload.directStorageKey) {
-        throw new AppError(400, "Image data is required", "INVALID_UPLOAD");
+      if (!fileUpload.directStorageKey) {
+        throw new AppError(400, "File data is required", "INVALID_UPLOAD");
       }
     }
 
@@ -504,27 +520,35 @@ export class ChatService {
       byteSize: null,
       deliveredAt: peerOnline ? new Date() : null,
       readAt: null,
+      voicePlayedAt: null,
+      deletedAt: null,
     });
     await this.messages.save(message);
 
-    if (imageUpload) {
+    if (fileUpload) {
       const storageKey = buildChatImageKey({
         conversationId: conversation.id,
         messageId: message.id,
-        fileName: imageUpload.originalName,
+        fileName: fileUpload.originalName,
       });
-      const stored = await storeUploadedObject({
-        finalKey: storageKey,
-        contentType: imageUpload.mimeType,
-        buffer: imageUpload.buffer,
-        directStorageKey: imageUpload.directStorageKey,
-        byteSize: imageUpload.size,
-      });
-      message.storageKey = stored.key;
-      message.originalName = imageUpload.originalName;
-      message.mimeType = imageUpload.mimeType;
-      message.byteSize = stored.byteSize || imageUpload.size;
-      await this.messages.save(message);
+      try {
+        const stored = await storeUploadedObject({
+          finalKey: storageKey,
+          contentType: fileUpload.mimeType,
+          buffer: fileUpload.buffer,
+          directStorageKey: fileUpload.directStorageKey,
+          byteSize: fileUpload.size,
+        });
+        message.storageKey = stored.key;
+        message.originalName = fileUpload.originalName;
+        message.mimeType = fileUpload.mimeType;
+        message.byteSize = stored.byteSize || fileUpload.size;
+        await this.messages.save(message);
+      } catch (error) {
+        await this.messages.delete({ id: message.id });
+        void deleteObject(storageKey).catch(() => undefined);
+        throw error;
+      }
     }
 
     conversation.lastMessageAt = message.createdAt;
@@ -598,8 +622,13 @@ export class ChatService {
     const message = await this.messages.findOne({
       where: { id: messageId, conversationId },
     });
-    if (!message?.storageKey || !message.mimeType || !message.originalName) {
-      throw new AppError(404, "Image not found", "NOT_FOUND");
+    if (
+      message?.deletedAt ||
+      !message?.storageKey ||
+      !message.mimeType ||
+      !message.originalName
+    ) {
+      throw new AppError(404, "Attachment not found", "NOT_FOUND");
     }
 
     return {
@@ -626,6 +655,7 @@ export class ChatService {
         conversationId,
         senderUserId: Not(userId),
         readAt: IsNull(),
+        deletedAt: IsNull(),
       },
       select: { id: true },
     });
@@ -637,6 +667,7 @@ export class ChatService {
           conversationId,
           senderUserId: Not(userId),
           readAt: IsNull(),
+          deletedAt: IsNull(),
         },
         { readAt: now, deliveredAt: now },
       );
@@ -659,6 +690,169 @@ export class ChatService {
     });
 
     return { ok: true, unreadCount, messageIds, readAt };
+  }
+
+  async deleteMessage(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+    messageId: string,
+  ) {
+    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
+      throw new AppError(
+        403,
+        "Chat is not available for this role",
+        "CHAT_FORBIDDEN",
+      );
+    }
+
+    const conversation = await this.requireParticipant(conversationId, userId);
+    const message = await this.messages.findOne({
+      where: { id: messageId, conversationId },
+    });
+    if (!message) {
+      throw new AppError(404, "Message not found", "NOT_FOUND");
+    }
+    if (message.senderUserId !== userId) {
+      throw new AppError(
+        403,
+        "Only the sender can delete this message",
+        "CHAT_FORBIDDEN",
+      );
+    }
+    if (message.deletedAt) {
+      return {
+        message: toMessageDto(message),
+        conversation: await this.toConversationDto(
+          conversation,
+          userId,
+          null,
+          message,
+        ),
+      };
+    }
+
+    const storageKey = message.storageKey;
+    message.deletedAt = new Date();
+    message.body = "";
+    message.storageKey = null;
+    message.originalName = null;
+    message.mimeType = null;
+    message.byteSize = null;
+    message.voicePlayedAt = null;
+    await this.messages.save(message);
+
+    if (storageKey) {
+      await deleteObject(storageKey).catch(() => undefined);
+    }
+
+    conversation.updatedAt = new Date();
+    await this.conversations.save(conversation);
+
+    const peerId = this.peerUserId(conversation, userId);
+    const lastMessage = await this.messages.findOne({
+      where: { conversationId },
+      order: { createdAt: "DESC" },
+    });
+    const sender = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, fullName: true, preferredName: true },
+    });
+    const peer = await this.users.findOne({
+      where: { id: peerId },
+      select: { id: true, fullName: true, preferredName: true },
+    });
+
+    const dto = toMessageDto(message);
+    const senderConversation = await this.toConversationDto(
+      conversation,
+      userId,
+      peer,
+      lastMessage,
+    );
+    const peerConversation = await this.toConversationDto(
+      conversation,
+      peerId,
+      sender,
+      lastMessage,
+    );
+    const peerUnread = await this.unreadCountForUser(peerId);
+    const senderUnread = await this.unreadCountForUser(userId);
+
+    emitToUser(peerId, "message:deleted", {
+      conversationId,
+      message: dto,
+      conversation: peerConversation,
+      unreadCount: peerUnread,
+    });
+    emitToUser(userId, "message:deleted", {
+      conversationId,
+      message: dto,
+      conversation: senderConversation,
+      unreadCount: senderUnread,
+    });
+
+    return { message: dto, conversation: senderConversation };
+  }
+
+  async markVoicePlayed(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+    messageId: string,
+  ) {
+    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
+      throw new AppError(
+        403,
+        "Chat is not available for this role",
+        "CHAT_FORBIDDEN",
+      );
+    }
+
+    await this.requireParticipant(conversationId, userId);
+    const message = await this.messages.findOne({
+      where: { id: messageId, conversationId },
+    });
+    if (!message || message.deletedAt || !message.storageKey || !message.mimeType) {
+      throw new AppError(404, "Voice message not found", "NOT_FOUND");
+    }
+    const mime = message.mimeType.toLowerCase();
+    const isAudio =
+      mime.startsWith("audio/") || mime === "video/webm" || mime === "video/mp4";
+    if (!isAudio) {
+      throw new AppError(400, "Message is not a voice note", "VALIDATION_ERROR");
+    }
+    // Only the recipient can mark a voice note as played.
+    if (message.senderUserId === userId) {
+      throw new AppError(
+        403,
+        "Sender cannot mark their own voice note as played",
+        "CHAT_FORBIDDEN",
+      );
+    }
+
+    const now = message.voicePlayedAt ?? new Date();
+    if (!message.voicePlayedAt) {
+      message.voicePlayedAt = now;
+      if (!message.deliveredAt) message.deliveredAt = now;
+      if (!message.readAt) message.readAt = now;
+      await this.messages.save(message);
+    }
+
+    const voicePlayedAt = now.toISOString();
+    const peerId = message.senderUserId;
+    emitToUser(peerId, "message:voice-played", {
+      conversationId,
+      messageId: message.id,
+      voicePlayedAt,
+    });
+    emitToUser(userId, "message:voice-played", {
+      conversationId,
+      messageId: message.id,
+      voicePlayedAt,
+    });
+
+    return { ok: true, messageId: message.id, voicePlayedAt };
   }
 
   async unreadCount(userId: string) {

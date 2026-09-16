@@ -360,10 +360,187 @@ const CHAT_IMAGE_MIME_TYPES = new Set([
   "image/gif",
 ]);
 
+const CHAT_DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "application/csv",
+]);
+
+const CHAT_AUDIO_MIME_TYPES = new Set([
+  "audio/webm",
+  "audio/ogg",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/aac",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/x-m4a",
+  // MediaRecorder sometimes labels audio-only containers as video/*
+  "video/webm",
+  "video/mp4",
+]);
+
 const MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_CHAT_DOCUMENT_BYTES = 20 * 1024 * 1024;
+const MAX_CHAT_AUDIO_BYTES = 10 * 1024 * 1024;
 const MIN_CHAT_IMAGE_BYTES = 64;
+const MIN_CHAT_DOCUMENT_BYTES = 1;
+const MIN_CHAT_AUDIO_BYTES = 64;
 const CHAT_IMAGE_UNSUPPORTED =
   "Unsupported image type. Please upload JPG, PNG, WEBP, HEIC, or GIF.";
+const CHAT_ATTACHMENT_UNSUPPORTED =
+  "Unsupported file type. Please upload an image, voice note, PDF, DOCX, CSV, XLS, or XLSX.";
+
+export function isChatImageMime(mimeType: string) {
+  return CHAT_IMAGE_MIME_TYPES.has(mimeType.trim().toLowerCase());
+}
+
+export function isChatDocumentMime(mimeType: string) {
+  return CHAT_DOCUMENT_MIME_TYPES.has(mimeType.trim().toLowerCase());
+}
+
+export function isChatAudioMime(mimeType: string) {
+  return CHAT_AUDIO_MIME_TYPES.has(mimeType.trim().toLowerCase());
+}
+
+export function isChatAttachmentMime(mimeType: string) {
+  const mime = mimeType.trim().toLowerCase();
+  return (
+    isChatImageMime(mime) || isChatDocumentMime(mime) || isChatAudioMime(mime)
+  );
+}
+
+function normalizeChatAudioMime(mimeType: string, originalName: string) {
+  const mime = mimeType.trim().toLowerCase();
+  const name = originalName.toLowerCase();
+  if (mime === "video/webm") return "audio/webm";
+  if (
+    mime === "video/mp4" &&
+    (/\.(m4a|mp4|aac)$/.test(name) || /(^|[/_-])voice/.test(name))
+  ) {
+    return "audio/mp4";
+  }
+  if (mime === "audio/x-m4a" || mime === "audio/aac") return "audio/mp4";
+  if (mime === "audio/x-wav" || mime === "audio/wave") return "audio/wav";
+  return mime;
+}
+
+function resolveChatAttachmentMime(
+  detectedMime: string | undefined,
+  declaredMime: string,
+  originalName: string,
+): string | null {
+  const fromResolve = resolveMimeType(detectedMime, originalName);
+  const candidate = (
+    fromResolve ||
+    detectedMime ||
+    declaredMime ||
+    ""
+  ).toLowerCase();
+  if (!candidate) return null;
+
+  const normalized = normalizeChatAudioMime(candidate, originalName);
+  if (isChatAttachmentMime(normalized) || isChatAttachmentMime(candidate)) {
+    return isChatAudioMime(candidate) || isChatAudioMime(normalized)
+      ? normalized
+      : normalized || candidate;
+  }
+
+  const extension = extensionOf(originalName);
+  switch (extension) {
+    case "webm":
+      return "audio/webm";
+    case "ogg":
+    case "oga":
+      return "audio/ogg";
+    case "mp3":
+      return "audio/mpeg";
+    case "m4a":
+    case "aac":
+      return "audio/mp4";
+    case "wav":
+      return "audio/wav";
+    default:
+      return null;
+  }
+}
+
+async function validateChatDocumentBuffer(
+  input: ValidateUploadInput,
+  mimeType: string,
+): Promise<ValidateUploadResult> {
+  if (
+    input.size < MIN_CHAT_DOCUMENT_BYTES ||
+    input.size > MAX_CHAT_DOCUMENT_BYTES
+  ) {
+    return invalid("Document must be 20MB or smaller.");
+  }
+
+  if (mimeType === "application/pdf") {
+    return validatePdf(input.buffer);
+  }
+  if (mimeType === "application/vnd.ms-excel") {
+    return validateXls(input.buffer);
+  }
+  if (
+    mimeType ===
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ) {
+    return validateXlsx(input.buffer);
+  }
+  if (mimeType === "text/csv" || mimeType === "application/csv") {
+    return validateCsv(input.buffer);
+  }
+  return validateDocx(input.buffer);
+}
+
+async function validateChatAudioBuffer(
+  input: ValidateUploadInput,
+  mimeType: string,
+): Promise<ValidateUploadResult> {
+  if (input.size < MIN_CHAT_AUDIO_BYTES || input.size > MAX_CHAT_AUDIO_BYTES) {
+    return invalid("Voice message must be between 64 bytes and 10MB.");
+  }
+
+  const head = input.buffer.subarray(0, 12);
+  const isWebm =
+    head.length >= 4 &&
+    head[0] === 0x1a &&
+    head[1] === 0x45 &&
+    head[2] === 0xdf &&
+    head[3] === 0xa3;
+  const isOgg = head.subarray(0, 4).toString("ascii") === "OggS";
+  const isWav =
+    head.subarray(0, 4).toString("ascii") === "RIFF" &&
+    input.buffer.subarray(8, 12).toString("ascii") === "WAVE";
+  const isId3 = head.subarray(0, 3).toString("ascii") === "ID3";
+  const isMp3Frame = head.length >= 2 && head[0] === 0xff && (head[1] & 0xe0) === 0xe0;
+  const isMp4 =
+    input.buffer.length >= 8 &&
+    input.buffer.subarray(4, 8).toString("ascii") === "ftyp";
+
+  if (mimeType === "audio/webm" && !isWebm) {
+    return invalid("This voice message appears to be corrupted. Please try again.");
+  }
+  if (mimeType === "audio/ogg" && !isOgg) {
+    return invalid("This voice message appears to be corrupted. Please try again.");
+  }
+  if (mimeType === "audio/wav" && !isWav) {
+    return invalid("This voice message appears to be corrupted. Please try again.");
+  }
+  if (mimeType === "audio/mpeg" && !isId3 && !isMp3Frame) {
+    return invalid("This voice message appears to be corrupted. Please try again.");
+  }
+  if (mimeType === "audio/mp4" && !isMp4) {
+    return invalid("This voice message appears to be corrupted. Please try again.");
+  }
+
+  return { valid: true, mimeType };
+}
 
 export async function validateChatImageBuffer(
   input: ValidateUploadInput,
@@ -371,7 +548,7 @@ export async function validateChatImageBuffer(
   const filenameError = validateFilename(input.originalName);
   if (filenameError) return filenameError;
 
-  if (isBlockedMime(input.mimeType)) {
+  if (isBlockedMime(input.mimeType) && !isChatAudioMime(input.mimeType)) {
     return invalid(CHAT_IMAGE_UNSUPPORTED);
   }
 
@@ -401,8 +578,54 @@ export async function validateChatImageBuffer(
   return { valid: true, mimeType };
 }
 
+export async function validateChatAttachmentBuffer(
+  input: ValidateUploadInput,
+): Promise<ValidateUploadResult> {
+  const filenameError = validateFilename(input.originalName);
+  if (filenameError) return filenameError;
+
+  if (
+    isBlockedMime(input.mimeType) &&
+    !isChatAudioMime(input.mimeType)
+  ) {
+    return invalid(CHAT_ATTACHMENT_UNSUPPORTED);
+  }
+
+  const detected = await fileTypeFromBuffer(input.buffer);
+  const mimeType = resolveChatAttachmentMime(
+    detected?.mime,
+    input.mimeType,
+    input.originalName,
+  );
+
+  if (!mimeType || !isChatAttachmentMime(mimeType)) {
+    return invalid(CHAT_ATTACHMENT_UNSUPPORTED);
+  }
+
+  if (isChatImageMime(mimeType)) {
+    return validateChatImageBuffer({ ...input, mimeType });
+  }
+
+  if (isChatAudioMime(mimeType)) {
+    const normalized = normalizeChatAudioMime(mimeType, input.originalName);
+    return validateChatAudioBuffer(input, normalized);
+  }
+
+  return validateChatDocumentBuffer(input, mimeType);
+}
+
 export async function assertValidChatImageBuffer(input: ValidateUploadInput) {
   const result = await validateChatImageBuffer(input);
+  if (!result.valid) {
+    throw new AppError(400, result.error, "INVALID_UPLOAD");
+  }
+  return result.mimeType;
+}
+
+export async function assertValidChatAttachmentBuffer(
+  input: ValidateUploadInput,
+) {
+  const result = await validateChatAttachmentBuffer(input);
   if (!result.valid) {
     throw new AppError(400, result.error, "INVALID_UPLOAD");
   }
@@ -414,23 +637,64 @@ export function assertPresignChatImageMeta(input: {
   mimeType: string;
   size?: number;
 }): { mimeType: string } {
+  return assertPresignChatAttachmentMeta(input);
+}
+
+export function assertPresignChatAttachmentMeta(input: {
+  originalName: string;
+  mimeType: string;
+  size?: number;
+}): { mimeType: string } {
   const nameCheck = validateFilename(input.originalName);
   if (nameCheck && !nameCheck.valid) {
     throw new AppError(400, nameCheck.error, "INVALID_UPLOAD");
   }
-  const mime = (input.mimeType || "").toLowerCase().trim();
-  if (!CHAT_IMAGE_MIME_TYPES.has(mime)) {
-    throw new AppError(400, CHAT_IMAGE_UNSUPPORTED, "INVALID_UPLOAD");
+  const mime = normalizeChatAudioMime(
+    (input.mimeType || "").toLowerCase().trim(),
+    input.originalName,
+  );
+  if (!isChatAttachmentMime(mime) && !isChatAttachmentMime(input.mimeType || "")) {
+    throw new AppError(400, CHAT_ATTACHMENT_UNSUPPORTED, "INVALID_UPLOAD");
   }
-  if (
-    input.size != null &&
-    (input.size < MIN_CHAT_IMAGE_BYTES || input.size > MAX_CHAT_IMAGE_BYTES)
-  ) {
-    throw new AppError(
-      400,
-      "Image must be between 64 bytes and 10MB.",
-      "INVALID_UPLOAD",
-    );
+  const resolved = isChatAttachmentMime(mime)
+    ? mime
+    : normalizeChatAudioMime(input.mimeType || "", input.originalName);
+  if (!isChatAttachmentMime(resolved)) {
+    throw new AppError(400, CHAT_ATTACHMENT_UNSUPPORTED, "INVALID_UPLOAD");
   }
-  return { mimeType: mime };
+  if (input.size != null) {
+    if (isChatImageMime(resolved)) {
+      if (
+        input.size < MIN_CHAT_IMAGE_BYTES ||
+        input.size > MAX_CHAT_IMAGE_BYTES
+      ) {
+        throw new AppError(
+          400,
+          "Image must be between 64 bytes and 10MB.",
+          "INVALID_UPLOAD",
+        );
+      }
+    } else if (isChatAudioMime(resolved)) {
+      if (
+        input.size < MIN_CHAT_AUDIO_BYTES ||
+        input.size > MAX_CHAT_AUDIO_BYTES
+      ) {
+        throw new AppError(
+          400,
+          "Voice message must be between 64 bytes and 10MB.",
+          "INVALID_UPLOAD",
+        );
+      }
+    } else if (
+      input.size < MIN_CHAT_DOCUMENT_BYTES ||
+      input.size > MAX_CHAT_DOCUMENT_BYTES
+    ) {
+      throw new AppError(
+        400,
+        "Document must be 20MB or smaller.",
+        "INVALID_UPLOAD",
+      );
+    }
+  }
+  return { mimeType: resolved };
 }
