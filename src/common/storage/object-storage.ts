@@ -7,11 +7,12 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { rename } from "fs/promises";
+import { readdir, rename, stat } from "fs/promises";
 import type { Response } from "express";
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
@@ -310,6 +311,104 @@ export function buildChatImageKey(parts: {
 }): string {
   const safe = parts.fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
   return `chat/${parts.conversationId}/${parts.messageId}/${Date.now()}-${safe}`;
+}
+
+export function guessMimeFromFileName(fileName: string): string {
+  const ext = fileName.includes(".")
+    ? fileName.slice(fileName.lastIndexOf(".") + 1).toLowerCase()
+    : "";
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    case "heic":
+      return "image/heic";
+    case "heif":
+      return "image/heif";
+    case "pdf":
+      return "application/pdf";
+    case "webm":
+      return "audio/webm";
+    case "ogg":
+    case "oga":
+      return "audio/ogg";
+    case "mp3":
+      return "audio/mpeg";
+    case "m4a":
+    case "aac":
+      return "audio/mp4";
+    case "wav":
+      return "audio/wav";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "xls":
+      return "application/vnd.ms-excel";
+    case "csv":
+      return "text/csv";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+export async function listObjectKeys(
+  prefix: string,
+): Promise<Array<{ key: string; size: number }>> {
+  const logicalPrefix = prefix.replace(/^\/+/, "");
+  if (isRemoteObjectStorage()) {
+    const remotePrefix = remoteKey(logicalPrefix);
+    const keys: Array<{ key: string; size: number }> = [];
+    let token: string | undefined;
+    do {
+      const out = await getS3().send(
+        new ListObjectsV2Command({
+          Bucket: env.LINODE_OBJECT_STORAGE_BUCKET,
+          Prefix: remotePrefix,
+          ContinuationToken: token,
+        }),
+      );
+      const folder = storageFolder();
+      for (const obj of out.Contents ?? []) {
+        let key = obj.Key || "";
+        if (!key) continue;
+        if (folder && (key === folder || key.startsWith(`${folder}/`))) {
+          key = key === folder ? "" : key.slice(folder.length + 1);
+        }
+        if (!key) continue;
+        keys.push({ key, size: obj.Size ?? 0 });
+      }
+      token = out.IsTruncated ? out.NextContinuationToken : undefined;
+    } while (token);
+    return keys;
+  }
+
+  const root = localPathForKey(logicalPrefix);
+  if (!existsSync(root)) return [];
+  const keys: Array<{ key: string; size: number }> = [];
+  async function walk(dir: string, logicalDir: string) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const nextLogical = logicalDir
+        ? `${logicalDir}/${entry.name}`
+        : entry.name;
+      const nextPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(nextPath, nextLogical);
+        continue;
+      }
+      const info = await stat(nextPath);
+      keys.push({ key: nextLogical, size: info.size });
+    }
+  }
+  await walk(root, logicalPrefix.replace(/\/$/, ""));
+  return keys;
 }
 
 /** Temporary key for direct uploads before DB row id exists. */

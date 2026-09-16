@@ -20,6 +20,7 @@ export const listMessagesQuerySchema = Joi.object({
 
 export const sendChatMessageSchema = Joi.object({
   body: Joi.string().trim().allow("").max(4000).optional().default(""),
+  replyToMessageId: Joi.string().uuid().optional().allow(null, ""),
   directUploads: Joi.alternatives()
     .try(Joi.string(), Joi.array().items(Joi.object().unknown(true)))
     .optional(),
@@ -27,4 +28,9 @@ export const sendChatMessageSchema = Joi.object({
 
 export const searchChatQuerySchema = Joi.object({
   q: Joi.string().trim().min(1).max(120).required(),
+});
+
+export const searchConversationMessagesQuerySchema = Joi.object({
+  q: Joi.string().trim().min(1).max(120).required(),
+  limit: Joi.number().integer().min(1).max(100).optional(),
 });

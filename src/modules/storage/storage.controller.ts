@@ -5,7 +5,7 @@ import {
   isBrowserDirectStorageEnabled,
 } from "../../common/storage/object-storage.js";
 import {
-  assertPresignChatImageMeta,
+  assertPresignChatAttachmentMeta,
   assertPresignUploadMeta,
 } from "../../common/validation/validate-upload.js";
 import { AppError } from "../../common/errors/AppError.js";
@@ -18,6 +18,7 @@ const ALLOWED_PURPOSES = new Set([
   "assessment-submission",
   "syllabus-document",
   "chat-image",
+  "chat-attachment",
 ]);
 
 class StorageController {
@@ -57,8 +58,8 @@ class StorageController {
       }
 
       const meta =
-        purpose === "chat-image"
-          ? assertPresignChatImageMeta({
+        purpose === "chat-image" || purpose === "chat-attachment"
+          ? assertPresignChatAttachmentMeta({
               originalName: fileName,
               mimeType: contentType,
               size: byteSize,

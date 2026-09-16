@@ -56,6 +56,20 @@ export class ChatMessage {
   @Column({ type: "timestamptz", nullable: true })
   readAt!: Date | null;
 
+  @Column({ type: "timestamptz", nullable: true })
+  voicePlayedAt!: Date | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  deletedAt!: Date | null;
+
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  replyToMessageId!: string | null;
+
+  @ManyToOne(() => ChatMessage, { onDelete: "SET NULL", nullable: true })
+  @JoinColumn({ name: "replyToMessageId" })
+  replyToMessage!: Relation<ChatMessage> | null;
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 }

@@ -1288,6 +1288,22 @@ export async function ensureChatSchema() {
       ADD COLUMN IF NOT EXISTS "mimeType" varchar(120);
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "byteSize" int;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "voicePlayedAt" timestamptz;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "deletedAt" timestamptz;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "replyToMessageId" uuid;
+    DO $$ BEGIN
+      ALTER TABLE chat_messages
+        ADD CONSTRAINT "FK_chat_messages_replyToMessageId"
+        FOREIGN KEY ("replyToMessageId") REFERENCES chat_messages(id)
+        ON DELETE SET NULL;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+    CREATE INDEX IF NOT EXISTS "IDX_chat_messages_replyToMessageId"
+      ON chat_messages ("replyToMessageId");
     CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversation_created"
       ON chat_messages ("conversationId", "createdAt");
     CREATE INDEX IF NOT EXISTS "IDX_chat_messages_conversationId"

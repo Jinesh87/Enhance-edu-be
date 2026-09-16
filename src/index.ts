@@ -31,6 +31,7 @@ import { startSessionResourceIngestWorker } from "./common/queues/session-resour
 import { startBulkActionsWorker } from "./common/queues/bulk-actions-queue.js";
 import { startBriefingsWorker } from "./common/queues/briefings-queue.js";
 import { attachChatSocket } from "./modules/shared/chat/chat-socket.js";
+import { repairChatMessageMediaLinks } from "./modules/shared/chat/repair-chat-media.js";
 
 const port = env.PORT;
 const ABSENCE_CHASE_SYNC_MS = 60_000;
@@ -52,6 +53,9 @@ async function bootstrap() {
   await ensureAdminAiSchema();
   await ensureLearningSchema();
   await ensureChatSchema();
+  await repairChatMessageMediaLinks().catch((error) => {
+    logger.warn({ err: error }, "Chat media repair skipped");
+  });
   await seedEnquiryCatalogue();
   await ensureEnquiryConstraints();
 
