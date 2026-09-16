@@ -1,6 +1,10 @@
 import { AppDataSource } from "../../config/data-source.js";
 import { AppError } from "../../common/errors/AppError.js";
-import { Holiday, Term, type HolidayKind } from "../../entities/index.js";
+import { Holiday, Term, Session, type HolidayKind } from "../../entities/index.js";
+import {
+  calendarDateInTimeZone,
+  DEFAULT_CLASS_TIMEZONE,
+} from "../../common/utils/timezone.js";
 
 type HolidayInput = {
   name: string;
@@ -8,6 +12,7 @@ type HolidayInput = {
   termId?: string | null;
   startDate: string;
   endDate: string;
+  cancelConflictingSessions?: boolean;
 };
 
 function toHolidayDto(holiday: Holiday) {
@@ -73,6 +78,64 @@ export class HolidaysService {
     return rows.map(toHolidayDto);
   }
 
+  async checkConflicts(input: {
+    startDate: string;
+    endDate: string;
+    kind: HolidayKind;
+    termId?: string | null;
+  }) {
+    const startDate = input.startDate?.trim();
+    const endDate = input.endDate?.trim();
+    if (!startDate || !endDate) {
+      return { conflictsCount: 0, sessions: [] };
+    }
+
+    const startBuffer = new Date(
+      Date.parse(`${startDate}T00:00:00.000Z`) - 24 * 60 * 60 * 1000,
+    );
+    const endBuffer = new Date(
+      Date.parse(`${endDate}T23:59:59.999Z`) + 24 * 60 * 60 * 1000,
+    );
+
+    const qb = AppDataSource.getRepository(Session)
+      .createQueryBuilder("session")
+      .leftJoinAndSelect("session.class", "class")
+      .leftJoinAndSelect("class.teacher", "teacher")
+      .where(
+        "session.startAt >= :startBuffer AND session.startAt <= :endBuffer",
+        {
+          startBuffer,
+          endBuffer,
+        },
+      )
+      .andWhere("session.classId IS NOT NULL");
+
+    if (input.kind === "TERM" && input.termId) {
+      qb.andWhere("class.termId = :termId", { termId: input.termId });
+    }
+
+    const sessions = await qb.orderBy("session.startAt", "ASC").getMany();
+    const matched = sessions.filter((s) => {
+      const tz = s.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
+      const dateKey = calendarDateInTimeZone(s.startAt, tz);
+      return dateKey >= startDate && dateKey <= endDate;
+    });
+
+    return {
+      conflictsCount: matched.length,
+      sessions: matched.map((s) => ({
+        id: s.id,
+        className: s.class?.name ?? "Class",
+        classCode: s.class?.code ?? "",
+        subject: s.class?.subject ?? "",
+        teacherName: s.class?.teacher?.fullName ?? null,
+        room: s.room || s.class?.room || null,
+        startAt: s.startAt.toISOString(),
+        endAt: s.endAt.toISOString(),
+      })),
+    };
+  }
+
   async create(input: HolidayInput) {
     const payload = await this.normalizeInput(input);
     await this.assertNameUnique(payload.name, payload.kind, payload.termId);
@@ -86,6 +149,15 @@ export class HolidaysService {
       endDate: payload.endDate,
     });
     await this.holidays.save(holiday);
+
+    if (input.cancelConflictingSessions) {
+      await this.removeConflictingSessions(
+        payload.startDate,
+        payload.endDate,
+        payload.kind,
+        payload.termId,
+      );
+    }
 
     const saved = await this.findOrThrow(holiday.id);
     return toHolidayDto(saved);
@@ -109,8 +181,58 @@ export class HolidaysService {
     holiday.endDate = payload.endDate;
     await this.holidays.save(holiday);
 
+    if (input.cancelConflictingSessions) {
+      await this.removeConflictingSessions(
+        payload.startDate,
+        payload.endDate,
+        payload.kind,
+        payload.termId,
+      );
+    }
+
     const saved = await this.findOrThrow(holiday.id);
     return toHolidayDto(saved);
+  }
+
+  private async removeConflictingSessions(
+    startDate: string,
+    endDate: string,
+    kind: HolidayKind,
+    termId?: string | null,
+  ) {
+    const startBuffer = new Date(
+      Date.parse(`${startDate}T00:00:00.000Z`) - 24 * 60 * 60 * 1000,
+    );
+    const endBuffer = new Date(
+      Date.parse(`${endDate}T23:59:59.999Z`) + 24 * 60 * 60 * 1000,
+    );
+
+    const qb = AppDataSource.getRepository(Session)
+      .createQueryBuilder("session")
+      .leftJoinAndSelect("session.class", "class")
+      .where(
+        "session.startAt >= :startBuffer AND session.startAt <= :endBuffer",
+        {
+          startBuffer,
+          endBuffer,
+        },
+      )
+      .andWhere("session.classId IS NOT NULL");
+
+    if (kind === "TERM" && termId) {
+      qb.andWhere("class.termId = :termId", { termId });
+    }
+
+    const sessions = await qb.getMany();
+    const toRemove = sessions.filter((s) => {
+      const tz = s.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
+      const dateKey = calendarDateInTimeZone(s.startAt, tz);
+      return dateKey >= startDate && dateKey <= endDate;
+    });
+
+    if (toRemove.length > 0) {
+      await AppDataSource.getRepository(Session).remove(toRemove);
+    }
   }
 
   async remove(id: string) {

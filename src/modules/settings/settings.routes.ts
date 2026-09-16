@@ -18,6 +18,7 @@ import {
   openAiUsageQuerySchema,
 } from "./settings.validation.js";
 import {
+  checkHolidayConflictsSchema,
   createHolidaySchema,
   holidayIdParamsSchema,
   listHolidaysQuerySchema,
@@ -143,6 +144,11 @@ router.put(
     void settingsController.updateAdminAiCapabilitySettings(req, res),
 );
 
+router.post(
+  "/holidays/check-conflicts",
+  validate(checkHolidayConflictsSchema),
+  holidaysController.checkConflicts,
+);
 router.post(
   "/holidays",
   validate(createHolidaySchema),

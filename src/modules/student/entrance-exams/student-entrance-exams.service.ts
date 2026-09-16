@@ -23,6 +23,7 @@ import {
 import { enqueueOcrJob } from "../../../common/queues/ocr-queue.js";
 import {
   assertStudentAssessmentWindowOpen,
+  assessmentScheduleWindow,
 } from "../../admin/assessments/assessment-session-sync.service.js";
 
 export type UploadedExamFile = {
@@ -630,6 +631,11 @@ class StudentEntranceExamsService {
     await this.submissions.save(submission);
 
     await this.markExamAttended(studentUserId, assessment.termId, assessment);
+    await this.syncAttendanceOnSubmission(
+      studentUserId,
+      assessment,
+      submission.submittedAt,
+    );
 
     await enqueueOcrJob(submission.id);
 
@@ -663,6 +669,11 @@ class StudentEntranceExamsService {
     submission.status = "SUBMITTED";
     submission.submittedAt = new Date();
     await this.submissions.save(submission);
+    await this.syncAttendanceOnSubmission(
+      studentUserId,
+      assessment,
+      submission.submittedAt,
+    );
     await enqueueOcrJob(submission.id);
 
     const refreshed = await this.submissions.findOneOrFail({
@@ -670,6 +681,80 @@ class StudentEntranceExamsService {
       relations: { files: true },
     });
     return { submission: toSubmissionDto(refreshed, assessment) };
+  }
+
+  private async syncAttendanceOnSubmission(
+    studentUserId: string,
+    assessment: Assessment,
+    submittedAt: Date,
+  ) {
+    try {
+      const sessionRepo = AppDataSource.getRepository(Session);
+      const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
+
+      let session = await sessionRepo.findOne({
+        where: { assessmentId: assessment.id },
+      });
+
+      if (!session) {
+        const { assessmentSessionSyncService } = await import(
+          "../../admin/assessments/assessment-session-sync.service.js"
+        );
+        session = await assessmentSessionSyncService.syncFromAssessment(
+          assessment.id,
+        );
+      }
+
+      if (!session) return;
+
+      const window = assessmentScheduleWindow(
+        assessment.assessmentDate,
+        assessment.startTime,
+        assessment.durationMinutes,
+        assessment.scheduleType,
+        assessment.timeZone,
+      );
+
+      const isLate =
+        assessment.scheduleType !== "FULL_DAY" &&
+        window != null &&
+        submittedAt.getTime() > window.endAt.getTime();
+
+      const status = isLate
+        ? AttendanceStatus.LATE
+        : AttendanceStatus.PRESENT;
+      const reason = isLate
+        ? "Late assessment submission (within grace window)"
+        : "On-time assessment submission";
+
+      let record = await attendanceRepo.findOne({
+        where: { sessionId: session.id, studentId: studentUserId },
+      });
+
+      if (!record) {
+        record = attendanceRepo.create({
+          sessionId: session.id,
+          studentId: studentUserId,
+          status,
+          scannedAt: submittedAt,
+          markedManually: false,
+          manualReason: reason,
+        });
+      } else {
+        record.status = status;
+        record.scannedAt = submittedAt;
+        record.markedManually = false;
+        record.manualReason = reason;
+      }
+
+      await attendanceRepo.save(record);
+    } catch (error) {
+      const { logger } = await import("../../../config/logger.js");
+      logger.error(
+        { error, studentUserId, assessmentId: assessment.id },
+        "Failed to auto-sync attendance on assessment submission",
+      );
+    }
   }
 
   private async markExamAttended(

@@ -17,6 +17,20 @@ class HolidaysController {
     }
   };
 
+  checkConflicts = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await holidaysService.checkConflicts({
+        startDate: req.body.startDate,
+        endDate: req.body.endDate,
+        kind: req.body.kind,
+        termId: req.body.termId ?? null,
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   create = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const holiday = await holidaysService.create({
@@ -25,6 +39,7 @@ class HolidaysController {
         termId: req.body.termId ?? null,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
+        cancelConflictingSessions: req.body.cancelConflictingSessions === true,
       });
       await writeAuditLog({
         actorUserId: req.user!.id,
@@ -53,6 +68,7 @@ class HolidaysController {
         termId: req.body.termId ?? null,
         startDate: req.body.startDate,
         endDate: req.body.endDate,
+        cancelConflictingSessions: req.body.cancelConflictingSessions === true,
       });
       await writeAuditLog({
         actorUserId: req.user!.id,
