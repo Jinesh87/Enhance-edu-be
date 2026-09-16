@@ -1,7 +1,8 @@
-import { In } from "typeorm";
+import { In, LessThanOrEqual, MoreThanOrEqual } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
   DEFAULT_CLASS_TIMEZONE,
+  calendarDateInTimeZone,
   dayRangeInTimeZone,
 } from "../../../common/utils/timezone.js";
 import { buildScheduleSlotKey } from "../../../common/utils/schedule-slot.js";
@@ -16,6 +17,7 @@ import {
   AssessmentStudent,
   AttendanceRecord,
   AttendanceStatus,
+  Holiday,
   Session,
 } from "../../../entities/index.js";
 import { assessmentSessionSyncService } from "../../admin/assessments/assessment-session-sync.service.js";
@@ -70,6 +72,39 @@ function mapSessionDto(
     enrolledCount: extras?.enrolledCount,
     attendedCount: extras?.attendedCount,
     absentCount: extras?.absentCount,
+  };
+}
+
+function toHolidayDto(holiday: Holiday) {
+  return {
+    id: holiday.id,
+    name: holiday.name,
+    kind: holiday.kind,
+    termId: holiday.termId ?? null,
+    term: holiday.term
+      ? {
+          id: holiday.term.id,
+          name: holiday.term.name,
+          startDate: holiday.term.startDate,
+          endDate: holiday.term.endDate,
+          academicYear: holiday.term.academicYear
+            ? {
+                id: holiday.term.academicYear.id,
+                year: holiday.term.academicYear.year,
+                displayName: holiday.term.academicYear.displayName,
+              }
+            : undefined,
+          yearLevel: holiday.term.yearLevel
+            ? {
+                id: holiday.term.yearLevel.id,
+                name: holiday.term.yearLevel.name,
+                sequence: holiday.term.yearLevel.sequence,
+              }
+            : undefined,
+        }
+      : null,
+    startDate: holiday.startDate,
+    endDate: holiday.endDate,
   };
 }
 
@@ -139,12 +174,27 @@ export class TeacherClassService {
       const { start, end, weekEndKey } = weekRangeFromMondayStart(
         options.weekStart,
       );
-      const sessions = await this.fetchTeacherSessionsInRange(
-        teacherId,
-        start,
-        end,
-        subject,
-      );
+      const [sessions, holidays] = await Promise.all([
+        this.fetchTeacherSessionsInRange(
+          teacherId,
+          start,
+          end,
+          subject,
+        ),
+        AppDataSource.getRepository(Holiday).find({
+          where: {
+            startDate: LessThanOrEqual(weekEndKey),
+            endDate: MoreThanOrEqual(options.weekStart),
+          },
+          relations: {
+            term: {
+              academicYear: true,
+              yearLevel: true,
+            },
+          },
+          order: { startDate: "ASC", name: "ASC" },
+        }),
+      ]);
       const hasMoreWeeks = await this.repo.hasTeacherSessionsAfter(
         teacherId,
         end,
@@ -155,6 +205,7 @@ export class TeacherClassService {
         weekStart: options.weekStart,
         weekEnd: weekEndKey,
         sessions: await this.mapSessionsWithEnrollment(sessions),
+        holidays: holidays.map(toHolidayDto),
         hasMoreWeeks,
         nextWeekStart: hasMoreWeeks
           ? addCalendarDays(weekEndKey, 1)
@@ -162,7 +213,7 @@ export class TeacherClassService {
       };
     }
 
-    const [todaySessions, thisWeekSessions, nextWeekSessions] =
+    const [todaySessions, thisWeekSessions, nextWeekSessions, holidays] =
       await Promise.all([
         this.fetchTeacherSessionsInRange(
           teacherId,
@@ -182,6 +233,23 @@ export class TeacherClassService {
           ranges.nextWeekEnd,
           subject,
         ),
+        AppDataSource.getRepository(Holiday).find({
+          where: {
+            startDate: LessThanOrEqual(
+              calendarDateInTimeZone(ranges.nextWeekEnd, DEFAULT_CLASS_TIMEZONE),
+            ),
+            endDate: MoreThanOrEqual(
+              calendarDateInTimeZone(ranges.todayStart, DEFAULT_CLASS_TIMEZONE),
+            ),
+          },
+          relations: {
+            term: {
+              academicYear: true,
+              yearLevel: true,
+            },
+          },
+          order: { startDate: "ASC", name: "ASC" },
+        }),
       ]);
 
     const hasMoreWeeks = await this.repo.hasTeacherSessionsAfter(
@@ -195,6 +263,7 @@ export class TeacherClassService {
       today: await this.mapSessionsWithEnrollment(todaySessions),
       thisWeek: await this.mapSessionsWithEnrollment(thisWeekSessions),
       nextWeek: await this.mapSessionsWithEnrollment(nextWeekSessions),
+      holidays: holidays.map(toHolidayDto),
       hasMoreWeeks,
       nextWeekStart: hasMoreWeeks ? ranges.nextExtraWeekStart : null,
     };
@@ -445,11 +514,28 @@ export class TeacherClassService {
     const fullDayAssessmentSessions =
       await this.findFullDayAssessmentSessions(since, until);
 
+    const sinceDateKey = calendarDateInTimeZone(since, DEFAULT_CLASS_TIMEZONE);
+    const untilDateKey = calendarDateInTimeZone(until, DEFAULT_CLASS_TIMEZONE);
+    const holidays = await AppDataSource.getRepository(Holiday).find({
+      where: {
+        startDate: LessThanOrEqual(untilDateKey),
+        endDate: MoreThanOrEqual(sinceDateKey),
+      },
+    });
+
     const visibleClassSessions = dedupeSessionsByScheduleSlot(
-      filteredClassSessions.filter(
-        (session) =>
-          !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions),
-      ),
+      filteredClassSessions.filter((session) => {
+        const tz = session.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
+        const dateKey = calendarDateInTimeZone(session.startAt, tz);
+        const isHolidayDate = holidays.some(
+          (h) =>
+            dateKey >= h.startDate &&
+            dateKey <= h.endDate &&
+            (h.kind === "PUBLIC" || (h.termId && h.termId === session.class?.term?.id)),
+        );
+        if (isHolidayDate) return false;
+        return !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions);
+      }),
     );
 
     const merged = [...visibleClassSessions, ...assessmentSessions]
@@ -500,20 +586,43 @@ export class TeacherClassService {
       await this.findFullDayAssessmentSessions(since, until);
     const fullDayWeekAssessmentSessions =
       await this.findFullDayAssessmentSessions(tomorrow);
+
+    const sinceDateKey = calendarDateInTimeZone(since, DEFAULT_CLASS_TIMEZONE);
+    const untilDateKey = calendarDateInTimeZone(until, DEFAULT_CLASS_TIMEZONE);
+    const holidays = await AppDataSource.getRepository(Holiday).find({
+      where: {
+        startDate: LessThanOrEqual(untilDateKey),
+        endDate: MoreThanOrEqual(sinceDateKey),
+      },
+    });
+
     const visibleClassSessions = dedupeSessionsByScheduleSlot(
-      classSessions.filter(
-        (session) =>
-          !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions),
-      ),
+      classSessions.filter((session) => {
+        const tz = session.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
+        const dateKey = calendarDateInTimeZone(session.startAt, tz);
+        const isHolidayDate = holidays.some(
+          (h) =>
+            dateKey >= h.startDate &&
+            dateKey <= h.endDate &&
+            (h.kind === "PUBLIC" || (h.termId && h.termId === session.class?.term?.id)),
+        );
+        if (isHolidayDate) return false;
+        return !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions);
+      }),
     );
     const visibleClassWeekSessions = dedupeSessionsByScheduleSlot(
-      classWeekSessions.filter(
-        (session) =>
-          !this.isSupersededByFullDayExam(
-            session,
-            fullDayWeekAssessmentSessions,
-          ),
-      ),
+      classWeekSessions.filter((session) => {
+        const tz = session.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
+        const dateKey = calendarDateInTimeZone(session.startAt, tz);
+        const isHolidayDate = holidays.some(
+          (h) =>
+            dateKey >= h.startDate &&
+            dateKey <= h.endDate &&
+            (h.kind === "PUBLIC" || (h.termId && h.termId === session.class?.term?.id)),
+        );
+        if (isHolidayDate) return false;
+        return !this.isSupersededByFullDayExam(session, fullDayWeekAssessmentSessions);
+      }),
     );
 
     const activeSessions = [...visibleClassSessions, ...assessmentSessions]
@@ -610,11 +719,12 @@ export class TeacherClassService {
     session: Session,
     fullDayAssessmentSessions: Session[],
   ): boolean {
-    return fullDayAssessmentSessions.some(
-      (exam) =>
-        session.startAt.getTime() < exam.endAt.getTime() &&
-        exam.startAt.getTime() < session.endAt.getTime(),
-    );
+    const tz = session.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
+    const sessionDate = calendarDateInTimeZone(session.startAt, tz);
+    return fullDayAssessmentSessions.some((exam) => {
+      const examDate = calendarDateInTimeZone(exam.startAt, tz);
+      return sessionDate === examDate;
+    });
   }
 }
 
