@@ -11,6 +11,7 @@ import {
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import {
   buildClassJoinAtMap,
+  isSessionOverlappingWindows,
   isStudentAccountableForSession,
 } from "../../shared/attendance/student-session-eligibility.js";
 import {
@@ -231,8 +232,45 @@ export class GuardianAcademicsService {
       order: { startAt: "DESC" },
     });
 
+    const assessmentLinks = await this.assessmentStudents.find({
+      where: { studentId: studentUserId },
+      relations: { assessment: true },
+    });
+
+    const fullDayAssessmentIds = assessmentLinks
+      .filter(
+        (link) =>
+          link.assessment?.scheduleType === "FULL_DAY" &&
+          link.assessment?.status !== "ARCHIVED" &&
+          link.assessment?.status !== "CANCELLED",
+      )
+      .map((link) => link.assessmentId);
+
+    const fullDaySessions =
+      fullDayAssessmentIds.length > 0
+        ? await AppDataSource.getRepository(Session).find({
+            where: { assessmentId: In(fullDayAssessmentIds) },
+            select: { id: true, startAt: true, endAt: true },
+          })
+        : [];
+
+    const fullDayExamWindows = fullDaySessions.map((s) => {
+      const d = new Date(s.startAt);
+      const dayStart = new Date(d);
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+      return {
+        startAt: dayStart,
+        endAt: dayEnd,
+      };
+    });
+
     const accountableSessions = sessions.filter((session) => {
       if (!session.classId) return false;
+      if (isSessionOverlappingWindows(session, fullDayExamWindows)) {
+        return false;
+      }
       const joinedAt = joinAtByClassId.get(session.classId);
       return Boolean(
         joinedAt && isStudentAccountableForSession(session, joinedAt),

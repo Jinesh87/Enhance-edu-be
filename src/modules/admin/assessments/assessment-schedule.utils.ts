@@ -37,9 +37,7 @@ export function assessmentScheduleWindow(
   const dateKey = normalizeDateKey(assessmentDate);
   if (!dateKey) return null;
   const [year, month, day] = dateKey.split("-").map(Number);
-  const [hour, minute] = (scheduleType === "FULL_DAY" ? "00:00" : startTime)
-    .split(":")
-    .map(Number);
+  const [hour, minute] = (startTime || "09:00").split(":").map(Number);
   if (
     !Number.isFinite(year) ||
     !Number.isFinite(month) ||
@@ -54,8 +52,7 @@ export function assessmentScheduleWindow(
     resolveAssessmentTimeZone(timeZone),
   );
   if (Number.isNaN(startAt.getTime())) return null;
-  const duration =
-    scheduleType === "FULL_DAY" ? 1440 : Math.max(durationMinutes || 60, 15);
+  const duration = Math.max(durationMinutes || 60, 15);
   return {
     startAt,
     endAt: new Date(startAt.getTime() + duration * 60_000),

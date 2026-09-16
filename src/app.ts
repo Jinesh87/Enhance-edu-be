@@ -40,6 +40,7 @@ import adminAiRouter from "./modules/admin/ai/admin-ai.routes.js";
 import storageRouter from "./modules/storage/storage.routes.js";
 import notificationsRouter from "./modules/notifications/notifications.routes.js";
 import chatRouter from "./modules/shared/chat/chat.routes.js";
+import adminReportsRouter from "./modules/admin/reports/admin-reports.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -103,6 +104,7 @@ app.use("/api/student/entrance-exams", studentEntranceExamsRouter);
 app.use("/api/student/coach", studentCoachRouter);
 app.use("/api/student/learning", studentLearningRouter);
 app.use("/api/admin/ai", adminAiRouter);
+app.use("/api/admin/reports", adminReportsRouter);
 app.use("/api/storage", storageRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
 app.use("/api/guardian/portal-settings", guardianPortalRouter);

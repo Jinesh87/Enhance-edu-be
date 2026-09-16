@@ -905,27 +905,40 @@ export class AdminClassesService {
       });
     }
     if (filters?.from && /^\d{4}-\d{2}-\d{2}$/.test(filters.from)) {
-      qb.andWhere("session.startAt >= :fromAt", {
-        fromAt: new Date(`${filters.from}T00:00:00.000`),
-      });
+      const startBuffer = new Date(
+        Date.parse(`${filters.from}T00:00:00.000Z`) - 24 * 60 * 60 * 1000,
+      );
+      qb.andWhere("session.startAt >= :startBuffer", { startBuffer });
     }
     if (filters?.to && /^\d{4}-\d{2}-\d{2}$/.test(filters.to)) {
-      const toParts = filters.to.split("-").map(Number);
-      const toExclusive = new Date(
-        toParts[0],
-        toParts[1] - 1,
-        toParts[2] + 1,
-        0,
-        0,
-        0,
-        0,
+      const endBuffer = new Date(
+        Date.parse(`${filters.to}T23:59:59.999Z`) + 24 * 60 * 60 * 1000,
       );
-      qb.andWhere("session.startAt < :toExclusive", { toExclusive });
+      qb.andWhere("session.startAt <= :endBuffer", { endBuffer });
     }
 
     qb.orderBy("session.startAt", "ASC");
 
     let sessionRows = await qb.getMany();
+
+    const fromKey =
+      filters?.from && /^\d{4}-\d{2}-\d{2}$/.test(filters.from)
+        ? filters.from
+        : null;
+    const toKey =
+      filters?.to && /^\d{4}-\d{2}-\d{2}$/.test(filters.to)
+        ? filters.to
+        : null;
+
+    if (fromKey || toKey) {
+      sessionRows = sessionRows.filter((s) => {
+        const tz = resolveIanaTimeZone(s.class?.timeZone);
+        const dateKey = calendarDateInTimeZone(s.startAt, tz);
+        if (fromKey && dateKey < fromKey) return false;
+        if (toKey && dateKey > toKey) return false;
+        return true;
+      });
+    }
 
     // Classes created via bulk schedule may have dayTime but no Session row
     // (bulk historically skipped past/ended occurrences). Backfill those so
@@ -976,15 +989,6 @@ export class AdminClassesService {
         .map((row) => row.classId)
         .filter((id): id is string => Boolean(id)),
     );
-
-    const fromKey =
-      filters?.from && /^\d{4}-\d{2}-\d{2}$/.test(filters.from)
-        ? filters.from
-        : null;
-    const toKey =
-      filters?.to && /^\d{4}-\d{2}-\d{2}$/.test(filters.to)
-        ? filters.to
-        : null;
 
     const toBackfill: Session[] = [];
     for (const cls of matchingClasses) {

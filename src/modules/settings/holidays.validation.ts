@@ -14,15 +14,23 @@ const holidayBodySchema = Joi.object({
   termId: Joi.when("kind", {
     is: "TERM",
     then: Joi.string().uuid().required(),
-    otherwise: Joi.valid(null).optional(),
+    otherwise: Joi.valid(null, "").optional(),
   }),
   startDate: dateField,
   endDate: dateField,
+  cancelConflictingSessions: Joi.boolean().optional(),
 });
 
 export const createHolidaySchema = holidayBodySchema;
 
 export const updateHolidaySchema = holidayBodySchema;
+
+export const checkHolidayConflictsSchema = Joi.object({
+  kind: Joi.string().valid("PUBLIC", "TERM").required(),
+  termId: Joi.string().uuid().allow(null, "").optional(),
+  startDate: dateField,
+  endDate: dateField,
+});
 
 export const holidayIdParamsSchema = Joi.object({
   id: Joi.string().uuid().required(),
