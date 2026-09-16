@@ -1135,7 +1135,7 @@ export class StudentClassesService {
           ? attendance.scannedAt.toISOString()
           : null,
         isOnline: online,
-        canCheckIn,
+        canCheckIn: false,
         timeZone: resolveAssessmentTimeZone(assessment.timeZone),
         resources: [
           ...resourcesByAssessment.get(assessment.id)?.map((resource) => ({
@@ -1811,7 +1811,7 @@ export class StudentClassesService {
             ? attendance.scannedAt.toISOString()
             : null,
           isOnline: online,
-          canCheckIn,
+          canCheckIn: false,
           timeZone: resolveAssessmentTimeZone(assessment.timeZone),
           resources: [],
         });
