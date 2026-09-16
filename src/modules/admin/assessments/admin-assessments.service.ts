@@ -875,9 +875,8 @@ export class AdminAssessmentsService {
         "FULL_DAY_SCHOOL_ONLY",
       );
     }
-    const startTime = scheduleType === "FULL_DAY" ? "00:00" : input.startTime;
-    const durationMinutes =
-      scheduleType === "FULL_DAY" ? 1440 : input.durationMinutes;
+    const startTime = input.startTime || "09:00";
+    const durationMinutes = input.durationMinutes || 60;
     if (kind === "ENTRANCE" && !term.isTrial) {
       throw new AppError(
         400,
@@ -1041,19 +1040,9 @@ export class AdminAssessmentsService {
     const nextAssessmentDate =
       input.assessmentDate ?? assessment.assessmentDate;
     const nextStartTime =
-      nextScheduleType === "FULL_DAY"
-        ? "00:00"
-        : input.startTime ??
-          (assessment.scheduleType === "FULL_DAY"
-            ? "09:00"
-            : assessment.startTime);
+      input.startTime ?? assessment.startTime ?? "09:00";
     const nextDurationMinutes =
-      nextScheduleType === "FULL_DAY"
-        ? 1440
-        : input.durationMinutes ??
-          (assessment.scheduleType === "FULL_DAY"
-            ? 60
-            : assessment.durationMinutes);
+      input.durationMinutes ?? assessment.durationMinutes ?? 60;
     await this.assertAssessmentDateWithinTerm(nextAssessmentDate, term);
     const nextTimeZone =
       input.timeZone === undefined

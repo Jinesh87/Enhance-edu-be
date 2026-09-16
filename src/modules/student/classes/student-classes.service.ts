@@ -731,10 +731,17 @@ export class StudentClassesService {
     );
     const fullDayExamWindows = assessmentLessons
       .filter((lesson) => lesson.scheduleType === "FULL_DAY")
-      .map((lesson) => ({
-        startAt: new Date(lesson.startAt).getTime(),
-        endAt: new Date(lesson.endAt).getTime(),
-      }));
+      .map((lesson) => {
+        const d = new Date(lesson.startAt);
+        const dayStart = new Date(d);
+        dayStart.setUTCHours(0, 0, 0, 0);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+        return {
+          startAt: dayStart.getTime(),
+          endAt: dayEnd.getTime(),
+        };
+      });
     const visibleClassLessons = classLessons.filter((lesson) => {
       const startAt = new Date(lesson.startAt).getTime();
       const endAt = new Date(lesson.endAt).getTime();

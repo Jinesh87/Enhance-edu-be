@@ -1,10 +1,5 @@
 import type { ClassStudent, Session } from "../../../entities/index.js";
 
-/**
- * Class attendance accountability starts at class roster join time
- * (`class_students.createdAt`). A student is accountable for a session only
- * when the session had not already ended before they joined.
- */
 export function isStudentAccountableForSession(
   session: Pick<Session, "endAt">,
   joinedAt: Date,
@@ -23,4 +18,23 @@ export function buildClassJoinAtMap(
     }
   }
   return joinAtByClassId;
+}
+
+export interface TimeWindow {
+  startAt: Date | string | number;
+  endAt: Date | string | number;
+}
+
+export function isSessionOverlappingWindows(
+  session: Pick<Session, "startAt" | "endAt">,
+  windows: TimeWindow[],
+): boolean {
+  if (windows.length === 0) return false;
+  const sessionStart = new Date(session.startAt).getTime();
+  const sessionEnd = new Date(session.endAt).getTime();
+  return windows.some((w) => {
+    const wStart = new Date(w.startAt).getTime();
+    const wEnd = new Date(w.endAt).getTime();
+    return sessionStart < wEnd && wStart < sessionEnd;
+  });
 }
