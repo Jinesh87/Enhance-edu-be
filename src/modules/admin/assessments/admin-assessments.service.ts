@@ -5,6 +5,7 @@ import { UserRole } from "../../../common/constants/roles.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
   DEFAULT_CLASS_TIMEZONE,
+  calendarDateInTimeZone,
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
@@ -53,6 +54,7 @@ export type AssessmentInput = {
   notes?: string | null;
   studentIds?: string[];
   timeZone?: string | null;
+  cancelConflictingSessions?: boolean;
 };
 
 export type AssessmentStudentDto = {
@@ -696,6 +698,7 @@ export class AdminAssessmentsService {
       subject: string;
       yearGroup: string;
       timeZone?: string | null;
+      cancelConflictingSessions?: boolean;
     },
     excludeAssessmentId?: string,
   ): Promise<void> {
@@ -754,16 +757,25 @@ export class AdminAssessmentsService {
 
       const existing: ScheduleCandidate = {
         termId: assessment.termId,
-        label: `assessment "${assessment.name}"`,
+        label: `assessment "${assessment.subject}"`,
         startAt: existingWindow.startAt,
         endAt: existingWindow.endAt,
-        teacherId: assessment.teacherId,
-        classroomId: assessment.classroomId,
-        classId: assessment.classId,
-        room: assessment.room,
-        subject: assessment.subject,
-        yearGroup: assessment.yearGroup,
+        teacherId: assessment.teacherId ?? null,
+        classroomId: assessment.classroomId ?? null,
+        classId: assessment.classId ?? null,
+        room: assessment.room ?? null,
+        subject: assessment.subject ?? null,
+        yearGroup: assessment.yearGroup ?? null,
       };
+      if (input.scheduleType === "FULL_DAY" && assessment.scheduleType === "FULL_DAY") {
+        if (input.termId === assessment.termId && sameText(input.yearGroup, assessment.yearGroup)) {
+          throw scheduleConflictError(
+            proposed,
+            existing,
+            "the same subject and year-group cohort",
+          );
+        }
+      }
       const resource = sharedScheduleResource(proposed, existing);
       if (resource) throw scheduleConflictError(proposed, existing, resource);
     }
@@ -779,6 +791,7 @@ export class AdminAssessmentsService {
       .andWhere("session.endAt > :startAt", { startAt: proposed.startAt })
       .getMany();
 
+    const sessionsToRemove: Session[] = [];
     for (const session of sessions) {
       const existingClass = session.class;
       const currentClassWindow = existingClass?.dayTime
@@ -805,7 +818,17 @@ export class AdminAssessmentsService {
       };
       if (input.scheduleType === "FULL_DAY") continue;
       const resource = sharedScheduleResource(proposed, existing);
-      if (resource) throw scheduleConflictError(proposed, existing, resource);
+      if (resource) {
+        if (input.cancelConflictingSessions) {
+          sessionsToRemove.push(session);
+        } else {
+          throw scheduleConflictError(proposed, existing, resource);
+        }
+      }
+    }
+
+    if (sessionsToRemove.length > 0) {
+      await AppDataSource.getRepository(Session).remove(sessionsToRemove);
     }
   }
 
@@ -929,6 +952,7 @@ export class AdminAssessmentsService {
       subject: input.subject.trim(),
       yearGroup,
       timeZone,
+      cancelConflictingSessions: input.cancelConflictingSessions,
     });
     const studentIds =
       kind === "ENTRANCE"
@@ -974,6 +998,12 @@ export class AdminAssessmentsService {
     const saved = await this.repo.save(created);
     await this.repo.replaceStudents(saved.id, studentIds);
     await assessmentSessionSyncService.syncFromAssessment(saved.id);
+    if (scheduleType === "FULL_DAY") {
+      await this.removeConflictingClassSessionsForFullDay(
+        term.id,
+        input.assessmentDate,
+      );
+    }
     if (studentIds.length > 0) {
       void notifyStudentUsers(studentIds, () =>
         assessmentNotificationPayload({
@@ -986,6 +1016,43 @@ export class AdminAssessmentsService {
       );
     }
     return this.getById(saved.id);
+  }
+
+  private async removeConflictingClassSessionsForFullDay(
+    termId: string,
+    assessmentDate: string,
+  ) {
+    const dateStr = String(assessmentDate).slice(0, 10);
+    const startBuffer = new Date(
+      Date.parse(`${dateStr}T00:00:00.000Z`) - 24 * 60 * 60 * 1000,
+    );
+    const endBuffer = new Date(
+      Date.parse(`${dateStr}T23:59:59.999Z`) + 24 * 60 * 60 * 1000,
+    );
+
+    const qb = AppDataSource.getRepository(Session)
+      .createQueryBuilder("session")
+      .leftJoinAndSelect("session.class", "class")
+      .where(
+        "session.startAt >= :startBuffer AND session.startAt <= :endBuffer",
+        {
+          startBuffer,
+          endBuffer,
+        },
+      )
+      .andWhere("session.classId IS NOT NULL")
+      .andWhere("class.termId = :termId", { termId });
+
+    const sessions = await qb.getMany();
+    const toRemove = sessions.filter((s) => {
+      const tz = s.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
+      const dateKey = calendarDateInTimeZone(s.startAt, tz);
+      return dateKey === dateStr;
+    });
+
+    if (toRemove.length > 0) {
+      await AppDataSource.getRepository(Session).remove(toRemove);
+    }
   }
 
   async update(id: string, input: Partial<AssessmentInput>) {
@@ -1062,6 +1129,7 @@ export class AdminAssessmentsService {
         subject: nextSubject,
         yearGroup: nextYearGroup,
         timeZone: nextTimeZone,
+        cancelConflictingSessions: input.cancelConflictingSessions,
       },
       id,
     );
@@ -1139,6 +1207,12 @@ export class AdminAssessmentsService {
     await this.repo.save(assessment);
     await this.repo.replaceStudents(id, studentIds);
     await assessmentSessionSyncService.syncFromAssessment(id);
+    if (nextScheduleType === "FULL_DAY") {
+      await this.removeConflictingClassSessionsForFullDay(
+        term.id,
+        nextAssessmentDate,
+      );
+    }
 
     const newlyAdded = studentIds.filter((sid) => !existingStudentIds.includes(sid));
     if (newlyAdded.length > 0) {

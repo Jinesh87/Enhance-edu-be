@@ -21,6 +21,7 @@ import {
   ScanEvent,
   Task,
   Holiday,
+  Assessment,
 } from "../../../entities/index.js";
 import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
 
@@ -395,6 +396,14 @@ export class AdminClassesRepository {
         where: [{ kind: "PUBLIC" }, { kind: "TERM", termId }],
       });
 
+      const assessmentRepo = transactionManager.getRepository(Assessment);
+      const fullDayAssessments = await assessmentRepo.find({
+        where: { termId, scheduleType: "FULL_DAY" },
+      });
+      const fullDayDates = new Set(
+        fullDayAssessments.map((a) => String(a.assessmentDate).slice(0, 10)),
+      );
+
       const savedClasses: Class[] = [];
       const savedClassIds = new Set<string>();
 
@@ -413,7 +422,8 @@ export class AdminClassesRepository {
         const inputDate = calendarDateFromDayTime(input.dayTime);
         if (
           inputDate &&
-          isHolidayForTerm(inputDate, termId, holidays)
+          (isHolidayForTerm(inputDate, termId, holidays) ||
+            fullDayDates.has(inputDate))
         ) {
           continue;
         }
@@ -597,6 +607,14 @@ export class AdminClassesRepository {
 
       for (const c of classesForSessionGen) {
         if (!c.dayTime) continue;
+        const inputDate = calendarDateFromDayTime(c.dayTime);
+        if (
+          inputDate &&
+          (isHolidayForTerm(inputDate, termId, holidays) ||
+            fullDayDates.has(inputDate))
+        ) {
+          continue;
+        }
         try {
           const times = parseDayTime(c.dayTime, c.timeZone);
           if (!times) continue;
