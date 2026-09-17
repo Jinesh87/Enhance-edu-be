@@ -22,6 +22,7 @@ import {
   type IncomingStoredFile,
 } from "../../../common/storage/object-storage.js";
 import { assertValidChatAttachmentBuffer, isChatAttachmentMime, isChatAudioMime, isChatImageMime } from "../../../common/validation/validate-upload.js";
+import { notifyUsers } from "../../notifications/domain-notifications.js";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_BODY_LENGTH = 4000;
@@ -54,6 +55,7 @@ export type ChatMessageDto = {
   readAt: string | null;
   voicePlayedAt: string | null;
   deletedAt: string | null;
+  editedAt: string | null;
   replyToMessageId: string | null;
   replyTo: ChatReplyPreviewDto | null;
   createdAt: string;
@@ -126,6 +128,7 @@ function toMessageDto(
     readAt: message.readAt?.toISOString() ?? null,
     voicePlayedAt: message.voicePlayedAt?.toISOString() ?? null,
     deletedAt: message.deletedAt?.toISOString() ?? null,
+    editedAt: message.editedAt?.toISOString() ?? null,
     replyToMessageId,
     replyTo:
       replyToMessageId == null
@@ -245,6 +248,10 @@ export class ChatService {
       viewerUserId,
       conversation.id,
     );
+    const muted =
+      conversation.studentUserId === viewerUserId
+        ? Boolean(conversation.studentMutedAt)
+        : Boolean(conversation.teacherMutedAt);
 
     return {
       id: conversation.id,
@@ -260,6 +267,7 @@ export class ChatService {
         ? lastMessage.senderUserId === viewerUserId
         : false,
       unreadCount,
+      muted,
       createdAt: conversation.createdAt.toISOString(),
       updatedAt: conversation.updatedAt.toISOString(),
     };
@@ -738,7 +746,183 @@ export class ChatService {
       });
     }
 
+    const peerMuted =
+      conversation.studentUserId === peerId
+        ? Boolean(conversation.studentMutedAt)
+        : Boolean(conversation.teacherMutedAt);
+    if (!peerMuted) {
+      const senderName = sender
+        ? peerDisplayName({
+            fullName: sender.fullName,
+            preferredName: sender.preferredName,
+          })
+        : "New message";
+      const preview = messagePreview(message) || "New message";
+      const peerIsStudent = conversation.studentUserId === peerId;
+      void notifyUsers([
+        {
+          userId: peerId,
+          type: "CHAT_MESSAGE",
+          title: senderName,
+          body: preview,
+          data: {
+            conversationId: conversation.id,
+            messageId: message.id,
+            href: peerIsStudent
+              ? `/student/messages/${conversation.id}`
+              : `/tutor/messages/${conversation.id}`,
+          },
+        },
+      ]);
+    }
+
     return { message: dto, conversation: senderConversation };
+  }
+
+  async editMessage(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+    messageId: string,
+    bodyRaw: string,
+  ) {
+    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
+      throw new AppError(
+        403,
+        "Chat is not available for this role",
+        "CHAT_FORBIDDEN",
+      );
+    }
+
+    const body = bodyRaw.trim();
+    if (!body) {
+      throw new AppError(400, "Message is required", "VALIDATION_ERROR");
+    }
+    if (body.length > MAX_BODY_LENGTH) {
+      throw new AppError(
+        400,
+        `Message must be at most ${MAX_BODY_LENGTH} characters`,
+        "VALIDATION_ERROR",
+      );
+    }
+
+    const conversation = await this.requireParticipant(conversationId, userId);
+    const message = await this.messages.findOne({
+      where: { id: messageId, conversationId },
+    });
+    if (!message) {
+      throw new AppError(404, "Message not found", "NOT_FOUND");
+    }
+    if (message.senderUserId !== userId) {
+      throw new AppError(
+        403,
+        "Only the sender can edit this message",
+        "CHAT_FORBIDDEN",
+      );
+    }
+    if (message.deletedAt) {
+      throw new AppError(400, "Deleted messages cannot be edited", "VALIDATION_ERROR");
+    }
+    if (!message.body?.trim() && message.storageKey) {
+      throw new AppError(
+        400,
+        "Media-only messages cannot be edited",
+        "VALIDATION_ERROR",
+      );
+    }
+
+    message.body = body;
+    message.editedAt = new Date();
+    await this.messages.save(message);
+
+    conversation.updatedAt = new Date();
+    await this.conversations.save(conversation);
+
+    const [dto] = await this.toMessageDtos([message]);
+    const peerId = this.peerUserId(conversation, userId);
+    const lastMessage = await this.messages.findOne({
+      where: { conversationId },
+      order: { createdAt: "DESC" },
+    });
+    const sender = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, fullName: true, preferredName: true },
+    });
+    const peer = await this.users.findOne({
+      where: { id: peerId },
+      select: { id: true, fullName: true, preferredName: true },
+    });
+    const senderConversation = await this.toConversationDto(
+      conversation,
+      userId,
+      peer,
+      lastMessage,
+    );
+    const peerConversation = await this.toConversationDto(
+      conversation,
+      peerId,
+      sender,
+      lastMessage,
+    );
+    const peerUnread = await this.unreadCountForUser(peerId);
+    const senderUnread = await this.unreadCountForUser(userId);
+
+    emitToUser(peerId, "message:updated", {
+      conversationId,
+      message: dto,
+      conversation: peerConversation,
+      unreadCount: peerUnread,
+    });
+    emitToUser(userId, "message:updated", {
+      conversationId,
+      message: dto,
+      conversation: senderConversation,
+      unreadCount: senderUnread,
+    });
+
+    return { message: dto!, conversation: senderConversation };
+  }
+
+  async setConversationMuted(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+    muted: boolean,
+  ) {
+    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
+      throw new AppError(
+        403,
+        "Chat is not available for this role",
+        "CHAT_FORBIDDEN",
+      );
+    }
+
+    const conversation = await this.requireParticipant(conversationId, userId);
+    const now = muted ? new Date() : null;
+    if (conversation.studentUserId === userId) {
+      conversation.studentMutedAt = now;
+    } else {
+      conversation.teacherMutedAt = now;
+    }
+    conversation.updatedAt = new Date();
+    await this.conversations.save(conversation);
+
+    const lastMessage = await this.messages.findOne({
+      where: { conversationId },
+      order: { createdAt: "DESC" },
+    });
+    const peerId = this.peerUserId(conversation, userId);
+    const peer = await this.users.findOne({
+      where: { id: peerId },
+      select: { id: true, fullName: true, preferredName: true },
+    });
+    const dto = await this.toConversationDto(
+      conversation,
+      userId,
+      peer,
+      lastMessage,
+    );
+    return { conversation: dto };
   }
 
   async getMessageMedia(

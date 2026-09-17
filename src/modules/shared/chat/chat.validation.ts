@@ -26,6 +26,14 @@ export const sendChatMessageSchema = Joi.object({
     .optional(),
 });
 
+export const editChatMessageSchema = Joi.object({
+  body: Joi.string().trim().min(1).max(4000).required(),
+});
+
+export const muteConversationSchema = Joi.object({
+  muted: Joi.boolean().required(),
+});
+
 export const searchChatQuerySchema = Joi.object({
   q: Joi.string().trim().min(1).max(120).required(),
 });

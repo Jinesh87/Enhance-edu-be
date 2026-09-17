@@ -1264,6 +1264,10 @@ export async function ensureChatSchema() {
       ON chat_conversations ("studentUserId");
     CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_teacherUserId"
       ON chat_conversations ("teacherUserId");
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "studentMutedAt" timestamptz;
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "teacherMutedAt" timestamptz;
 
     CREATE TABLE IF NOT EXISTS chat_messages (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1292,6 +1296,8 @@ export async function ensureChatSchema() {
       ADD COLUMN IF NOT EXISTS "voicePlayedAt" timestamptz;
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "deletedAt" timestamptz;
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "editedAt" timestamptz;
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "replyToMessageId" uuid;
     DO $$ BEGIN

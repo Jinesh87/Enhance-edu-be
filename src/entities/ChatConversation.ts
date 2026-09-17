@@ -41,6 +41,14 @@ export class ChatConversation {
   @Column({ type: "timestamptz", nullable: true })
   lastMessageAt!: Date | null;
 
+  /** When set, the student participant has muted this chat. */
+  @Column({ type: "timestamptz", nullable: true })
+  studentMutedAt!: Date | null;
+
+  /** When set, the teacher participant has muted this chat. */
+  @Column({ type: "timestamptz", nullable: true })
+  teacherMutedAt!: Date | null;
+
   @OneToMany(() => ChatMessage, (message) => message.conversation)
   messages!: Relation<ChatMessage>[];
 
