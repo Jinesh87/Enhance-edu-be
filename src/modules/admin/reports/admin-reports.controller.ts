@@ -63,9 +63,9 @@ export class AdminReportsController {
 
       const result = await adminReportsService.exportReportCsv(tab, filters, currentUser);
 
-      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
-      res.status(200).send(result.csvContent);
+      res.status(200).send(`\uFEFF${result.csvContent}`);
     } catch (error) {
       next(error);
     }
