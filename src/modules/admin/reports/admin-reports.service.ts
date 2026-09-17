@@ -21,14 +21,54 @@ import {
   Subject,
   YearLevel,
   Term,
+  Student,
+  GuardianStudent,
+  Enrollment,
 } from "../../../entities/index.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
-import type { ReportQueryInput } from "./admin-reports.validation.js";
+import { emailService } from "../../email/email.service.js";
+import type { ReportQueryInput, NotifyGuardianInput } from "./admin-reports.validation.js";
 
 function csvEscape(val: unknown): string {
   if (val === null || val === undefined) return '""';
   const str = String(val);
   return `"${str.replace(/"/g, '""')}"`;
+}
+
+function formatCsvDate(val: unknown): string {
+  if (!val) return "—";
+  const d = new Date(String(val));
+  if (isNaN(d.getTime())) return String(val);
+  return d.toLocaleDateString("en-AU", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatCsvDateTime(val: unknown): string {
+  if (!val) return "—";
+  const d = new Date(String(val));
+  if (isNaN(d.getTime())) return String(val);
+  return d.toLocaleString("en-AU", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatCsvTime(val: unknown): string {
+  if (!val) return "—";
+  const d = new Date(String(val));
+  if (isNaN(d.getTime())) return String(val);
+  return d.toLocaleTimeString("en-AU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 export class AdminReportsService {
@@ -45,7 +85,10 @@ export class AdminReportsService {
   }
 
   async getAttendanceReport(filters: ReportQueryInput) {
-    const threshold = filters.threshold ?? 80;
+    const threshold =
+      filters.threshold !== undefined && filters.threshold !== null
+        ? Number(filters.threshold)
+        : 80;
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 20;
 
@@ -68,7 +111,12 @@ export class AdminReportsService {
       .innerJoinAndSelect("ar.session", "s")
       .innerJoinAndSelect("ar.student", "u")
       .leftJoinAndSelect("s.class", "c")
+      .leftJoinAndSelect("c.term", "cterm")
+      .leftJoinAndSelect("cterm.academicYear", "cay")
+      .leftJoinAndSelect("cterm.yearLevel", "cyl")
       .leftJoinAndSelect("c.teacher", "ct")
+      .leftJoinAndSelect("s.teacher", "st")
+      .leftJoinAndSelect("s.classroom", "sroom")
       .leftJoinAndSelect("s.assessment", "a");
 
     if (filters.dateFrom) {
@@ -80,6 +128,21 @@ export class AdminReportsService {
       query.andWhere("s.startAt <= :dateTo", {
         dateTo: `${filters.dateTo}T23:59:59Z`,
       });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(cay.year = :acadYear OR cay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("cay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("cyl.name = :yearGroup", { yearGroup: filters.yearGroup });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("cyl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.subjectId) {
       const resolved = await this.resolveSubjectFilter(filters.subjectId);
@@ -97,6 +160,15 @@ export class AdminReportsService {
         {
           teacherId: filters.teacherId,
         },
+      );
+    }
+    if (filters.studentId) {
+      query.andWhere("ar.studentId = :studentId", { studentId: filters.studentId });
+    }
+    if (filters.search && filters.search.trim()) {
+      query.andWhere(
+        "(LOWER(u.fullName) LIKE :search OR LOWER(u.email) LIKE :search)",
+        { search: `%${filters.search.trim().toLowerCase()}%` },
       );
     }
 
@@ -118,17 +190,43 @@ export class AdminReportsService {
     let totalExceptions = 0;
     let inGraceWindow = 0;
 
+    type StudentSessionLog = {
+      sessionId: string;
+      date: string;
+      time: string;
+      subject: string;
+      teacher: string;
+      room: string;
+      status: string;
+      scannedAt: string | null;
+    };
+
     const studentMap = new Map<
       string,
       {
         studentId: string;
         fullName: string;
         email: string | null;
+        academicYear: string | number | null;
+        yearLevel: string | null;
+        termName: string | null;
         total: number;
         present: number;
         late: number;
         absent: number;
         excused: number;
+        sessionLogs: StudentSessionLog[];
+        subjectStats: Map<
+          string,
+          {
+            total: number;
+            present: number;
+            late: number;
+            absent: number;
+            excused: number;
+            teacherName: string;
+          }
+        >;
       }
     >();
 
@@ -165,11 +263,16 @@ export class AdminReportsService {
           studentId: sId,
           fullName: r.student.fullName,
           email: r.student.email,
+          academicYear: null,
+          yearLevel: null,
+          termName: null,
           total: 0,
           present: 0,
           late: 0,
           absent: 0,
           excused: 0,
+          sessionLogs: [],
+          subjectStats: new Map(),
         });
       }
       const st = studentMap.get(sId)!;
@@ -179,8 +282,62 @@ export class AdminReportsService {
       else if (status === AttendanceStatus.ABSENT) st.absent++;
       else if (status === AttendanceStatus.EXCUSED) st.excused++;
 
+      if (r.session.class?.term) {
+        const term = r.session.class.term;
+        if (!st.academicYear && term.academicYear) {
+          st.academicYear = term.academicYear.year || term.academicYear.displayName;
+        }
+        if (!st.yearLevel && term.yearLevel) {
+          st.yearLevel = term.yearLevel.name;
+        }
+        if (!st.termName && term.name) {
+          st.termName = term.name;
+        }
+      }
+
       const subjectName =
-        r.session.class?.name || r.session.assessment?.subject || "General";
+        r.session.class?.subject || r.session.class?.name || r.session.assessment?.subject || "General";
+      const teacherName =
+        r.session.teacher?.fullName || r.session.class?.teacher?.fullName || "Unassigned";
+      const roomName =
+        r.session.classroom?.name || r.session.room || "Main Room";
+      const sessionDate = r.session.startAt ? r.session.startAt.toISOString().slice(0, 10) : "-";
+      const sessionTime =
+        r.session.startAt && r.session.endAt
+          ? `${new Date(r.session.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${new Date(r.session.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+          : "-";
+
+      st.sessionLogs.push({
+        sessionId: r.session.id,
+        date: sessionDate,
+        time: sessionTime,
+        subject: subjectName,
+        teacher: teacherName,
+        room: roomName,
+        status: r.status,
+        scannedAt: r.scannedAt ? r.scannedAt.toISOString() : null,
+      });
+
+      if (!st.subjectStats.has(subjectName)) {
+        st.subjectStats.set(subjectName, {
+          total: 0,
+          present: 0,
+          late: 0,
+          absent: 0,
+          excused: 0,
+          teacherName,
+        });
+      }
+      const stSub = st.subjectStats.get(subjectName)!;
+      stSub.total++;
+      if (teacherName !== "Unassigned") {
+        stSub.teacherName = teacherName;
+      }
+      if (status === AttendanceStatus.PRESENT) stSub.present++;
+      else if (status === AttendanceStatus.LATE) stSub.late++;
+      else if (status === AttendanceStatus.ABSENT) stSub.absent++;
+      else if (status === AttendanceStatus.EXCUSED) stSub.excused++;
+
       if (!subjectMap.has(subjectName)) {
         subjectMap.set(subjectName, {
           subject: subjectName,
@@ -204,21 +361,79 @@ export class AdminReportsService {
         ? ((totalPresent + totalLate) / totalCalculated) * 100
         : 100;
 
+    const studentUserIds = Array.from(studentMap.keys());
+    const guardianMap = new Map<
+      string,
+      { guardianName: string | null; guardianEmail: string | null; guardianPhone: string | null }
+    >();
+
+    if (studentUserIds.length > 0) {
+      try {
+        const studentEntities = await AppDataSource.getRepository(Student).find({
+          where: [{ userId: In(studentUserIds) }, { id: In(studentUserIds) }],
+          relations: { guardianLinks: { guardian: true } },
+        });
+
+        for (const sEnt of studentEntities) {
+          const key = sEnt.userId || sEnt.id;
+          const firstLink = sEnt.guardianLinks?.[0];
+          if (firstLink?.guardian) {
+            guardianMap.set(key, {
+              guardianName: firstLink.guardian.fullName,
+              guardianEmail: firstLink.guardian.email,
+              guardianPhone: firstLink.guardian.mobile || null,
+            });
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
     const studentRows = Array.from(studentMap.values()).map((s) => {
       const activeTotal = s.present + s.late + s.absent + s.excused;
       const rate =
         activeTotal > 0 ? ((s.present + s.late) / activeTotal) * 100 : 100;
+
+      const guardian = guardianMap.get(s.studentId);
+
+      const subjectBreakdown = Array.from(s.subjectStats.entries()).map(([sub, stat]) => {
+        const subActive = stat.present + stat.late + stat.absent + stat.excused;
+        const subRate = subActive > 0 ? ((stat.present + stat.late) / subActive) * 100 : 100;
+        return {
+          subject: sub,
+          teacherName: stat.teacherName,
+          total: stat.total,
+          present: stat.present,
+          late: stat.late,
+          absent: stat.absent,
+          excused: stat.excused,
+          attendanceRate: Math.round(subRate * 10) / 10,
+        };
+      });
+
+      // Ascending chronological order by date (earliest first: Sep 7 -> ... -> Dec 29)
+      s.sessionLogs.sort((a, b) => a.date.localeCompare(b.date));
+
       return {
         studentId: s.studentId,
         studentName: s.fullName,
         email: s.email,
+        academicYear: s.academicYear,
+        yearLevel: s.yearLevel,
+        termName: s.termName,
+        guardianName: guardian?.guardianName || null,
+        guardianEmail: guardian?.guardianEmail || null,
+        guardianPhone: guardian?.guardianPhone || null,
         totalSessions: s.total,
         present: s.present,
         late: s.late,
         absent: s.absent,
         excused: s.excused,
         attendanceRate: Math.round(rate * 10) / 10,
-        isBelowThreshold: rate < threshold,
+        isBelowThreshold: threshold > 0 ? rate < threshold : false,
+        sessionLogs: s.sessionLogs,
+        subjectBreakdown,
       };
     });
 
@@ -411,6 +626,44 @@ export class AdminReportsService {
       }
     }
 
+    const totalPipelineConverted = allEnquiries.filter(
+      (e) => e.convertedEnrollmentId,
+    ).length;
+
+    // Direct enrollments count & details in period (created directly without prior enquiry)
+    const directEnrollmentQuery = AppDataSource.getRepository(Enrollment)
+      .createQueryBuilder("enr")
+      .leftJoinAndSelect("enr.student", "s")
+      .leftJoinAndSelect("s.user", "su")
+      .leftJoinAndSelect("enr.guardian", "g")
+      .leftJoinAndSelect("s.guardianLinks", "gl")
+      .leftJoinAndSelect("gl.guardian", "glg");
+
+    if (filters.dateFrom) {
+      directEnrollmentQuery.andWhere("enr.createdAt >= :dateFrom", {
+        dateFrom: `${filters.dateFrom}T00:00:00Z`,
+      });
+    }
+    if (filters.dateTo) {
+      directEnrollmentQuery.andWhere("enr.createdAt <= :dateTo", {
+        dateTo: `${filters.dateTo}T23:59:59Z`,
+      });
+    }
+
+    const allEnrollmentsInPeriod = await directEnrollmentQuery.getMany();
+    const convertedEnrollmentIds = new Set(
+      allEnquiries
+        .map((e) => e.convertedEnrollmentId)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    const directEnrollments = allEnrollmentsInPeriod.filter(
+      (enr) => !convertedEnrollmentIds.has(enr.id),
+    );
+    const directEnrollmentsCount = directEnrollments.length;
+
+    const totalNewAdmissions = totalPipelineConverted + directEnrollmentsCount;
+
     const sourceAttribution = Array.from(sourceStatsMap.values()).map((s) => ({
       sourceId: s.sourceId,
       sourceName: s.sourceName,
@@ -423,32 +676,84 @@ export class AdminReportsService {
           : 0,
     }));
 
-    const paginatedEnquiries = allEnquiries
-      .slice((page - 1) * limit, page * limit)
-      .map((e) => ({
-        id: e.id,
-        studentFullName: e.studentFullName,
-        guardianFullName: e.guardianFullName,
-        guardianEmail: e.guardianEmail,
-        guardianMobile: e.guardianMobile,
-        currentStage: e.currentStage?.name ?? "Unknown",
-        firstSource: e.firstSource?.name ?? "Unknown",
-        lastSource: e.lastSource?.name ?? "Unknown",
-        createdAt: e.createdAt,
-      }));
+    if (directEnrollmentsCount > 0) {
+      sourceAttribution.unshift({
+        sourceId: "direct-walkin",
+        sourceName: "Direct Admission (Walk-in / Direct Add)",
+        totalEnquiries: directEnrollmentsCount,
+        trialsBooked: 0,
+        enrolled: directEnrollmentsCount,
+        conversionRate: 100,
+      });
+    }
+
+    const directEnrollmentItems = directEnrollments.map((enr) => {
+      const studentName =
+        enr.student?.fullName ||
+        enr.student?.user?.fullName ||
+        "Direct Enrolled Student";
+      const guardianName =
+        enr.guardian?.fullName ||
+        enr.student?.guardianLinks?.[0]?.guardian?.fullName ||
+        "Guardian (Direct Add)";
+      const guardianEmail =
+        enr.guardian?.email ||
+        enr.student?.guardianLinks?.[0]?.guardian?.email ||
+        null;
+      const guardianMobile =
+        enr.guardian?.mobile ||
+        enr.student?.guardianLinks?.[0]?.guardian?.mobile ||
+        null;
+
+      return {
+        id: enr.id,
+        studentFullName: studentName,
+        guardianFullName: guardianName,
+        guardianEmail,
+        guardianMobile,
+        currentStage: "Converted (Direct Enrolment)",
+        firstSource: "Direct Admission (Walk-in / Direct Add)",
+        lastSource: "Direct Admission (Walk-in / Direct Add)",
+        createdAt: enr.createdAt,
+      };
+    });
+
+    const enquiryActivityItems = allEnquiries.map((e) => ({
+      id: e.id,
+      studentFullName: e.studentFullName,
+      guardianFullName: e.guardianFullName,
+      guardianEmail: e.guardianEmail,
+      guardianMobile: e.guardianMobile,
+      currentStage: e.currentStage?.name ?? "Unknown",
+      firstSource: e.firstSource?.name ?? "Unknown",
+      lastSource: e.lastSource?.name ?? "Unknown",
+      createdAt: e.createdAt,
+    }));
+
+    const combinedActivity = [
+      ...enquiryActivityItems,
+      ...directEnrollmentItems,
+    ].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    const paginatedEnquiries = combinedActivity.slice(
+      (page - 1) * limit,
+      page * limit,
+    );
 
     return {
       summary: {
         totalEnquiriesInPeriod: allEnquiries.length,
         touchPoint,
-        totalConverted: allEnquiries.filter((e) => e.convertedEnrollmentId)
-          .length,
+        totalConverted: totalPipelineConverted,
+        directEnrollments: directEnrollmentsCount,
+        totalAdmissions: totalNewAdmissions,
         overallConversionRate:
           allEnquiries.length > 0
             ? Math.round(
-                (allEnquiries.filter((e) => e.convertedEnrollmentId).length /
-                  allEnquiries.length) *
-                  1000,
+                (totalPipelineConverted / allEnquiries.length) * 1000,
               ) / 10
             : 0,
       },
@@ -457,10 +762,10 @@ export class AdminReportsService {
       sourceAttribution,
       enquiries: {
         items: paginatedEnquiries,
-        total: allEnquiries.length,
+        total: combinedActivity.length,
         page,
         limit,
-        totalPages: Math.ceil(allEnquiries.length / limit) || 1,
+        totalPages: Math.ceil(combinedActivity.length / limit) || 1,
       },
       lastUpdated: new Date().toISOString(),
     };
@@ -473,6 +778,9 @@ export class AdminReportsService {
     const query = AppDataSource.getRepository(Session)
       .createQueryBuilder("s")
       .leftJoinAndSelect("s.class", "c")
+      .leftJoinAndSelect("c.term", "cterm")
+      .leftJoinAndSelect("cterm.academicYear", "cay")
+      .leftJoinAndSelect("cterm.yearLevel", "cyl")
       .leftJoinAndSelect("s.classroom", "cr")
       .leftJoinAndSelect("s.teacher", "st")
       .leftJoinAndSelect("c.teacher", "ct")
@@ -487,6 +795,21 @@ export class AdminReportsService {
       query.andWhere("s.startAt <= :dateTo", {
         dateTo: `${filters.dateTo}T23:59:59Z`,
       });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(cay.year = :acadYear OR cay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("cay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("cyl.name = :yearGroup", { yearGroup: filters.yearGroup });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("cyl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.termId) {
       query.andWhere("c.termId = :termId", { termId: filters.termId });
@@ -561,8 +884,6 @@ export class AdminReportsService {
       };
     });
 
-    const paginated = sessionItems.slice((page - 1) * limit, page * limit);
-
     return {
       summary: {
         totalScheduled,
@@ -573,7 +894,7 @@ export class AdminReportsService {
         teacherOverrides,
       },
       sessions: {
-        items: paginated,
+        items: sessionItems,
         total: sessionItems.length,
         page,
         limit,
@@ -590,6 +911,8 @@ export class AdminReportsService {
     const query = AppDataSource.getRepository(Assessment)
       .createQueryBuilder("a")
       .leftJoinAndSelect("a.term", "t")
+      .leftJoinAndSelect("t.academicYear", "ay")
+      .leftJoinAndSelect("t.yearLevel", "yl")
       .leftJoinAndSelect("a.teacher", "u")
       .leftJoinAndSelect("a.students", "ast")
       .leftJoinAndSelect("a.linkedClass", "c");
@@ -601,6 +924,23 @@ export class AdminReportsService {
     }
     if (filters.dateTo) {
       query.andWhere("a.assessmentDate <= :dateTo", { dateTo: filters.dateTo });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(ay.year = :acadYear OR ay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("ay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("(a.yearGroup = :yearGroup OR yl.name = :yearGroup)", {
+        yearGroup: filters.yearGroup,
+      });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("yl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.termId) {
       query.andWhere("a.termId = :termId", { termId: filters.termId });
@@ -639,6 +979,9 @@ export class AdminReportsService {
     let totalSchool = 0;
     let totalCandidates = 0;
     let totalSubmissionsCount = 0;
+    let totalPendingGrading = 0;
+    let sumScoredPercentages = 0;
+    let totalScoredSubmissions = 0;
 
     const items = assessments.map((a) => {
       if (a.kind === "ENTRANCE") totalEntrance++;
@@ -651,11 +994,30 @@ export class AdminReportsService {
       totalSubmissionsCount += aSubs.length;
 
       const scoredSubs = aSubs.filter((s) => s.mark != null);
+      const pendingGradingCount = aSubs.length - scoredSubs.length;
+      totalPendingGrading += pendingGradingCount;
+
+      const totalMarksVal = a.totalMarks ? Number(a.totalMarks) : 100;
+
+      let highestMark: number | null = null;
+      let lowestMark: number | null = null;
+      if (scoredSubs.length > 0) {
+        const marks = scoredSubs.map((s) => Number(s.mark));
+        highestMark = Math.max(...marks);
+        lowestMark = Math.min(...marks);
+        for (const s of scoredSubs) {
+          sumScoredPercentages += (Number(s.mark) / totalMarksVal) * 100;
+          totalScoredSubmissions++;
+        }
+      }
+
       const avgMark =
         scoredSubs.length > 0
           ? scoredSubs.reduce((acc, s) => acc + Number(s.mark), 0) /
             scoredSubs.length
           : null;
+
+      const submissionRate = candCount > 0 ? Math.round((aSubs.length / candCount) * 100) : 0;
 
       return {
         id: a.id,
@@ -670,12 +1032,23 @@ export class AdminReportsService {
         status: a.status,
         candidatesCount: candCount,
         submissionsCount: aSubs.length,
+        pendingGradingCount,
+        submissionRate,
+        highestMark,
+        lowestMark,
         averageMark: avgMark ? Math.round(avgMark * 10) / 10 : null,
         totalMarks: a.totalMarks ? Number(a.totalMarks) : null,
       };
     });
 
-    const paginated = items.slice((page - 1) * limit, page * limit);
+    const overallAverageScore =
+      totalScoredSubmissions > 0
+        ? Math.round((sumScoredPercentages / totalScoredSubmissions) * 10) / 10
+        : 0;
+    const overallSubmissionRate =
+      totalCandidates > 0
+        ? Math.round((totalSubmissionsCount / totalCandidates) * 100)
+        : 0;
 
     return {
       summary: {
@@ -684,9 +1057,12 @@ export class AdminReportsService {
         totalEntrance,
         totalCandidates,
         totalSubmissions: totalSubmissionsCount,
+        totalPendingGrading,
+        overallAverageScore,
+        submissionRate: overallSubmissionRate,
       },
       assessments: {
-        items: paginated,
+        items,
         total: items.length,
         page,
         limit,
@@ -706,6 +1082,8 @@ export class AdminReportsService {
     const query = AppDataSource.getRepository(Homework)
       .createQueryBuilder("hw")
       .leftJoinAndSelect("hw.term", "t")
+      .leftJoinAndSelect("t.academicYear", "ay")
+      .leftJoinAndSelect("t.yearLevel", "yl")
       .leftJoinAndSelect("hw.subject", "sub")
       .leftJoinAndSelect("hw.createdBy", "u")
       .leftJoinAndSelect("hw.students", "hs")
@@ -716,6 +1094,23 @@ export class AdminReportsService {
     }
     if (filters.dateTo) {
       query.andWhere("hw.dueDate <= :dateTo", { dateTo: filters.dateTo });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(ay.year = :acadYear OR ay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("ay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("(hw.yearGroup = :yearGroup OR yl.name = :yearGroup)", {
+        yearGroup: filters.yearGroup,
+      });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("yl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.termId) {
       query.andWhere("hw.termId = :termId", { termId: filters.termId });
@@ -743,10 +1138,19 @@ export class AdminReportsService {
     let totalAssignedStudents = 0;
     let totalSubmissions = 0;
     let totalPendingMarking = 0;
+    let totalFullyMarkedTasks = 0;
+    let overdueTasksCount = 0;
+
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     const subjectBreakdownMap = new Map<
       string,
-      { subject: string; tasks: number; submissions: number }
+      {
+        subject: string;
+        tasks: number;
+        submissions: number;
+        assignedStudents: number;
+      }
     >();
 
     const items = homeworks.map((hw) => {
@@ -761,17 +1165,27 @@ export class AdminReportsService {
       ).length;
       totalPendingMarking += pendingMark;
 
+      const submissionRate =
+        studentCount > 0 ? Math.round((subs.length / studentCount) * 100) : 0;
+      const isOverdue = hw.dueDate < todayStr && submissionRate < 100;
+      const fullyMarked = subs.length > 0 && pendingMark === 0;
+
+      if (fullyMarked) totalFullyMarkedTasks++;
+      if (isOverdue) overdueTasksCount++;
+
       const subName = hw.subject?.name || "General";
       if (!subjectBreakdownMap.has(subName)) {
         subjectBreakdownMap.set(subName, {
           subject: subName,
           tasks: 0,
           submissions: 0,
+          assignedStudents: 0,
         });
       }
       const sm = subjectBreakdownMap.get(subName)!;
       sm.tasks++;
       sm.submissions += subs.length;
+      sm.assignedStudents += studentCount;
 
       return {
         id: hw.id,
@@ -783,11 +1197,23 @@ export class AdminReportsService {
         assignedStudentsCount: studentCount,
         submissionsCount: subs.length,
         pendingMarkingCount: pendingMark,
+        submissionRate,
+        isOverdue,
+        fullyMarked,
       };
     });
 
-    const paginated = items.slice((page - 1) * limit, page * limit);
-    const subjectBreakdown = Array.from(subjectBreakdownMap.values());
+    const subjectBreakdown = Array.from(subjectBreakdownMap.values()).map(
+      (sb) => ({
+        subject: sb.subject,
+        tasks: sb.tasks,
+        submissions: sb.submissions,
+        submissionRate:
+          sb.assignedStudents > 0
+            ? Math.round((sb.submissions / sb.assignedStudents) * 100)
+            : 0,
+      }),
+    );
 
     return {
       summary: {
@@ -795,6 +1221,8 @@ export class AdminReportsService {
         totalAssignedStudents,
         totalSubmissions,
         totalPendingMarking,
+        totalFullyMarkedTasks,
+        overdueTasksCount,
         submissionRate:
           totalAssignedStudents > 0
             ? Math.round((totalSubmissions / totalAssignedStudents) * 1000) / 10
@@ -802,7 +1230,7 @@ export class AdminReportsService {
       },
       subjectBreakdown,
       homework: {
-        items: paginated,
+        items,
         total: items.length,
         page,
         limit,
@@ -821,16 +1249,71 @@ export class AdminReportsService {
     let recordCount = 0;
     const filename = `report_${tab}_${new Date().toISOString().slice(0, 10)}.csv`;
 
+    const periodStr =
+      filters.dateFrom && filters.dateTo
+        ? `${formatCsvDate(filters.dateFrom)} to ${formatCsvDate(filters.dateTo)}`
+        : filters.dateFrom
+          ? `From ${formatCsvDate(filters.dateFrom)}`
+          : filters.dateTo
+            ? `Up to ${formatCsvDate(filters.dateTo)}`
+            : "All Time (Cumulative History)";
+
     if (tab === "attendance") {
       const data = await this.getAttendanceReport({ ...filters, limit: 10000 });
-      recordCount = data.students.total;
-      csvContent = [
-        "Student Name,Email,Total Sessions,Present,Late,Absent,Excused,Attendance Rate (%),Below Threshold",
-        ...data.students.items.map(
-          (s) =>
-            `${csvEscape(s.studentName)},${csvEscape(s.email)},${csvEscape(s.totalSessions)},${csvEscape(s.present)},${csvEscape(s.late)},${csvEscape(s.absent)},${csvEscape(s.excused)},${csvEscape(`${s.attendanceRate}%`)},${csvEscape(s.isBelowThreshold ? "YES" : "NO")}`,
-        ),
-      ].join("\n");
+
+      if (filters.studentId && data.students.items.length === 1) {
+        const student = data.students.items[0];
+        recordCount = student.sessionLogs?.length || 0;
+        csvContent = [
+          `"Enhance Education — Student Attendance Transcript",""`,
+          `"Student Name",${csvEscape(student.studentName)}`,
+          `"Student Email",${csvEscape(student.email || "—")}`,
+          `"Academic Cohort",${csvEscape(`${student.academicYear || "All Years"} • ${student.yearLevel || "All Levels"} (${student.termName || "All Terms"})`)}`,
+          `"Guardian Contact",${csvEscape(`${student.guardianName || "—"} ${student.guardianPhone ? `(${student.guardianPhone})` : ""}`)}`,
+          `"Reporting Period",${csvEscape(periodStr)}`,
+          `"Generated At",${csvEscape(formatCsvDateTime(new Date()))}`,
+          `"Generated By",${csvEscape(user.fullName)}`,
+          `"Total Sessions","${student.totalSessions}"`,
+          `"Attendance Rate","${student.attendanceRate}%"`,
+          `"Threshold Standing",${csvEscape(student.isBelowThreshold ? "BELOW TARGET THRESHOLD" : "COMPLIANT / GOOD STANDING")}`,
+          `""`,
+          `"Date","Time Slot","Subject","Teacher","Room / Venue","Attendance Status","Check-in Timestamp"`,
+          ...(student.sessionLogs || []).map(
+            (log) =>
+              `${csvEscape(formatCsvDate(log.date))},${csvEscape(log.time || "—")},${csvEscape(log.subject)},${csvEscape(log.teacher)},${csvEscape(log.room)},${csvEscape(log.status)},${csvEscape(log.scannedAt ? formatCsvDateTime(log.scannedAt) : "—")}`,
+          ),
+        ].join("\n");
+      } else {
+        recordCount = data.students.total;
+        csvContent = [
+          `"Enhance Education — Attendance & Roll Analysis Report",""`,
+          `"Reporting Period",${csvEscape(periodStr)}`,
+          `"Academic Cohort",${csvEscape(`${filters.academicYear || "All Years"} • ${filters.yearGroup || "All Levels"}`)}`,
+          `"Generated At",${csvEscape(formatCsvDateTime(new Date()))}`,
+          `"Generated By",${csvEscape(user.fullName)}`,
+          `"Total Students Enrolled","${data.students.total}"`,
+          `"Overall Attendance Rate","${data.summary.overallAttendanceRate}%"`,
+          `"Benchmark Target",${csvEscape(data.summary.threshold > 0 ? `${data.summary.threshold}% Target` : "None Set")}`,
+          `"Benchmark Compliance Standing",${csvEscape(data.summary.threshold > 0 ? `${data.summary.studentsBelowThreshold} Students Below Target` : "Compliant")}`,
+          `""`,
+          `"Student Full Name","Email","Academic Year","Year Level","Term","Guardian Contact","Subject Breakdown (Rate %)","Total Sessions","Present (On-Time)","Late Arrivals","Unexcused Absences","Excused Absences","Attendance Rate (%)","Compliance Standing"`,
+          ...data.students.items.map((s) => {
+            const guardianContact = s.guardianName
+              ? `${s.guardianName} ${s.guardianPhone ? `(${s.guardianPhone})` : s.guardianEmail ? `(${s.guardianEmail})` : ""}`
+              : "—";
+            const subsStr = (s.subjectBreakdown || [])
+              .map((sb) => `${sb.subject}: ${sb.attendanceRate}% (${sb.teacherName || "No teacher"})`)
+              .join("; ");
+            const complianceStr =
+              data.summary.threshold > 0
+                ? s.isBelowThreshold
+                  ? "BELOW TARGET"
+                  : "COMPLIANT"
+                : "ENROLLED";
+            return `${csvEscape(s.studentName)},${csvEscape(s.email || "—")},${csvEscape(s.academicYear || "—")},${csvEscape(s.yearLevel || "—")},${csvEscape(s.termName || "—")},${csvEscape(guardianContact)},${csvEscape(subsStr || "General Cohort")},${csvEscape(s.totalSessions)},${csvEscape(s.present)},${csvEscape(s.late)},${csvEscape(s.absent)},${csvEscape(s.excused)},${csvEscape(`${s.attendanceRate}%`)},${csvEscape(complianceStr)}`;
+          }),
+        ].join("\n");
+      }
     } else if (tab === "enquiries") {
       const data = await this.getEnquiryFunnelReport({
         ...filters,
@@ -838,10 +1321,20 @@ export class AdminReportsService {
       });
       recordCount = data.enquiries.total;
       csvContent = [
-        "Student Name,Guardian Name,Guardian Email,Guardian Mobile,Current Stage,First Source,Last Source,Created At",
+        `"Enhance Education — Enquiries & Conversion Funnel Report",""`,
+        `"Reporting Period",${csvEscape(periodStr)}`,
+        `"Attribution Model",${csvEscape(`${data.summary.touchPoint.toUpperCase()} TOUCH ATTRIBUTION`)}`,
+        `"Generated At",${csvEscape(formatCsvDateTime(new Date()))}`,
+        `"Generated By",${csvEscape(user.fullName)}`,
+        `"Total Pipeline Enquiries","${data.summary.totalEnquiriesInPeriod}"`,
+        `"Pipeline Conversions","${data.summary.totalConverted} (${data.summary.overallConversionRate}% Funnel Rate)"`,
+        `"Direct Admissions (Walk-in)","${data.summary.directEnrollments || 0}"`,
+        `"Total New Students Enrolled","${data.summary.totalAdmissions || data.summary.totalConverted + (data.summary.directEnrollments || 0)}"`,
+        `""`,
+        `"Student / Lead Name","Guardian Full Name","Guardian Email","Guardian Mobile","Initial Acquisition Source","Latest Source","Current Pipeline Stage","Date Registered"`,
         ...data.enquiries.items.map(
           (e) =>
-            `${csvEscape(e.studentFullName)},${csvEscape(e.guardianFullName)},${csvEscape(e.guardianEmail)},${csvEscape(e.guardianMobile)},${csvEscape(e.currentStage)},${csvEscape(e.firstSource)},${csvEscape(e.lastSource)},${csvEscape(e.createdAt)}`,
+            `${csvEscape(e.studentFullName || "Student / Lead")},${csvEscape(e.guardianFullName || "—")},${csvEscape(e.guardianEmail || "—")},${csvEscape(e.guardianMobile || "—")},${csvEscape(e.firstSource)},${csvEscape(e.lastSource)},${csvEscape(e.currentStage)},${csvEscape(formatCsvDate(e.createdAt))}`,
         ),
       ].join("\n");
     } else if (tab === "classes") {
@@ -850,12 +1343,44 @@ export class AdminReportsService {
         limit: 10000,
       });
       recordCount = data.sessions.total;
+      const deliveryRate =
+        data.summary.totalScheduled > 0
+          ? Math.round(
+              (data.summary.totalCompleted / data.summary.totalScheduled) * 100,
+            )
+          : 0;
       csvContent = [
-        "Class Name,Start At,End At,Room,Teacher,Is Holiday,Is Completed,Teacher Gap,Room Gap",
-        ...data.sessions.items.map(
-          (s) =>
-            `${csvEscape(s.className)},${csvEscape(s.startAt)},${csvEscape(s.endAt)},${csvEscape(s.room)},${csvEscape(s.teacherName)},${csvEscape(s.isHoliday ? "YES" : "NO")},${csvEscape(s.isCompleted ? "YES" : "NO")},${csvEscape(s.isTeacherGap ? "YES" : "NO")},${csvEscape(s.isRoomGap ? "YES" : "NO")}`,
-        ),
+        `"Enhance Education — Classes & Timetable Occurrences Report",""`,
+        `"Reporting Period",${csvEscape(periodStr)}`,
+        `"Academic Cohort",${csvEscape(`${filters.academicYear || "All Years"} • ${filters.yearGroup || "All Levels"}`)}`,
+        `"Generated At",${csvEscape(formatCsvDateTime(new Date()))}`,
+        `"Generated By",${csvEscape(user.fullName)}`,
+        `"Total Scheduled Sessions","${data.summary.totalScheduled}"`,
+        `"Completed Sessions","${data.summary.totalCompleted} (${deliveryRate}% Delivery Rate)"`,
+        `"Teacher Allocation Gaps","${data.summary.missingTeacherGaps} Sessions Unassigned"`,
+        `"Teacher Relief Substitutes Used","${data.summary.teacherOverrides} Sessions Covered by Sub"`,
+        `"Room Allocation Gaps","${data.summary.missingRoomGaps} Sessions Missing Room"`,
+        `"Holiday Affected Sessions","${data.summary.totalHolidayAffected} Sessions Cancelled / Holiday"`,
+        `""`,
+        `"Class Name","Class Code","Date","Scheduled Time Slot","Room / Venue","Assigned Teacher","Delivery Status","Coverage Note"`,
+        ...data.sessions.items.map((s) => {
+          const statusStr = s.isHoliday
+            ? "Holiday / Cancelled"
+            : s.isTeacherGap
+              ? "Teacher Gap (Unassigned)"
+              : s.isRoomGap
+                ? "Room Gap (Unallocated)"
+                : s.isCompleted
+                  ? "Completed"
+                  : "Scheduled";
+          const timeSlot = `${formatCsvTime(s.startAt)} – ${formatCsvTime(s.endAt)}`;
+          const coverageNote = s.isTeacherOverride
+            ? "Relief Substitute Assigned"
+            : s.isTeacherGap
+              ? "No Teacher"
+              : "Regular Staff";
+          return `${csvEscape(s.className)},${csvEscape(s.classCode || "—")},${csvEscape(formatCsvDate(s.startAt))},${csvEscape(timeSlot)},${csvEscape(s.room || "No Room")},${csvEscape(s.teacherName || "Unassigned")},${csvEscape(statusStr)},${csvEscape(coverageNote)}`;
+        }),
       ].join("\n");
     } else if (tab === "assessments") {
       const data = await this.getAssessmentsReport({
@@ -863,22 +1388,62 @@ export class AdminReportsService {
         limit: 10000,
       });
       recordCount = data.assessments.total;
+      const turnInRate =
+        data.summary.totalCandidates > 0
+          ? Math.round(
+              (data.summary.totalSubmissions / data.summary.totalCandidates) *
+                100,
+            )
+          : 0;
       csvContent = [
-        "Assessment Name,Kind,Schedule Type,Date,Subject,Year Group,Teacher,Status,Candidates,Submissions,Average Mark",
-        ...data.assessments.items.map(
-          (a) =>
-            `${csvEscape(a.name)},${csvEscape(a.kind)},${csvEscape(a.scheduleType)},${csvEscape(a.assessmentDate)},${csvEscape(a.subject)},${csvEscape(a.yearGroup)},${csvEscape(a.teacherName)},${csvEscape(a.status)},${csvEscape(a.candidatesCount)},${csvEscape(a.submissionsCount)},${csvEscape(a.averageMark ?? "N/A")}`,
-        ),
+        `"Enhance Education — Assessments & Performance Outcomes Report",""`,
+        `"Reporting Period",${csvEscape(periodStr)}`,
+        `"Academic Cohort",${csvEscape(`${filters.academicYear || "All Years"} • ${filters.yearGroup || "All Levels"}`)}`,
+        `"Generated At",${csvEscape(formatCsvDateTime(new Date()))}`,
+        `"Generated By",${csvEscape(user.fullName)}`,
+        `"Total Assessments Conducted","${data.summary.totalAssessments}"`,
+        `"Curriculum vs Entrance Split",${csvEscape(`${data.summary.totalSchool} School Internal / ${data.summary.totalEntrance} Entrance Exam`)}`,
+        `"Total Student Seatings","${data.summary.totalCandidates} Candidates"`,
+        `"Total Submissions Received","${data.summary.totalSubmissions} Submissions (${turnInRate}% Turn-in Rate)"`,
+        `""`,
+        `"Assessment Title","Subject","Year Level / Cohort","Assessment Format","Schedule Mode","Date","Start Time","Teacher","Registered Candidates","Submissions Received","Turn-in Rate (%)","Average Score","Evaluation Status"`,
+        ...data.assessments.items.map((a) => {
+          const rate =
+            a.candidatesCount > 0
+              ? Math.round((a.submissionsCount / a.candidatesCount) * 100)
+              : 0;
+          const avgScore =
+            a.averageMark != null
+              ? `${a.averageMark}${a.totalMarks ? ` / ${a.totalMarks}` : "%"}`
+              : "—";
+          return `${csvEscape(a.name)},${csvEscape(a.subject)},${csvEscape(a.yearGroup || "All")},${csvEscape(a.kind)},${csvEscape(a.scheduleType || "Scheduled")},${csvEscape(formatCsvDate(a.assessmentDate))},${csvEscape(a.startTime || "—")},${csvEscape(a.teacherName || "—")},${csvEscape(a.candidatesCount)},${csvEscape(a.submissionsCount)},${csvEscape(`${rate}%`)},${csvEscape(avgScore)},${csvEscape(a.status)}`;
+        }),
       ].join("\n");
     } else if (tab === "homework") {
       const data = await this.getHomeworkReport({ ...filters, limit: 10000 });
       recordCount = data.homework.total;
       csvContent = [
-        "Homework Title,Subject,Year Group,Due Date,Teacher,Assigned Students,Submissions,Pending Marking",
-        ...data.homework.items.map(
-          (h) =>
-            `${csvEscape(h.title)},${csvEscape(h.subject)},${csvEscape(h.yearGroup)},${csvEscape(h.dueDate)},${csvEscape(h.teacherName)},${csvEscape(h.assignedStudentsCount)},${csvEscape(h.submissionsCount)},${csvEscape(h.pendingMarkingCount)}`,
-        ),
+        `"Enhance Education — Homework & Assignment Completion Report",""`,
+        `"Reporting Period",${csvEscape(periodStr)}`,
+        `"Academic Cohort",${csvEscape(`${filters.academicYear || "All Years"} • ${filters.yearGroup || "All Levels"}`)}`,
+        `"Generated At",${csvEscape(formatCsvDateTime(new Date()))}`,
+        `"Generated By",${csvEscape(user.fullName)}`,
+        `"Total Assigned Tasks","${data.summary.totalAssignedTasks}"`,
+        `"Total Assigned Student Instances","${data.summary.totalAssignedStudents}"`,
+        `"Total Submissions Turned In","${data.summary.totalSubmissions}"`,
+        `"Overall Submission Rate","${data.summary.submissionRate}%"`,
+        `"Pending Teacher Marking","${data.summary.totalPendingMarking} Submissions Awaiting Evaluation"`,
+        `""`,
+        `"Assignment Title","Subject","Year Level / Cohort","Due Date","Assigned Teacher","Assigned Students","Submissions Received","Completion Rate (%)","Pending Marking"`,
+        ...data.homework.items.map((h) => {
+          const rate =
+            h.assignedStudentsCount > 0
+              ? Math.round(
+                  (h.submissionsCount / h.assignedStudentsCount) * 100,
+                )
+              : 0;
+          return `${csvEscape(h.title)},${csvEscape(h.subject)},${csvEscape(h.yearGroup || "All")},${csvEscape(formatCsvDate(h.dueDate))},${csvEscape(h.teacherName || "—")},${csvEscape(h.assignedStudentsCount)},${csvEscape(h.submissionsCount)},${csvEscape(`${rate}%`)},${csvEscape(h.pendingMarkingCount)}`;
+        }),
       ].join("\n");
     }
 
@@ -897,6 +1462,418 @@ export class AdminReportsService {
     });
 
     return { csvContent, filename, recordCount };
+  }
+
+  async notifyGuardianAttendance(
+    input: NotifyGuardianInput,
+    user: { id: string; fullName: string },
+  ) {
+    const student = await AppDataSource.getRepository(User).findOne({
+      where: { id: input.studentId },
+    });
+
+    if (!student) {
+      throw new Error("Student record not found.");
+    }
+
+    const deliveredChannels: ("email" | "sms")[] = [];
+    const errors: string[] = [];
+
+    if (input.channels.includes("email")) {
+      const targetEmail = input.guardianEmail?.trim();
+      if (!targetEmail) {
+        errors.push("No guardian email address provided.");
+      } else {
+        try {
+          const config = await emailService.getConfig();
+          if (config?.enabled && config.resendApiKey) {
+            const { Resend } = await import("resend");
+            const resend = new Resend(config.resendApiKey);
+            await resend.emails.send({
+              from: `${config.fromName} <${config.fromEmail}>`,
+              to: targetEmail,
+              subject: input.subject || `Attendance Notice: ${student.fullName} – Enhance Education`,
+              text: input.message,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 10px; background: #ffffff;">
+                  <h2 style="color: #002a1c; margin-top: 0; font-size: 20px;">Enhance Education</h2>
+                  <h3 style="color: #1F5C50; margin-top: 4px; font-size: 15px;">${input.subject || "Official Attendance Notice"}</h3>
+                  <div style="white-space: pre-wrap; font-size: 13.5px; line-height: 1.65; color: #334155; margin: 20px 0; background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #1F5C50;">${input.message}</div>
+                  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+                  <p style="font-size: 11px; color: #64748b; margin-bottom: 0;">This is an automated official communication from Enhance Education Management System.</p>
+                </div>
+              `,
+            });
+          }
+          deliveredChannels.push("email");
+        } catch (err) {
+          errors.push(`Email delivery error: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+      }
+    }
+
+    if (input.channels.includes("sms")) {
+      const targetPhone = input.guardianPhone?.trim();
+      if (!targetPhone) {
+        errors.push("No guardian phone number provided.");
+      } else {
+        try {
+          const config = await emailService.getConfig();
+          if (config?.smsEnabled && config.twilioAccountSid && config.twilioAuthToken && config.twilioFromNumber) {
+            const twilioModule = await import("twilio");
+            const twilioClient = twilioModule.default(config.twilioAccountSid, config.twilioAuthToken);
+            await twilioClient.messages.create({
+              body: input.message,
+              from: config.twilioFromNumber,
+              to: targetPhone,
+            });
+          }
+          deliveredChannels.push("sms");
+        } catch (err) {
+          errors.push(`SMS delivery error: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+      }
+    }
+
+    await writeAuditLog({
+      actorUserId: user.id,
+      actorName: user.fullName,
+      action: "CREATED",
+      recordType: "attendance_guardian_alert",
+      recordId: student.id,
+      recordLabel: `Sent attendance alert to guardian for ${student.fullName}`,
+      after: {
+        studentId: student.id,
+        studentName: student.fullName,
+        channels: input.channels,
+        deliveredChannels,
+        guardianEmail: input.guardianEmail,
+        guardianPhone: input.guardianPhone,
+        subject: input.subject,
+        errors,
+        sentAt: new Date().toISOString(),
+      },
+    });
+
+    return {
+      success: deliveredChannels.length > 0,
+      deliveredChannels,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Attendance notice sent successfully via ${deliveredChannels.join(" & ").toUpperCase() || "channels"}.`,
+    };
+  }
+
+  async getAssessmentSubmissions(assessmentId: string) {
+    const assessment = await AppDataSource.getRepository(Assessment).findOne({
+      where: { id: assessmentId },
+      relations: {
+        teacher: true,
+        students: { student: true },
+      },
+    });
+
+    if (!assessment) {
+      throw new Error("Assessment not found");
+    }
+
+    const submissions = await AppDataSource.getRepository(AssessmentSubmission).find({
+      where: { assessmentId },
+      relations: {
+        student: true,
+        markedBy: true,
+        files: true,
+      },
+    });
+
+    // Collect all candidate student IDs (from enrolled candidate roster + any existing submission)
+    const candidateStudentsMap = new Map<string, User>();
+    if (assessment.students) {
+      for (const st of assessment.students) {
+        if (st.student) candidateStudentsMap.set(st.student.id, st.student);
+      }
+    }
+    for (const sub of submissions) {
+      if (sub.student) candidateStudentsMap.set(sub.student.id, sub.student);
+    }
+
+    const candidateUserIds = Array.from(candidateStudentsMap.keys());
+    const studentProfiles =
+      candidateUserIds.length > 0
+        ? await AppDataSource.getRepository(Student).find({
+            where: { userId: In(candidateUserIds) },
+            relations: { guardianLinks: { guardian: true } },
+          })
+        : [];
+
+    const studentProfileMap = new Map<string, Student>();
+    for (const sp of studentProfiles) {
+      if (sp.userId) studentProfileMap.set(sp.userId, sp);
+    }
+
+    const submissionMap = new Map<string, AssessmentSubmission>();
+    for (const sub of submissions) {
+      submissionMap.set(sub.studentId, sub);
+    }
+
+    const totalMarks = assessment.totalMarks ? Number(assessment.totalMarks) : 100;
+    let submittedCount = 0;
+    let gradedCount = 0;
+    let pendingCount = 0;
+    let sumMarks = 0;
+    const scoredMarks: number[] = [];
+
+    const studentRoster = candidateUserIds.map((userId) => {
+      const user = candidateStudentsMap.get(userId)!;
+      const profile = studentProfileMap.get(userId);
+      const sub = submissionMap.get(userId);
+
+      const guardians = (profile?.guardianLinks || [])
+        .map((gl) => gl.guardian)
+        .filter(Boolean)
+        .map((g) => ({
+          name: g.fullName,
+          email: g.email || "",
+          mobile: g.mobile || "",
+        }));
+
+      const primaryGuardian = guardians[0] || null;
+
+      const isSubmitted = Boolean(sub && sub.status !== "DRAFT");
+      const isGraded = Boolean(sub && sub.mark != null);
+      const markNum = sub && sub.mark != null ? Number(sub.mark) : null;
+      const percentage =
+        markNum !== null && totalMarks > 0
+          ? Math.round((markNum / totalMarks) * 1000) / 10
+          : null;
+
+      if (isSubmitted) {
+        submittedCount++;
+      } else {
+        pendingCount++;
+      }
+
+      if (isGraded && markNum !== null) {
+        gradedCount++;
+        sumMarks += markNum;
+        scoredMarks.push(markNum);
+      }
+
+      return {
+        studentId: user.id,
+        studentName: user.fullName || "Student",
+        studentEmail: user.email || null,
+        studentMobile: user.mobile || null,
+        username: user.username || null,
+        preferredName: profile?.preferredName && profile.preferredName.trim().toLowerCase() !== user.fullName.trim().toLowerCase() ? profile.preferredName : null,
+        guardianName: primaryGuardian?.name || "—",
+        guardianEmail: primaryGuardian?.email || "—",
+        guardianMobile: primaryGuardian?.mobile || "—",
+        status: isGraded ? "GRADED" : isSubmitted ? "SUBMITTED" : "PENDING",
+        submissionId: sub?.id || null,
+        submittedAt: sub?.submittedAt || null,
+        mark: markNum,
+        totalMarks,
+        percentage,
+        markedAt: sub?.markedAt || null,
+        markedByName: sub?.markedBy?.fullName || null,
+        markNotes: sub?.markNotes || null,
+        filesCount: sub?.files?.length || 0,
+      };
+    });
+
+    const averageScore =
+      scoredMarks.length > 0
+        ? Math.round((sumMarks / scoredMarks.length / totalMarks) * 1000) / 10
+        : null;
+
+    const highestMark = scoredMarks.length > 0 ? Math.max(...scoredMarks) : null;
+    const lowestMark = scoredMarks.length > 0 ? Math.min(...scoredMarks) : null;
+
+    return {
+      assessment: {
+        id: assessment.id,
+        name: assessment.name,
+        kind: assessment.kind,
+        subject: assessment.subject,
+        yearGroup: assessment.yearGroup,
+        assessmentDate: assessment.assessmentDate,
+        startTime: assessment.startTime,
+        teacherName: assessment.teacher?.fullName || "Unassigned",
+        totalMarks,
+      },
+      summary: {
+        totalCandidates: candidateUserIds.length,
+        submittedCount,
+        pendingCount,
+        gradedCount,
+        submissionRate:
+          candidateUserIds.length > 0
+            ? Math.round((submittedCount / candidateUserIds.length) * 100)
+            : 0,
+        averageScore,
+        highestMark,
+        lowestMark,
+      },
+      students: studentRoster,
+    };
+  }
+
+  async getHomeworkSubmissions(homeworkId: string) {
+    const homework = await AppDataSource.getRepository(Homework).findOne({
+      where: { id: homeworkId },
+      relations: {
+        subject: true,
+        createdBy: true,
+        students: { student: true },
+        submissions: { student: true, markedBy: true, files: true },
+      },
+    });
+
+    if (!homework) {
+      throw new Error("Homework not found");
+    }
+
+    const assignedStudentsMap = new Map<string, User>();
+    if (homework.students) {
+      for (const st of homework.students) {
+        if (st.student) assignedStudentsMap.set(st.student.id, st.student);
+      }
+    }
+    if (homework.submissions) {
+      for (const sub of homework.submissions) {
+        if (sub.student) assignedStudentsMap.set(sub.student.id, sub.student);
+      }
+    }
+
+    const assignedUserIds = Array.from(assignedStudentsMap.keys());
+    const studentProfiles =
+      assignedUserIds.length > 0
+        ? await AppDataSource.getRepository(Student).find({
+            where: { userId: In(assignedUserIds) },
+            relations: { guardianLinks: { guardian: true } },
+          })
+        : [];
+
+    const studentProfileMap = new Map<string, Student>();
+    for (const sp of studentProfiles) {
+      if (sp.userId) studentProfileMap.set(sp.userId, sp);
+    }
+
+    const submissionMap = new Map<string, HomeworkSubmission>();
+    if (homework.submissions) {
+      for (const sub of homework.submissions) {
+        submissionMap.set(sub.studentId, sub);
+      }
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    let submittedCount = 0;
+    let gradedCount = 0;
+    let pendingCount = 0;
+    let lateCount = 0;
+    let sumPercentages = 0;
+    let scoredCount = 0;
+
+    const studentRoster = assignedUserIds.map((userId) => {
+      const user = assignedStudentsMap.get(userId)!;
+      const profile = studentProfileMap.get(userId);
+      const sub = submissionMap.get(userId);
+
+      const guardians = (profile?.guardianLinks || [])
+        .map((gl) => gl.guardian)
+        .filter(Boolean)
+        .map((g) => ({
+          name: g.fullName,
+          email: g.email || "",
+          mobile: g.mobile || "",
+        }));
+
+      const primaryGuardian = guardians[0] || null;
+
+      const isSubmitted = Boolean(sub && sub.status === "SUBMITTED");
+      const isGraded = Boolean(sub && (sub.markedAt != null || sub.marks != null));
+      const submittedDateStr = sub?.submittedAt
+        ? new Date(sub.submittedAt).toISOString().slice(0, 10)
+        : null;
+
+      const isLate = Boolean(
+        (submittedDateStr && submittedDateStr > homework.dueDate) ||
+        (!isSubmitted && todayStr > homework.dueDate)
+      );
+
+      const marks = sub?.marks != null ? Number(sub.marks) : null;
+      const maxMarks = sub?.maxMarks != null ? Number(sub.maxMarks) : 100;
+      const percentage =
+        marks !== null && maxMarks > 0
+          ? Math.round((marks / maxMarks) * 1000) / 10
+          : null;
+
+      if (isSubmitted) {
+        submittedCount++;
+      } else {
+        pendingCount++;
+      }
+
+      if (isLate) {
+        lateCount++;
+      }
+
+      if (isGraded && percentage !== null) {
+        gradedCount++;
+        sumPercentages += percentage;
+        scoredCount++;
+      }
+
+      return {
+        studentId: user.id,
+        studentName: user.fullName || "Student",
+        studentEmail: user.email || null,
+        studentMobile: user.mobile || null,
+        username: user.username || null,
+        preferredName: profile?.preferredName && profile.preferredName.trim().toLowerCase() !== user.fullName.trim().toLowerCase() ? profile.preferredName : null,
+        guardianName: primaryGuardian?.name || "—",
+        guardianEmail: primaryGuardian?.email || "—",
+        guardianMobile: primaryGuardian?.mobile || "—",
+        status: isGraded ? "GRADED" : isSubmitted ? "SUBMITTED" : "PENDING",
+        isLate,
+        submissionId: sub?.id || null,
+        submittedAt: sub?.submittedAt || null,
+        marks,
+        maxMarks,
+        percentage,
+        feedback: sub?.feedback || null,
+        markedAt: sub?.markedAt || null,
+        markedByName: sub?.markedBy?.fullName || null,
+        filesCount: sub?.files?.length || 0,
+      };
+    });
+
+    const averageScore =
+      scoredCount > 0 ? Math.round((sumPercentages / scoredCount) * 10) / 10 : null;
+
+    return {
+      homework: {
+        id: homework.id,
+        title: homework.title,
+        subject: homework.subject?.name || "General",
+        yearGroup: homework.yearGroup,
+        dueDate: homework.dueDate,
+        createdByName: homework.createdBy?.fullName || "Unknown",
+      },
+      summary: {
+        totalAssigned: assignedUserIds.length,
+        submittedCount,
+        pendingCount,
+        gradedCount,
+        lateCount,
+        submissionRate:
+          assignedUserIds.length > 0
+            ? Math.round((submittedCount / assignedUserIds.length) * 100)
+            : 0,
+        averageScore,
+      },
+      students: studentRoster,
+    };
   }
 }
 

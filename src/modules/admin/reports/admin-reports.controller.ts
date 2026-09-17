@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { adminReportsService } from "./admin-reports.service.js";
-import type { ReportQueryInput, ReportExportInput } from "./admin-reports.validation.js";
+import type { ReportQueryInput, ReportExportInput, NotifyGuardianInput } from "./admin-reports.validation.js";
 
 export class AdminReportsController {
   async attendance(req: Request, res: Response, next: NextFunction) {
@@ -63,9 +63,44 @@ export class AdminReportsController {
 
       const result = await adminReportsService.exportReportCsv(tab, filters, currentUser);
 
-      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
-      res.status(200).send(result.csvContent);
+      res.status(200).send(`\uFEFF${result.csvContent}`);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async notifyGuardian(req: Request, res: Response, next: NextFunction) {
+    try {
+      const input = req.body as NotifyGuardianInput;
+      const currentUser = (req as Request & { user?: { id: string; fullName: string } }).user || {
+        id: "system",
+        fullName: "Admin User",
+      };
+
+      const result = await adminReportsService.notifyGuardianAttendance(input, currentUser);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async assessmentSubmissions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const result = await adminReportsService.getAssessmentSubmissions(id);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async homeworkSubmissions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const result = await adminReportsService.getHomeworkSubmissions(id);
+      res.json(result);
     } catch (error) {
       next(error);
     }
