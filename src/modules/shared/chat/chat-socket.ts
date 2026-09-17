@@ -134,7 +134,8 @@ export function attachChatSocket(httpServer: HttpServer) {
       const payload = verifyAccessToken(token);
       if (
         payload.role !== UserRole.STUDENT &&
-        payload.role !== UserRole.STAFF
+        payload.role !== UserRole.STAFF &&
+        payload.role !== UserRole.GUARDIAN
       ) {
         next(new Error("FORBIDDEN"));
         return;

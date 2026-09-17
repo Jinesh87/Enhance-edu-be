@@ -8,27 +8,33 @@ import {
   OneToMany,
   PrimaryGeneratedColumn,
   Relation,
-  Unique,
   UpdateDateColumn,
 } from "typeorm";
 import { User } from "./User.js";
 import { ChatMessage } from "./ChatMessage.js";
 
+export type ChatConversationKind = "STUDENT_TEACHER" | "GUARDIAN_TEACHER";
+
 @Entity("chat_conversations")
-@Unique(["studentUserId", "teacherUserId"])
 @Index(["studentUserId", "lastMessageAt"])
 @Index(["teacherUserId", "lastMessageAt"])
+@Index(["guardianUserId", "lastMessageAt"])
 export class ChatConversation {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  @Column({ type: "uuid" })
-  @Index()
-  studentUserId!: string;
+  /** STUDENT_TEACHER (default) or GUARDIAN_TEACHER. */
+  @Column({ type: "varchar", length: 32, default: "STUDENT_TEACHER" })
+  kind!: ChatConversationKind;
 
-  @ManyToOne(() => User, { onDelete: "CASCADE" })
+  /** Student user id for student–teacher chats; null for guardian–teacher. */
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  studentUserId!: string | null;
+
+  @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
   @JoinColumn({ name: "studentUserId" })
-  studentUser!: Relation<User>;
+  studentUser!: Relation<User> | null;
 
   @Column({ type: "uuid" })
   @Index()
@@ -37,6 +43,15 @@ export class ChatConversation {
   @ManyToOne(() => User, { onDelete: "CASCADE" })
   @JoinColumn({ name: "teacherUserId" })
   teacherUser!: Relation<User>;
+
+  /** Guardian user id for guardian–teacher chats; null for student–teacher. */
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  guardianUserId!: string | null;
+
+  @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
+  @JoinColumn({ name: "guardianUserId" })
+  guardianUser!: Relation<User> | null;
 
   @Column({ type: "timestamptz", nullable: true })
   lastMessageAt!: Date | null;
@@ -48,6 +63,10 @@ export class ChatConversation {
   /** When set, the teacher participant has muted this chat. */
   @Column({ type: "timestamptz", nullable: true })
   teacherMutedAt!: Date | null;
+
+  /** When set, the guardian participant has muted this chat. */
+  @Column({ type: "timestamptz", nullable: true })
+  guardianMutedAt!: Date | null;
 
   @OneToMany(() => ChatMessage, (message) => message.conversation)
   messages!: Relation<ChatMessage>[];

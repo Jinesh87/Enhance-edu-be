@@ -24,7 +24,10 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authorize(UserRole.STUDENT, UserRole.STAFF));
+router.use(
+  authenticate,
+  authorize(UserRole.STUDENT, UserRole.STAFF, UserRole.GUARDIAN),
+);
 
 router.get("/contacts", chatController.listContacts);
 router.get("/conversations", chatController.listConversations);

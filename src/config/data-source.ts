@@ -269,6 +269,8 @@ export async function ensureInstitutionSettingSchema() {
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "guardianPortalAttendanceEnabled" boolean NOT NULL DEFAULT false;
     ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "guardianTeacherChatEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "openaiApiKey" varchar(255);
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "sessionChangeEmailNotificationsEnabled" boolean NOT NULL DEFAULT false;
@@ -1268,6 +1270,37 @@ export async function ensureChatSchema() {
       ADD COLUMN IF NOT EXISTS "studentMutedAt" timestamptz;
     ALTER TABLE chat_conversations
       ADD COLUMN IF NOT EXISTS "teacherMutedAt" timestamptz;
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "kind" varchar(32) NOT NULL DEFAULT 'STUDENT_TEACHER';
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "guardianUserId" uuid REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "guardianMutedAt" timestamptz;
+    ALTER TABLE chat_conversations
+      ALTER COLUMN "studentUserId" DROP NOT NULL;
+    DO $$
+    DECLARE r record;
+    BEGIN
+      FOR r IN (
+        SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        WHERE t.relname = 'chat_conversations'
+          AND c.contype = 'u'
+      ) LOOP
+        EXECUTE format('ALTER TABLE chat_conversations DROP CONSTRAINT %I', r.conname);
+      END LOOP;
+    END $$;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_student_teacher"
+      ON chat_conversations ("studentUserId", "teacherUserId")
+      WHERE kind = 'STUDENT_TEACHER' AND "studentUserId" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_guardian_teacher"
+      ON chat_conversations ("guardianUserId", "teacherUserId")
+      WHERE kind = 'GUARDIAN_TEACHER' AND "guardianUserId" IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_guardian_last"
+      ON chat_conversations ("guardianUserId", "lastMessageAt");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_guardianUserId"
+      ON chat_conversations ("guardianUserId");
 
     CREATE TABLE IF NOT EXISTS chat_messages (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

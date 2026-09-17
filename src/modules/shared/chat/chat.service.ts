@@ -9,7 +9,11 @@ import {
 } from "../../../entities/index.js";
 import {
   assertCanChat,
+  assertGuardianTeacherChatEnabled,
+  isGuardianTeacherConversation,
+  listGuardiansForTeacher,
   listStudentsForTeacher,
+  listTeachersForGuardian,
   listTeachersForStudent,
   peerDisplayName,
   type ChatPeer,
@@ -23,9 +27,37 @@ import {
 } from "../../../common/storage/object-storage.js";
 import { assertValidChatAttachmentBuffer, isChatAttachmentMime, isChatAudioMime, isChatImageMime } from "../../../common/validation/validate-upload.js";
 import { notifyUsers } from "../../notifications/domain-notifications.js";
+import { settingsService } from "../../settings/settings.service.js";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_BODY_LENGTH = 4000;
+
+async function assertChatRole(role: UserRole) {
+  if (role === UserRole.STUDENT || role === UserRole.STAFF) return;
+  if (role === UserRole.GUARDIAN) {
+    await assertGuardianTeacherChatEnabled();
+    return;
+  }
+  throw new AppError(
+    403,
+    "Chat is not available for this role",
+    "CHAT_FORBIDDEN",
+  );
+}
+
+function chatNotificationHref(
+  conversation: ChatConversation,
+  recipientUserId: string,
+) {
+  if (isGuardianTeacherConversation(conversation)) {
+    return conversation.guardianUserId === recipientUserId
+      ? `/guardian/messages/${conversation.id}`
+      : `/tutor/messages/${conversation.id}`;
+  }
+  return conversation.studentUserId === recipientUserId
+    ? `/student/messages/${conversation.id}`
+    : `/tutor/messages/${conversation.id}`;
+}
 
 export type ChatReplyPreviewDto = {
   id: string;
@@ -176,12 +208,19 @@ export class ChatService {
   }
 
   async listContacts(userId: string, role: UserRole) {
-    const contacts =
-      role === UserRole.STUDENT
-        ? await listTeachersForStudent(userId)
-        : role === UserRole.STAFF
-          ? await listStudentsForTeacher(userId)
-          : [];
+    await assertChatRole(role);
+
+    let contacts: ChatPeer[] = [];
+    if (role === UserRole.STUDENT) {
+      contacts = await listTeachersForStudent(userId);
+    } else if (role === UserRole.GUARDIAN) {
+      contacts = await listTeachersForGuardian(userId);
+    } else if (role === UserRole.STAFF) {
+      contacts = await listStudentsForTeacher(userId);
+      if (await settingsService.isGuardianTeacherChatEnabled()) {
+        contacts = [...contacts, ...(await listGuardiansForTeacher(userId))];
+      }
+    }
 
     return {
       contacts: contacts.map((peer) => ({
@@ -191,6 +230,7 @@ export class ChatService {
         preferredName: peer.preferredName,
         role: peer.role,
         sharedClasses: peer.sharedClasses,
+        subtitle: peer.subtitle ?? null,
         online: isUserOnline(peer.userId),
       })),
     };
@@ -207,7 +247,7 @@ export class ChatService {
       .andWhere("message.readAt IS NULL")
       .andWhere("message.deletedAt IS NULL")
       .andWhere(
-        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId)",
+        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId OR conversation.guardianUserId = :userId)",
         { userId },
       );
 
@@ -221,9 +261,27 @@ export class ChatService {
   }
 
   private peerUserId(conversation: ChatConversation, viewerUserId: string) {
+    if (isGuardianTeacherConversation(conversation)) {
+      return conversation.guardianUserId === viewerUserId
+        ? conversation.teacherUserId
+        : conversation.guardianUserId!;
+    }
     return conversation.studentUserId === viewerUserId
       ? conversation.teacherUserId
-      : conversation.studentUserId;
+      : conversation.studentUserId!;
+  }
+
+  private isMutedForUser(
+    conversation: ChatConversation,
+    viewerUserId: string,
+  ) {
+    if (conversation.guardianUserId === viewerUserId) {
+      return Boolean(conversation.guardianMutedAt);
+    }
+    if (conversation.studentUserId === viewerUserId) {
+      return Boolean(conversation.studentMutedAt);
+    }
+    return Boolean(conversation.teacherMutedAt);
   }
 
   private async toConversationDto(
@@ -234,6 +292,8 @@ export class ChatService {
   ) {
     const peerId = this.peerUserId(conversation, viewerUserId);
     let peerName = "Chat";
+    let peerSubtitle: string | null = null;
+    let peerRole: string | null = null;
     if (peer && "fullName" in peer) {
       peerName = peerDisplayName({
         fullName: peer.fullName,
@@ -242,21 +302,40 @@ export class ChatService {
             ? ((peer as User).preferredName ?? null)
             : null,
       });
+      if ("subtitle" in peer && peer.subtitle) {
+        peerSubtitle = peer.subtitle;
+      }
+      if ("role" in peer && peer.role) {
+        peerRole = String(peer.role);
+      }
+    }
+    if (!peerRole) {
+      peerRole = isGuardianTeacherConversation(conversation)
+        ? conversation.guardianUserId === peerId
+          ? UserRole.GUARDIAN
+          : UserRole.STAFF
+        : conversation.studentUserId === peerId
+          ? UserRole.STUDENT
+          : UserRole.STAFF;
+    }
+    if (!peerSubtitle && peerRole === UserRole.GUARDIAN) {
+      peerSubtitle = "Guardian";
     }
 
     const unreadCount = await this.unreadCountForUser(
       viewerUserId,
       conversation.id,
     );
-    const muted =
-      conversation.studentUserId === viewerUserId
-        ? Boolean(conversation.studentMutedAt)
-        : Boolean(conversation.teacherMutedAt);
 
     return {
       id: conversation.id,
+      kind: isGuardianTeacherConversation(conversation)
+        ? ("GUARDIAN_TEACHER" as const)
+        : ("STUDENT_TEACHER" as const),
       peerUserId: peerId,
       peerName,
+      peerRole,
+      peerSubtitle,
       peerOnline: isUserOnline(peerId),
       lastMessageAt: conversation.lastMessageAt?.toISOString() ?? null,
       lastMessagePreview: messagePreview(lastMessage),
@@ -267,29 +346,36 @@ export class ChatService {
         ? lastMessage.senderUserId === viewerUserId
         : false,
       unreadCount,
-      muted,
+      muted: this.isMutedForUser(conversation, viewerUserId),
       createdAt: conversation.createdAt.toISOString(),
       updatedAt: conversation.updatedAt.toISOString(),
     };
   }
 
   async listConversations(userId: string, role: UserRole) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
-    const conversations = await this.conversations.find({
-      where:
-        role === UserRole.STUDENT
-          ? { studentUserId: userId, lastMessageAt: Not(IsNull()) }
-          : { teacherUserId: userId, lastMessageAt: Not(IsNull()) },
+    const where =
+      role === UserRole.STUDENT
+        ? { studentUserId: userId, lastMessageAt: Not(IsNull()) }
+        : role === UserRole.GUARDIAN
+          ? { guardianUserId: userId, lastMessageAt: Not(IsNull()) }
+          : { teacherUserId: userId, lastMessageAt: Not(IsNull()) };
+
+    let conversations = await this.conversations.find({
+      where,
       order: { lastMessageAt: "DESC", updatedAt: "DESC" },
       take: 100,
     });
+
+    if (
+      role === UserRole.STAFF &&
+      !(await settingsService.isGuardianTeacherChatEnabled())
+    ) {
+      conversations = conversations.filter(
+        (row) => !isGuardianTeacherConversation(row),
+      );
+    }
 
     if (conversations.length === 0) {
       return {
@@ -302,9 +388,19 @@ export class ChatService {
     const peerIds = conversations.map((row) => this.peerUserId(row, userId));
     const peers = await this.users.find({
       where: { id: In(peerIds) },
-      select: { id: true, fullName: true, preferredName: true },
+      select: { id: true, fullName: true, preferredName: true, role: true },
     });
     const peerById = new Map(peers.map((peer) => [peer.id, peer]));
+
+    let guardianSubtitles = new Map<string, string>();
+    if (role === UserRole.STAFF) {
+      const guardians = await listGuardiansForTeacher(userId);
+      guardianSubtitles = new Map(
+        guardians
+          .filter((row) => row.subtitle)
+          .map((row) => [row.userId, row.subtitle!]),
+      );
+    }
 
     const lastMessages = await this.messages
       .createQueryBuilder("message")
@@ -320,14 +416,22 @@ export class ChatService {
     );
 
     const dtos = await Promise.all(
-      conversations.map((conversation) =>
-        this.toConversationDto(
+      conversations.map((conversation) => {
+        const peerId = this.peerUserId(conversation, userId);
+        const peer = peerById.get(peerId) ?? null;
+        const enriched = peer
+          ? {
+              ...peer,
+              subtitle: guardianSubtitles.get(peerId) ?? null,
+            }
+          : null;
+        return this.toConversationDto(
           conversation,
           userId,
-          peerById.get(this.peerUserId(conversation, userId)) ?? null,
+          enriched,
           lastByConversation.get(conversation.id) ?? null,
-        ),
-      ),
+        );
+      }),
     );
 
     return { conversations: dtos };
@@ -421,19 +525,32 @@ export class ChatService {
     role: UserRole,
     peerUserId: string,
   ) {
+    await assertChatRole(role);
     const pair = await assertCanChat(userId, role, peerUserId);
 
-    let conversation = await this.conversations.findOne({
-      where: {
-        studentUserId: pair.studentUserId,
-        teacherUserId: pair.teacherUserId,
-      },
-    });
+    let conversation =
+      pair.kind === "GUARDIAN_TEACHER"
+        ? await this.conversations.findOne({
+            where: {
+              kind: "GUARDIAN_TEACHER",
+              guardianUserId: pair.guardianUserId,
+              teacherUserId: pair.teacherUserId,
+            },
+          })
+        : await this.conversations.findOne({
+            where: {
+              kind: "STUDENT_TEACHER",
+              studentUserId: pair.studentUserId,
+              teacherUserId: pair.teacherUserId,
+            },
+          });
 
     if (!conversation) {
       conversation = this.conversations.create({
+        kind: pair.kind,
         studentUserId: pair.studentUserId,
         teacherUserId: pair.teacherUserId,
+        guardianUserId: pair.guardianUserId,
         lastMessageAt: null,
       });
       await this.conversations.save(conversation);
@@ -441,14 +558,20 @@ export class ChatService {
 
     const peer = await this.users.findOne({
       where: { id: peerUserId },
-      select: { id: true, fullName: true, preferredName: true },
+      select: { id: true, fullName: true, preferredName: true, role: true },
     });
+    let enriched: ChatPeer | User | null = peer;
+    if (peer?.role === UserRole.GUARDIAN && role === UserRole.STAFF) {
+      const guardians = await listGuardiansForTeacher(userId);
+      const match = guardians.find((row) => row.userId === peerUserId);
+      if (match) enriched = match;
+    }
 
     return {
       conversation: await this.toConversationDto(
         conversation,
         userId,
-        peer,
+        enriched,
         null,
       ),
     };
@@ -466,9 +589,13 @@ export class ChatService {
     }
     if (
       conversation.studentUserId !== userId &&
-      conversation.teacherUserId !== userId
+      conversation.teacherUserId !== userId &&
+      conversation.guardianUserId !== userId
     ) {
       throw new AppError(403, "Conversation not found", "CHAT_FORBIDDEN");
+    }
+    if (isGuardianTeacherConversation(conversation)) {
+      await assertGuardianTeacherChatEnabled();
     }
     return conversation;
   }
@@ -479,13 +606,7 @@ export class ChatService {
     conversationId: string,
     options?: { before?: string; limit?: number },
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     const conversation = await this.requireParticipant(conversationId, userId);
     const peerId = this.peerUserId(conversation, userId);
@@ -547,13 +668,7 @@ export class ChatService {
     queryRaw: string,
     options?: { limit?: number },
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     const query = queryRaw.trim();
     if (query.length < 1) {
@@ -592,13 +707,7 @@ export class ChatService {
     fileUpload?: IncomingStoredFile | null,
     replyToMessageIdRaw?: string | null,
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     const body = bodyRaw.trim();
     if (!body && !fileUpload) {
@@ -746,10 +855,7 @@ export class ChatService {
       });
     }
 
-    const peerMuted =
-      conversation.studentUserId === peerId
-        ? Boolean(conversation.studentMutedAt)
-        : Boolean(conversation.teacherMutedAt);
+    const peerMuted = this.isMutedForUser(conversation, peerId);
     const peerViewing = await isUserViewingConversation(
       peerId,
       conversation.id,
@@ -762,7 +868,6 @@ export class ChatService {
           })
         : "New message";
       const preview = messagePreview(message) || "New message";
-      const peerIsStudent = conversation.studentUserId === peerId;
       void notifyUsers([
         {
           userId: peerId,
@@ -772,9 +877,7 @@ export class ChatService {
           data: {
             conversationId: conversation.id,
             messageId: message.id,
-            href: peerIsStudent
-              ? `/student/messages/${conversation.id}`
-              : `/tutor/messages/${conversation.id}`,
+            href: chatNotificationHref(conversation, peerId),
           },
         },
       ]);
@@ -790,13 +893,7 @@ export class ChatService {
     messageId: string,
     bodyRaw: string,
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     const body = bodyRaw.trim();
     if (!body) {
@@ -893,17 +990,13 @@ export class ChatService {
     conversationId: string,
     muted: boolean,
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     const conversation = await this.requireParticipant(conversationId, userId);
     const now = muted ? new Date() : null;
-    if (conversation.studentUserId === userId) {
+    if (conversation.guardianUserId === userId) {
+      conversation.guardianMutedAt = now;
+    } else if (conversation.studentUserId === userId) {
       conversation.studentMutedAt = now;
     } else {
       conversation.teacherMutedAt = now;
@@ -935,13 +1028,7 @@ export class ChatService {
     conversationId: string,
     messageId: string,
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     await this.requireParticipant(conversationId, userId);
     const message = await this.messages.findOne({
@@ -964,13 +1051,7 @@ export class ChatService {
   }
 
   async markRead(userId: string, role: UserRole, conversationId: string) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     const conversation = await this.requireParticipant(conversationId, userId);
     const peerId = this.peerUserId(conversation, userId);
@@ -1023,13 +1104,7 @@ export class ChatService {
     conversationId: string,
     messageId: string,
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     const conversation = await this.requireParticipant(conversationId, userId);
     const message = await this.messages.findOne({
@@ -1127,13 +1202,7 @@ export class ChatService {
     conversationId: string,
     messageId: string,
   ) {
-    if (role !== UserRole.STUDENT && role !== UserRole.STAFF) {
-      throw new AppError(
-        403,
-        "Chat is not available for this role",
-        "CHAT_FORBIDDEN",
-      );
-    }
+    await assertChatRole(role);
 
     await this.requireParticipant(conversationId, userId);
     const message = await this.messages.findOne({
