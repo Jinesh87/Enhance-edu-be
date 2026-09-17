@@ -23,6 +23,7 @@ import {
   Term,
   Student,
   GuardianStudent,
+  Enrollment,
 } from "../../../entities/index.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import { emailService } from "../../email/email.service.js";
@@ -589,6 +590,44 @@ export class AdminReportsService {
       }
     }
 
+    const totalPipelineConverted = allEnquiries.filter(
+      (e) => e.convertedEnrollmentId,
+    ).length;
+
+    // Direct enrollments count & details in period (created directly without prior enquiry)
+    const directEnrollmentQuery = AppDataSource.getRepository(Enrollment)
+      .createQueryBuilder("enr")
+      .leftJoinAndSelect("enr.student", "s")
+      .leftJoinAndSelect("s.user", "su")
+      .leftJoinAndSelect("enr.guardian", "g")
+      .leftJoinAndSelect("s.guardianLinks", "gl")
+      .leftJoinAndSelect("gl.guardian", "glg");
+
+    if (filters.dateFrom) {
+      directEnrollmentQuery.andWhere("enr.createdAt >= :dateFrom", {
+        dateFrom: `${filters.dateFrom}T00:00:00Z`,
+      });
+    }
+    if (filters.dateTo) {
+      directEnrollmentQuery.andWhere("enr.createdAt <= :dateTo", {
+        dateTo: `${filters.dateTo}T23:59:59Z`,
+      });
+    }
+
+    const allEnrollmentsInPeriod = await directEnrollmentQuery.getMany();
+    const convertedEnrollmentIds = new Set(
+      allEnquiries
+        .map((e) => e.convertedEnrollmentId)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    const directEnrollments = allEnrollmentsInPeriod.filter(
+      (enr) => !convertedEnrollmentIds.has(enr.id),
+    );
+    const directEnrollmentsCount = directEnrollments.length;
+
+    const totalNewAdmissions = totalPipelineConverted + directEnrollmentsCount;
+
     const sourceAttribution = Array.from(sourceStatsMap.values()).map((s) => ({
       sourceId: s.sourceId,
       sourceName: s.sourceName,
@@ -601,32 +640,84 @@ export class AdminReportsService {
           : 0,
     }));
 
-    const paginatedEnquiries = allEnquiries
-      .slice((page - 1) * limit, page * limit)
-      .map((e) => ({
-        id: e.id,
-        studentFullName: e.studentFullName,
-        guardianFullName: e.guardianFullName,
-        guardianEmail: e.guardianEmail,
-        guardianMobile: e.guardianMobile,
-        currentStage: e.currentStage?.name ?? "Unknown",
-        firstSource: e.firstSource?.name ?? "Unknown",
-        lastSource: e.lastSource?.name ?? "Unknown",
-        createdAt: e.createdAt,
-      }));
+    if (directEnrollmentsCount > 0) {
+      sourceAttribution.unshift({
+        sourceId: "direct-walkin",
+        sourceName: "Direct Admission (Walk-in / Direct Add)",
+        totalEnquiries: directEnrollmentsCount,
+        trialsBooked: 0,
+        enrolled: directEnrollmentsCount,
+        conversionRate: 100,
+      });
+    }
+
+    const directEnrollmentItems = directEnrollments.map((enr) => {
+      const studentName =
+        enr.student?.fullName ||
+        enr.student?.user?.fullName ||
+        "Direct Enrolled Student";
+      const guardianName =
+        enr.guardian?.fullName ||
+        enr.student?.guardianLinks?.[0]?.guardian?.fullName ||
+        "Guardian (Direct Add)";
+      const guardianEmail =
+        enr.guardian?.email ||
+        enr.student?.guardianLinks?.[0]?.guardian?.email ||
+        null;
+      const guardianMobile =
+        enr.guardian?.mobile ||
+        enr.student?.guardianLinks?.[0]?.guardian?.mobile ||
+        null;
+
+      return {
+        id: enr.id,
+        studentFullName: studentName,
+        guardianFullName: guardianName,
+        guardianEmail,
+        guardianMobile,
+        currentStage: "Converted (Direct Enrolment)",
+        firstSource: "Direct Admission (Walk-in / Direct Add)",
+        lastSource: "Direct Admission (Walk-in / Direct Add)",
+        createdAt: enr.createdAt,
+      };
+    });
+
+    const enquiryActivityItems = allEnquiries.map((e) => ({
+      id: e.id,
+      studentFullName: e.studentFullName,
+      guardianFullName: e.guardianFullName,
+      guardianEmail: e.guardianEmail,
+      guardianMobile: e.guardianMobile,
+      currentStage: e.currentStage?.name ?? "Unknown",
+      firstSource: e.firstSource?.name ?? "Unknown",
+      lastSource: e.lastSource?.name ?? "Unknown",
+      createdAt: e.createdAt,
+    }));
+
+    const combinedActivity = [
+      ...enquiryActivityItems,
+      ...directEnrollmentItems,
+    ].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    const paginatedEnquiries = combinedActivity.slice(
+      (page - 1) * limit,
+      page * limit,
+    );
 
     return {
       summary: {
         totalEnquiriesInPeriod: allEnquiries.length,
         touchPoint,
-        totalConverted: allEnquiries.filter((e) => e.convertedEnrollmentId)
-          .length,
+        totalConverted: totalPipelineConverted,
+        directEnrollments: directEnrollmentsCount,
+        totalAdmissions: totalNewAdmissions,
         overallConversionRate:
           allEnquiries.length > 0
             ? Math.round(
-                (allEnquiries.filter((e) => e.convertedEnrollmentId).length /
-                  allEnquiries.length) *
-                  1000,
+                (totalPipelineConverted / allEnquiries.length) * 1000,
               ) / 10
             : 0,
       },
@@ -635,10 +726,10 @@ export class AdminReportsService {
       sourceAttribution,
       enquiries: {
         items: paginatedEnquiries,
-        total: allEnquiries.length,
+        total: combinedActivity.length,
         page,
         limit,
-        totalPages: Math.ceil(allEnquiries.length / limit) || 1,
+        totalPages: Math.ceil(combinedActivity.length / limit) || 1,
       },
       lastUpdated: new Date().toISOString(),
     };

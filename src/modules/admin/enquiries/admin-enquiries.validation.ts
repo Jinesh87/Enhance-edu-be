@@ -22,6 +22,8 @@ export const listEnquiriesQuerySchema = Joi.object({
     "student",
     "created",
   ),
+  dateFrom: Joi.string().isoDate().allow(""),
+  dateTo: Joi.string().isoDate().allow(""),
   view: Joi.string().valid("list", "board").allow(""),
 });
 
