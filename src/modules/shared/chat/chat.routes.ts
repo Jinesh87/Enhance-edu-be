@@ -12,8 +12,10 @@ import {
 import { chatController } from "./chat.controller.js";
 import {
   conversationIdParamsSchema,
+  editChatMessageSchema,
   listMessagesQuerySchema,
   messageMediaParamsSchema,
+  muteConversationSchema,
   openConversationSchema,
   searchChatQuerySchema,
   searchConversationMessagesQuerySchema,
@@ -22,7 +24,10 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authorize(UserRole.STUDENT, UserRole.STAFF));
+router.use(
+  authenticate,
+  authorize(UserRole.STUDENT, UserRole.STAFF, UserRole.GUARDIAN),
+);
 
 router.get("/contacts", chatController.listContacts);
 router.get("/conversations", chatController.listConversations);
@@ -70,6 +75,18 @@ router.delete(
   "/conversations/:conversationId/messages/:messageId",
   validate(messageMediaParamsSchema, "params"),
   chatController.deleteMessage,
+);
+router.patch(
+  "/conversations/:conversationId/messages/:messageId",
+  validate(messageMediaParamsSchema, "params"),
+  validate(editChatMessageSchema),
+  chatController.editMessage,
+);
+router.post(
+  "/conversations/:conversationId/mute",
+  validate(conversationIdParamsSchema, "params"),
+  validate(muteConversationSchema),
+  chatController.setMuted,
 );
 router.post(
   "/conversations/:conversationId/messages/:messageId/voice-played",

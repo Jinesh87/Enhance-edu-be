@@ -62,6 +62,9 @@ export class ChatMessage {
   @Column({ type: "timestamptz", nullable: true })
   deletedAt!: Date | null;
 
+  @Column({ type: "timestamptz", nullable: true })
+  editedAt!: Date | null;
+
   @Column({ type: "uuid", nullable: true })
   @Index()
   replyToMessageId!: string | null;

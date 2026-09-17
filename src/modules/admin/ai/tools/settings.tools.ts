@@ -33,6 +33,7 @@ export async function getInstitutionSettingsSummary(
         assessmentsEnabled: guardian.assessmentsEnabled,
         entranceExamsEnabled: guardian.entranceExamsEnabled,
         attendanceEnabled: guardian.attendanceEnabled,
+        teacherChatEnabled: guardian.teacherChatEnabled,
       },
       responseHint:
         "Summarise settings briefly in plain language. Never mention API keys or secrets.",

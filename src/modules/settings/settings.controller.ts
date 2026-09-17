@@ -3,6 +3,7 @@ import { settingsService } from "./settings.service.js";
 import { logger } from "../../config/logger.js";
 import { openAiUsageService } from "../../common/ai/openai-usage.service.js";
 import { writeAuditLog } from "../../common/utils/audit-log.js";
+import { UserRole } from "../../common/constants/roles.js";
 
 function parseOptionalDate(value: unknown, endOfDay = false): Date | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
@@ -81,7 +82,9 @@ export class SettingsController {
   }
 
   async updateGuardianPortalSettings(req: Request, res: Response): Promise<void> {
-    const config = await settingsService.updateGuardianPortalSettings(req.body);
+    const config = await settingsService.updateGuardianPortalSettings(req.body, {
+      allowTeacherChatToggle: req.user?.role === UserRole.SUPER_ADMIN,
+    });
 
     logger.info(
       {

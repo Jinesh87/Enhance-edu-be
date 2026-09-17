@@ -25,6 +25,7 @@ export interface GuardianPortalSettings {
   assessmentsEnabled: boolean;
   entranceExamsEnabled: boolean;
   attendanceEnabled: boolean;
+  teacherChatEnabled: boolean;
 }
 
 export interface UpdateGuardianPortalSettingInput {
@@ -32,6 +33,7 @@ export interface UpdateGuardianPortalSettingInput {
   assessmentsEnabled: boolean;
   entranceExamsEnabled: boolean;
   attendanceEnabled: boolean;
+  teacherChatEnabled: boolean;
 }
 
 export interface OpenAiSettings {
@@ -132,6 +134,7 @@ export class SettingsService {
         guardianPortalAssessmentsEnabled: false,
         guardianPortalEntranceExamsEnabled: false,
         guardianPortalAttendanceEnabled: false,
+        guardianTeacherChatEnabled: false,
         openaiApiKey: null,
         sessionChangeEmailNotificationsEnabled: false,
         adminAiAssistantEnabled: true,
@@ -313,6 +316,7 @@ export class SettingsService {
       assessmentsEnabled: setting.guardianPortalAssessmentsEnabled ?? false,
       entranceExamsEnabled: setting.guardianPortalEntranceExamsEnabled ?? false,
       attendanceEnabled: setting.guardianPortalAttendanceEnabled ?? false,
+      teacherChatEnabled: setting.guardianTeacherChatEnabled ?? false,
     };
   }
 
@@ -323,12 +327,16 @@ export class SettingsService {
 
   async updateGuardianPortalSettings(
     input: UpdateGuardianPortalSettingInput,
+    options?: { allowTeacherChatToggle?: boolean },
   ): Promise<GuardianPortalSettings> {
     const setting = await this.getOrCreateDefault();
     setting.guardianPortalClassDetailsEnabled = input.classDetailsEnabled;
     setting.guardianPortalAssessmentsEnabled = input.assessmentsEnabled;
     setting.guardianPortalEntranceExamsEnabled = input.entranceExamsEnabled;
     setting.guardianPortalAttendanceEnabled = input.attendanceEnabled;
+    if (options?.allowTeacherChatToggle) {
+      setting.guardianTeacherChatEnabled = input.teacherChatEnabled;
+    }
     await this.settingRepo.save(setting);
     return this.mapGuardianPortalSettings(setting);
   }
@@ -351,6 +359,11 @@ export class SettingsService {
   async isGuardianPortalAttendanceEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.guardianPortalAttendanceEnabled ?? false;
+  }
+
+  async isGuardianTeacherChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.guardianTeacherChatEnabled ?? false;
   }
 
   async getOpenAiSettings(): Promise<OpenAiSettings> {
