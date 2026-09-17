@@ -432,7 +432,6 @@ export class AdminReportsService {
         excused: s.excused,
         attendanceRate: Math.round(rate * 10) / 10,
         isBelowThreshold: threshold > 0 ? rate < threshold : false,
-        sessionLogs: s.sessionLogs,
         subjectBreakdown,
       };
     });
@@ -483,6 +482,260 @@ export class AdminReportsService {
         totalPages: Math.ceil(totalStudents / limit) || 1,
       },
       filtersApplied: filters,
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  async getStudentAttendanceDetails(studentId: string, filters: ReportQueryInput) {
+    const threshold = filters.threshold ?? 80;
+
+    const holidayQuery = AppDataSource.getRepository(Holiday).createQueryBuilder("h");
+    if (filters.dateFrom && filters.dateTo) {
+      holidayQuery.where("h.startDate <= :dateTo AND h.endDate >= :dateFrom", {
+        dateFrom: filters.dateTo,
+        dateTo: filters.dateFrom,
+      });
+    }
+    const holidays = await holidayQuery.getMany();
+    const holidayDateRanges = holidays.map((h) => ({
+      start: h.startDate,
+      end: h.endDate,
+    }));
+
+    let studentEntity: Student | null = null;
+    let userEntity: User | null = null;
+
+    try {
+      studentEntity = await AppDataSource.getRepository(Student).findOne({
+        where: [{ userId: studentId }, { id: studentId }],
+        relations: {
+          user: true,
+          guardianLinks: { guardian: true },
+        },
+      });
+      if (studentEntity?.user) {
+        userEntity = studentEntity.user;
+      }
+    } catch {
+      // fallback
+    }
+
+    if (!userEntity) {
+      userEntity = await AppDataSource.getRepository(User).findOne({
+        where: { id: studentId },
+      });
+    }
+
+    const firstGuardian = studentEntity?.guardianLinks?.[0]?.guardian;
+    const studentName = userEntity?.fullName || studentEntity?.fullName || "Student";
+    const studentEmail = userEntity?.email || null;
+    const guardianName = firstGuardian?.fullName || null;
+    const guardianEmail = firstGuardian?.email || null;
+    const guardianPhone = firstGuardian?.mobile || null;
+
+    const query = AppDataSource.getRepository(AttendanceRecord)
+      .createQueryBuilder("ar")
+      .innerJoinAndSelect("ar.session", "s")
+      .leftJoinAndSelect("s.class", "c")
+      .leftJoinAndSelect("c.term", "cterm")
+      .leftJoinAndSelect("cterm.academicYear", "cay")
+      .leftJoinAndSelect("cterm.yearLevel", "cyl")
+      .leftJoinAndSelect("s.classroom", "cr")
+      .leftJoinAndSelect("s.teacher", "st")
+      .leftJoinAndSelect("c.teacher", "ct")
+      .leftJoinAndSelect("s.assessment", "a")
+      .where("ar.studentId = :studentId", { studentId });
+
+    if (filters.dateFrom) {
+      query.andWhere("s.startAt >= :dateFrom", {
+        dateFrom: `${filters.dateFrom}T00:00:00Z`,
+      });
+    }
+    if (filters.dateTo) {
+      query.andWhere("s.startAt <= :dateTo", {
+        dateTo: `${filters.dateTo}T23:59:59Z`,
+      });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(cay.year = :acadYear OR cay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("cay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("cyl.name = :yearGroup", { yearGroup: filters.yearGroup });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("cyl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
+    }
+    if (filters.subjectId) {
+      const resolved = await this.resolveSubjectFilter(filters.subjectId);
+      const subName = resolved?.name || filters.subjectId;
+      query.andWhere("c.subject = :subjectName", { subjectName: subName });
+    }
+    if (filters.termId) {
+      query.andWhere("c.termId = :termId", { termId: filters.termId });
+    }
+    if (filters.teacherId) {
+      query.andWhere(
+        "(s.teacherId = :teacherId OR (s.teacherId IS NULL AND c.teacher = :teacherId))",
+        { teacherId: filters.teacherId }
+      );
+    }
+
+    const records = await query.orderBy("s.startAt", "ASC").getMany();
+
+    const validRecords = records.filter((r) => {
+      if (!r.session?.startAt) return true;
+      const sessionDateStr = r.session.startAt.toISOString().slice(0, 10);
+      const isHoliday = holidayDateRanges.some(
+        (h) => sessionDateStr >= h.start && sessionDateStr <= h.end
+      );
+      return !isHoliday;
+    });
+
+    let present = 0;
+    let late = 0;
+    let absent = 0;
+    let excused = 0;
+    let exceptions = 0;
+
+    let academicYear: string | number | null = null;
+    let yearLevel: string | null = studentEntity?.yearLevel ? `Year ${studentEntity.yearLevel}` : null;
+    let termName: string | null = null;
+
+    type StudentSessionLog = {
+      sessionId: string;
+      date: string;
+      time: string;
+      subject: string;
+      teacher: string;
+      room: string;
+      status: string;
+      scannedAt: string | null;
+    };
+
+    const sessionLogs: StudentSessionLog[] = [];
+    const subjectStatsMap = new Map<
+      string,
+      {
+        total: number;
+        present: number;
+        late: number;
+        absent: number;
+        excused: number;
+        teacherName: string;
+      }
+    >();
+
+    for (const r of validRecords) {
+      const status = r.status;
+      if (status === AttendanceStatus.PRESENT) present++;
+      else if (status === AttendanceStatus.LATE) late++;
+      else if (status === AttendanceStatus.ABSENT) absent++;
+      else if (status === AttendanceStatus.EXCUSED) excused++;
+      else if (status === AttendanceStatus.EXCEPTION) exceptions++;
+
+      if (r.session.class?.term) {
+        const term = r.session.class.term;
+        if (!academicYear && term.academicYear) {
+          academicYear = term.academicYear.year || term.academicYear.displayName;
+        }
+        if (!yearLevel && term.yearLevel) {
+          yearLevel = term.yearLevel.name;
+        }
+        if (!termName && term.name) {
+          termName = term.name;
+        }
+      }
+
+      const subjectName =
+        r.session.class?.subject || r.session.class?.name || r.session.assessment?.subject || "General";
+      const teacherName =
+        r.session.teacher?.fullName || r.session.class?.teacher?.fullName || "Unassigned";
+      const roomName =
+        r.session.classroom?.name || r.session.room || "Main Room";
+      const sessionDate = r.session.startAt ? r.session.startAt.toISOString().slice(0, 10) : "-";
+      const sessionTime =
+        r.session.startAt && r.session.endAt
+          ? `${new Date(r.session.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${new Date(r.session.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+          : "-";
+
+      sessionLogs.push({
+        sessionId: r.session.id,
+        date: sessionDate,
+        time: sessionTime,
+        subject: subjectName,
+        teacher: teacherName,
+        room: roomName,
+        status: r.status,
+        scannedAt: r.scannedAt ? r.scannedAt.toISOString() : null,
+      });
+
+      if (!subjectStatsMap.has(subjectName)) {
+        subjectStatsMap.set(subjectName, {
+          total: 0,
+          present: 0,
+          late: 0,
+          absent: 0,
+          excused: 0,
+          teacherName,
+        });
+      }
+      const stSub = subjectStatsMap.get(subjectName)!;
+      stSub.total++;
+      if (teacherName !== "Unassigned") {
+        stSub.teacherName = teacherName;
+      }
+      if (status === AttendanceStatus.PRESENT) stSub.present++;
+      else if (status === AttendanceStatus.LATE) stSub.late++;
+      else if (status === AttendanceStatus.ABSENT) stSub.absent++;
+      else if (status === AttendanceStatus.EXCUSED) stSub.excused++;
+    }
+
+    sessionLogs.sort((a, b) => a.date.localeCompare(b.date));
+
+    const totalActive = present + late + absent + excused;
+    const rate = totalActive > 0 ? ((present + late) / totalActive) * 100 : 100;
+
+    const subjectBreakdown = Array.from(subjectStatsMap.entries()).map(([sub, stat]) => {
+      const subActive = stat.present + stat.late + stat.absent + stat.excused;
+      const subRate = subActive > 0 ? ((stat.present + stat.late) / subActive) * 100 : 100;
+      return {
+        subject: sub,
+        teacherName: stat.teacherName,
+        total: stat.total,
+        present: stat.present,
+        late: stat.late,
+        absent: stat.absent,
+        excused: stat.excused,
+        attendanceRate: Math.round(subRate * 10) / 10,
+      };
+    });
+
+    return {
+      studentId,
+      studentName,
+      email: studentEmail,
+      academicYear,
+      yearLevel,
+      termName,
+      guardianName,
+      guardianEmail,
+      guardianPhone,
+      totalSessions: validRecords.length,
+      present,
+      late,
+      absent,
+      excused,
+      exceptions,
+      attendanceRate: Math.round(rate * 10) / 10,
+      isBelowThreshold: threshold > 0 ? rate < threshold : false,
+      subjectBreakdown,
+      sessionLogs,
       lastUpdated: new Date().toISOString(),
     };
   }
@@ -738,7 +991,22 @@ export class AdminReportsService {
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
 
-    const paginatedEnquiries = combinedActivity.slice(
+    let filteredActivity = combinedActivity;
+
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      filteredActivity = filteredActivity.filter(
+        (e) =>
+          (e.studentFullName && e.studentFullName.toLowerCase().includes(q)) ||
+          (e.guardianFullName && e.guardianFullName.toLowerCase().includes(q)) ||
+          (e.guardianEmail && e.guardianEmail.toLowerCase().includes(q)) ||
+          (e.guardianMobile && e.guardianMobile.toLowerCase().includes(q)) ||
+          (e.firstSource && e.firstSource.toLowerCase().includes(q)) ||
+          (e.currentStage && e.currentStage.toLowerCase().includes(q)),
+      );
+    }
+
+    const paginatedEnquiries = filteredActivity.slice(
       (page - 1) * limit,
       page * limit,
     );
@@ -762,13 +1030,137 @@ export class AdminReportsService {
       sourceAttribution,
       enquiries: {
         items: paginatedEnquiries,
-        total: combinedActivity.length,
+        total: filteredActivity.length,
         page,
         limit,
-        totalPages: Math.ceil(combinedActivity.length / limit) || 1,
+        totalPages: Math.ceil(filteredActivity.length / limit) || 1,
       },
       lastUpdated: new Date().toISOString(),
     };
+  }
+
+  async getEnquiryJourney(enquiryId: string) {
+    const enquiry = await AppDataSource.getRepository(Enquiry).findOne({
+      where: { id: enquiryId },
+      relations: {
+        currentStage: true,
+        firstSource: true,
+        lastSource: true,
+        stageHistory: {
+          toStage: true,
+          fromStage: true,
+          lostReason: true,
+          actor: true,
+        },
+      },
+    });
+
+    if (enquiry) {
+      const sortedHistories = (enquiry.stageHistory || []).sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      );
+
+      const timeline = sortedHistories.map((h) => ({
+        id: h.id,
+        fromStage: h.fromStage?.name ?? null,
+        toStage: h.toStage?.name ?? "Unknown Stage",
+        date: h.createdAt.toISOString(),
+        changedByName: h.actor?.fullName ?? null,
+        lostReasonName: h.lostReason?.name ?? null,
+        notes: h.note ?? null,
+      }));
+
+      // If no histories exist, create initial creation event
+      if (timeline.length === 0) {
+        timeline.push({
+          id: `init-${enquiry.id}`,
+          fromStage: null,
+          toStage: enquiry.currentStage?.name ?? "New enquiry",
+          date: enquiry.createdAt.toISOString(),
+          changedByName: "System",
+          lostReasonName: null,
+          notes: "Initial enquiry submission recorded.",
+        });
+      }
+
+      return {
+        id: enquiry.id,
+        studentFullName: enquiry.studentFullName,
+        guardianFullName: enquiry.guardianFullName,
+        guardianEmail: enquiry.guardianEmail,
+        guardianMobile: enquiry.guardianMobile,
+        currentStage: enquiry.currentStage?.name ?? "Unknown",
+        firstSource: enquiry.firstSource?.name ?? "Direct / Organic",
+        lastSource: enquiry.lastSource?.name ?? enquiry.firstSource?.name ?? "Direct / Organic",
+        createdAt: enquiry.createdAt.toISOString(),
+        assignedTo: null,
+        notes: null,
+        trialDate: enquiry.trialEndDate || null,
+        trialConfirmed: Boolean(enquiry.trialConfirmed),
+        trialAttended: Boolean(enquiry.trialAttended),
+        isDirectEnrollment: false,
+        timeline,
+      };
+    }
+
+    // Check direct enrollment
+    const enrollment = await AppDataSource.getRepository(Enrollment).findOne({
+      where: { id: enquiryId },
+      relations: {
+        student: { user: true, guardianLinks: { guardian: true } },
+        guardian: true,
+      },
+    });
+
+    if (enrollment) {
+      const studentName =
+        enrollment.student?.fullName ||
+        enrollment.student?.user?.fullName ||
+        "Direct Enrolled Student";
+      const guardianName =
+        enrollment.guardian?.fullName ||
+        enrollment.student?.guardianLinks?.[0]?.guardian?.fullName ||
+        "Guardian";
+      const guardianEmail =
+        enrollment.guardian?.email ||
+        enrollment.student?.guardianLinks?.[0]?.guardian?.email ||
+        null;
+      const guardianMobile =
+        enrollment.guardian?.mobile ||
+        enrollment.student?.guardianLinks?.[0]?.guardian?.mobile ||
+        null;
+
+      return {
+        id: enrollment.id,
+        studentFullName: studentName,
+        guardianFullName: guardianName,
+        guardianEmail,
+        guardianMobile,
+        currentStage: "Converted (Direct Enrolment)",
+        firstSource: "Direct Admission (Walk-in / Direct Add)",
+        lastSource: "Direct Admission (Walk-in / Direct Add)",
+        createdAt: enrollment.createdAt.toISOString(),
+        assignedTo: "Admin",
+        notes: "Enrolled directly into institution without prior sales pipeline enquiry.",
+        trialDate: null,
+        trialConfirmed: false,
+        trialAttended: false,
+        isDirectEnrollment: true,
+        timeline: [
+          {
+            id: `enr-${enrollment.id}`,
+            fromStage: null,
+            toStage: "Converted (Direct Enrolment)",
+            date: enrollment.createdAt.toISOString(),
+            changedByName: "Registrar / Administrator",
+            lostReasonName: null,
+            notes: "Direct student admission completed.",
+          },
+        ],
+      };
+    }
+
+    throw new Error("Enquiry record not found.");
   }
 
   async getClassesSessionsReport(filters: ReportQueryInput) {
@@ -884,6 +1276,24 @@ export class AdminReportsService {
       };
     });
 
+    let filteredSessionItems = sessionItems;
+
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      filteredSessionItems = filteredSessionItems.filter(
+        (s) =>
+          s.className.toLowerCase().includes(q) ||
+          (s.classCode && s.classCode.toLowerCase().includes(q)) ||
+          (s.teacherName && s.teacherName.toLowerCase().includes(q)) ||
+          (s.room && s.room.toLowerCase().includes(q)),
+      );
+    }
+
+    const paginatedSessions = filteredSessionItems.slice(
+      (page - 1) * limit,
+      page * limit,
+    );
+
     return {
       summary: {
         totalScheduled,
@@ -894,11 +1304,11 @@ export class AdminReportsService {
         teacherOverrides,
       },
       sessions: {
-        items: sessionItems,
-        total: sessionItems.length,
+        items: paginatedSessions,
+        total: filteredSessionItems.length,
         page,
         limit,
-        totalPages: Math.ceil(sessionItems.length / limit) || 1,
+        totalPages: Math.ceil(filteredSessionItems.length / limit) || 1,
       },
       lastUpdated: new Date().toISOString(),
     };
@@ -917,6 +1327,12 @@ export class AdminReportsService {
       .leftJoinAndSelect("a.students", "ast")
       .leftJoinAndSelect("a.linkedClass", "c");
 
+    if (filters.search) {
+      query.andWhere(
+        "(LOWER(a.name) LIKE :search OR LOWER(a.subject) LIKE :search OR LOWER(u.fullName) LIKE :search OR LOWER(a.yearGroup) LIKE :search)",
+        { search: `%${filters.search.toLowerCase()}%` }
+      );
+    }
     if (filters.dateFrom) {
       query.andWhere("a.assessmentDate >= :dateFrom", {
         dateFrom: filters.dateFrom,
@@ -980,6 +1396,8 @@ export class AdminReportsService {
     let totalCandidates = 0;
     let totalSubmissionsCount = 0;
     let totalPendingGrading = 0;
+    let totalGraded = 0;
+    let totalScheduled = 0;
     let sumScoredPercentages = 0;
     let totalScoredSubmissions = 0;
 
@@ -996,6 +1414,19 @@ export class AdminReportsService {
       const scoredSubs = aSubs.filter((s) => s.mark != null);
       const pendingGradingCount = aSubs.length - scoredSubs.length;
       totalPendingGrading += pendingGradingCount;
+
+      const isGraded =
+        a.status.toLowerCase().includes("graded") ||
+        a.status.toLowerCase().includes("published") ||
+        a.status.toLowerCase().includes("completed") ||
+        (aSubs.length > 0 && pendingGradingCount === 0);
+      const isScheduled =
+        a.status.toLowerCase().includes("scheduled") ||
+        a.status.toLowerCase().includes("draft") ||
+        a.status.toLowerCase().includes("active");
+
+      if (isGraded) totalGraded++;
+      if (isScheduled) totalScheduled++;
 
       const totalMarksVal = a.totalMarks ? Number(a.totalMarks) : 100;
 
@@ -1050,11 +1481,15 @@ export class AdminReportsService {
         ? Math.round((totalSubmissionsCount / totalCandidates) * 100)
         : 0;
 
+    const paginatedItems = items.slice((page - 1) * limit, page * limit);
+
     return {
       summary: {
         totalAssessments: assessments.length,
         totalSchool,
         totalEntrance,
+        totalGraded,
+        totalScheduled,
         totalCandidates,
         totalSubmissions: totalSubmissionsCount,
         totalPendingGrading,
@@ -1062,7 +1497,7 @@ export class AdminReportsService {
         submissionRate: overallSubmissionRate,
       },
       assessments: {
-        items,
+        items: paginatedItems,
         total: items.length,
         page,
         limit,
@@ -1089,6 +1524,12 @@ export class AdminReportsService {
       .leftJoinAndSelect("hw.students", "hs")
       .leftJoinAndSelect("hw.submissions", "hsub");
 
+    if (filters.search) {
+      query.andWhere(
+        "(LOWER(hw.title) LIKE :search OR LOWER(sub.name) LIKE :search OR LOWER(u.fullName) LIKE :search OR LOWER(hw.yearGroup) LIKE :search)",
+        { search: `%${filters.search.toLowerCase()}%` }
+      );
+    }
     if (filters.dateFrom) {
       query.andWhere("hw.dueDate >= :dateFrom", { dateFrom: filters.dateFrom });
     }
@@ -1138,7 +1579,9 @@ export class AdminReportsService {
     let totalAssignedStudents = 0;
     let totalSubmissions = 0;
     let totalPendingMarking = 0;
+    let totalPendingMarkingTasks = 0;
     let totalFullyMarkedTasks = 0;
+    let totalActiveTasks = 0;
     let overdueTasksCount = 0;
 
     const todayStr = new Date().toISOString().slice(0, 10);
@@ -1164,6 +1607,7 @@ export class AdminReportsService {
         (s) => s.status === "SUBMITTED" && s.markedAt == null,
       ).length;
       totalPendingMarking += pendingMark;
+      if (pendingMark > 0) totalPendingMarkingTasks++;
 
       const submissionRate =
         studentCount > 0 ? Math.round((subs.length / studentCount) * 100) : 0;
@@ -1172,6 +1616,7 @@ export class AdminReportsService {
 
       if (fullyMarked) totalFullyMarkedTasks++;
       if (isOverdue) overdueTasksCount++;
+      if (!isOverdue && !fullyMarked) totalActiveTasks++;
 
       const subName = hw.subject?.name || "General";
       if (!subjectBreakdownMap.has(subName)) {
@@ -1215,13 +1660,17 @@ export class AdminReportsService {
       }),
     );
 
+    const paginatedItems = items.slice((page - 1) * limit, page * limit);
+
     return {
       summary: {
         totalAssignedTasks,
         totalAssignedStudents,
         totalSubmissions,
         totalPendingMarking,
+        totalPendingMarkingTasks,
         totalFullyMarkedTasks,
+        totalActiveTasks,
         overdueTasksCount,
         submissionRate:
           totalAssignedStudents > 0
@@ -1230,7 +1679,7 @@ export class AdminReportsService {
       },
       subjectBreakdown,
       homework: {
-        items,
+        items: paginatedItems,
         total: items.length,
         page,
         limit,
@@ -1259,10 +1708,8 @@ export class AdminReportsService {
             : "All Time (Cumulative History)";
 
     if (tab === "attendance") {
-      const data = await this.getAttendanceReport({ ...filters, limit: 10000 });
-
-      if (filters.studentId && data.students.items.length === 1) {
-        const student = data.students.items[0];
+      if (filters.studentId) {
+        const student = await this.getStudentAttendanceDetails(filters.studentId, filters);
         recordCount = student.sessionLogs?.length || 0;
         csvContent = [
           `"Enhance Education — Student Attendance Transcript",""`,
@@ -1284,6 +1731,7 @@ export class AdminReportsService {
           ),
         ].join("\n");
       } else {
+        const data = await this.getAttendanceReport({ ...filters, limit: 10000 });
         recordCount = data.students.total;
         csvContent = [
           `"Enhance Education — Attendance & Roll Analysis Report",""`,

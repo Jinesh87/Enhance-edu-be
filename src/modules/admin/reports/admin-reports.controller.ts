@@ -105,6 +105,27 @@ export class AdminReportsController {
       next(error);
     }
   }
+
+  async studentAttendanceDetails(req: Request, res: Response, next: NextFunction) {
+    try {
+      const studentId = String(req.params.studentId);
+      const filters = req.query as unknown as ReportQueryInput;
+      const result = await adminReportsService.getStudentAttendanceDetails(studentId, filters);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async enquiryJourney(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const result = await adminReportsService.getEnquiryJourney(id);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const adminReportsController = new AdminReportsController();
