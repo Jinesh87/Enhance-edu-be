@@ -85,6 +85,26 @@ export class AdminReportsController {
       next(error);
     }
   }
+
+  async assessmentSubmissions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const result = await adminReportsService.getAssessmentSubmissions(id);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async homeworkSubmissions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const result = await adminReportsService.getHomeworkSubmissions(id);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const adminReportsController = new AdminReportsController();

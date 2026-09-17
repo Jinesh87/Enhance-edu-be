@@ -46,9 +46,19 @@ adminReportsRouter.get(
 );
 
 adminReportsRouter.get(
+  "/assessments/:id/submissions",
+  adminReportsController.assessmentSubmissions,
+);
+
+adminReportsRouter.get(
   "/homework",
   validate(reportQuerySchema, "query"),
   adminReportsController.homework,
+);
+
+adminReportsRouter.get(
+  "/homework/:id/submissions",
+  adminReportsController.homeworkSubmissions,
 );
 
 adminReportsRouter.post(

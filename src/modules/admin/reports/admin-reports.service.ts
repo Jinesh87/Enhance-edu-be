@@ -1138,10 +1138,19 @@ export class AdminReportsService {
     let totalAssignedStudents = 0;
     let totalSubmissions = 0;
     let totalPendingMarking = 0;
+    let totalFullyMarkedTasks = 0;
+    let overdueTasksCount = 0;
+
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     const subjectBreakdownMap = new Map<
       string,
-      { subject: string; tasks: number; submissions: number }
+      {
+        subject: string;
+        tasks: number;
+        submissions: number;
+        assignedStudents: number;
+      }
     >();
 
     const items = homeworks.map((hw) => {
@@ -1156,17 +1165,27 @@ export class AdminReportsService {
       ).length;
       totalPendingMarking += pendingMark;
 
+      const submissionRate =
+        studentCount > 0 ? Math.round((subs.length / studentCount) * 100) : 0;
+      const isOverdue = hw.dueDate < todayStr && submissionRate < 100;
+      const fullyMarked = subs.length > 0 && pendingMark === 0;
+
+      if (fullyMarked) totalFullyMarkedTasks++;
+      if (isOverdue) overdueTasksCount++;
+
       const subName = hw.subject?.name || "General";
       if (!subjectBreakdownMap.has(subName)) {
         subjectBreakdownMap.set(subName, {
           subject: subName,
           tasks: 0,
           submissions: 0,
+          assignedStudents: 0,
         });
       }
       const sm = subjectBreakdownMap.get(subName)!;
       sm.tasks++;
       sm.submissions += subs.length;
+      sm.assignedStudents += studentCount;
 
       return {
         id: hw.id,
@@ -1178,11 +1197,23 @@ export class AdminReportsService {
         assignedStudentsCount: studentCount,
         submissionsCount: subs.length,
         pendingMarkingCount: pendingMark,
+        submissionRate,
+        isOverdue,
+        fullyMarked,
       };
     });
 
-    const paginated = items.slice((page - 1) * limit, page * limit);
-    const subjectBreakdown = Array.from(subjectBreakdownMap.values());
+    const subjectBreakdown = Array.from(subjectBreakdownMap.values()).map(
+      (sb) => ({
+        subject: sb.subject,
+        tasks: sb.tasks,
+        submissions: sb.submissions,
+        submissionRate:
+          sb.assignedStudents > 0
+            ? Math.round((sb.submissions / sb.assignedStudents) * 100)
+            : 0,
+      }),
+    );
 
     return {
       summary: {
@@ -1190,6 +1221,8 @@ export class AdminReportsService {
         totalAssignedStudents,
         totalSubmissions,
         totalPendingMarking,
+        totalFullyMarkedTasks,
+        overdueTasksCount,
         submissionRate:
           totalAssignedStudents > 0
             ? Math.round((totalSubmissions / totalAssignedStudents) * 1000) / 10
@@ -1197,7 +1230,7 @@ export class AdminReportsService {
       },
       subjectBreakdown,
       homework: {
-        items: paginated,
+        items,
         total: items.length,
         page,
         limit,
@@ -1527,6 +1560,319 @@ export class AdminReportsService {
       deliveredChannels,
       errors: errors.length > 0 ? errors : undefined,
       message: `Attendance notice sent successfully via ${deliveredChannels.join(" & ").toUpperCase() || "channels"}.`,
+    };
+  }
+
+  async getAssessmentSubmissions(assessmentId: string) {
+    const assessment = await AppDataSource.getRepository(Assessment).findOne({
+      where: { id: assessmentId },
+      relations: {
+        teacher: true,
+        students: { student: true },
+      },
+    });
+
+    if (!assessment) {
+      throw new Error("Assessment not found");
+    }
+
+    const submissions = await AppDataSource.getRepository(AssessmentSubmission).find({
+      where: { assessmentId },
+      relations: {
+        student: true,
+        markedBy: true,
+        files: true,
+      },
+    });
+
+    // Collect all candidate student IDs (from enrolled candidate roster + any existing submission)
+    const candidateStudentsMap = new Map<string, User>();
+    if (assessment.students) {
+      for (const st of assessment.students) {
+        if (st.student) candidateStudentsMap.set(st.student.id, st.student);
+      }
+    }
+    for (const sub of submissions) {
+      if (sub.student) candidateStudentsMap.set(sub.student.id, sub.student);
+    }
+
+    const candidateUserIds = Array.from(candidateStudentsMap.keys());
+    const studentProfiles =
+      candidateUserIds.length > 0
+        ? await AppDataSource.getRepository(Student).find({
+            where: { userId: In(candidateUserIds) },
+            relations: { guardianLinks: { guardian: true } },
+          })
+        : [];
+
+    const studentProfileMap = new Map<string, Student>();
+    for (const sp of studentProfiles) {
+      if (sp.userId) studentProfileMap.set(sp.userId, sp);
+    }
+
+    const submissionMap = new Map<string, AssessmentSubmission>();
+    for (const sub of submissions) {
+      submissionMap.set(sub.studentId, sub);
+    }
+
+    const totalMarks = assessment.totalMarks ? Number(assessment.totalMarks) : 100;
+    let submittedCount = 0;
+    let gradedCount = 0;
+    let pendingCount = 0;
+    let sumMarks = 0;
+    const scoredMarks: number[] = [];
+
+    const studentRoster = candidateUserIds.map((userId) => {
+      const user = candidateStudentsMap.get(userId)!;
+      const profile = studentProfileMap.get(userId);
+      const sub = submissionMap.get(userId);
+
+      const guardians = (profile?.guardianLinks || [])
+        .map((gl) => gl.guardian)
+        .filter(Boolean)
+        .map((g) => ({
+          name: g.fullName,
+          email: g.email || "",
+          mobile: g.mobile || "",
+        }));
+
+      const primaryGuardian = guardians[0] || null;
+
+      const isSubmitted = Boolean(sub && sub.status !== "DRAFT");
+      const isGraded = Boolean(sub && sub.mark != null);
+      const markNum = sub && sub.mark != null ? Number(sub.mark) : null;
+      const percentage =
+        markNum !== null && totalMarks > 0
+          ? Math.round((markNum / totalMarks) * 1000) / 10
+          : null;
+
+      if (isSubmitted) {
+        submittedCount++;
+      } else {
+        pendingCount++;
+      }
+
+      if (isGraded && markNum !== null) {
+        gradedCount++;
+        sumMarks += markNum;
+        scoredMarks.push(markNum);
+      }
+
+      return {
+        studentId: user.id,
+        studentName: user.fullName || "Student",
+        studentEmail: user.email || null,
+        studentMobile: user.mobile || null,
+        username: user.username || null,
+        preferredName: profile?.preferredName && profile.preferredName.trim().toLowerCase() !== user.fullName.trim().toLowerCase() ? profile.preferredName : null,
+        guardianName: primaryGuardian?.name || "—",
+        guardianEmail: primaryGuardian?.email || "—",
+        guardianMobile: primaryGuardian?.mobile || "—",
+        status: isGraded ? "GRADED" : isSubmitted ? "SUBMITTED" : "PENDING",
+        submissionId: sub?.id || null,
+        submittedAt: sub?.submittedAt || null,
+        mark: markNum,
+        totalMarks,
+        percentage,
+        markedAt: sub?.markedAt || null,
+        markedByName: sub?.markedBy?.fullName || null,
+        markNotes: sub?.markNotes || null,
+        filesCount: sub?.files?.length || 0,
+      };
+    });
+
+    const averageScore =
+      scoredMarks.length > 0
+        ? Math.round((sumMarks / scoredMarks.length / totalMarks) * 1000) / 10
+        : null;
+
+    const highestMark = scoredMarks.length > 0 ? Math.max(...scoredMarks) : null;
+    const lowestMark = scoredMarks.length > 0 ? Math.min(...scoredMarks) : null;
+
+    return {
+      assessment: {
+        id: assessment.id,
+        name: assessment.name,
+        kind: assessment.kind,
+        subject: assessment.subject,
+        yearGroup: assessment.yearGroup,
+        assessmentDate: assessment.assessmentDate,
+        startTime: assessment.startTime,
+        teacherName: assessment.teacher?.fullName || "Unassigned",
+        totalMarks,
+      },
+      summary: {
+        totalCandidates: candidateUserIds.length,
+        submittedCount,
+        pendingCount,
+        gradedCount,
+        submissionRate:
+          candidateUserIds.length > 0
+            ? Math.round((submittedCount / candidateUserIds.length) * 100)
+            : 0,
+        averageScore,
+        highestMark,
+        lowestMark,
+      },
+      students: studentRoster,
+    };
+  }
+
+  async getHomeworkSubmissions(homeworkId: string) {
+    const homework = await AppDataSource.getRepository(Homework).findOne({
+      where: { id: homeworkId },
+      relations: {
+        subject: true,
+        createdBy: true,
+        students: { student: true },
+        submissions: { student: true, markedBy: true, files: true },
+      },
+    });
+
+    if (!homework) {
+      throw new Error("Homework not found");
+    }
+
+    const assignedStudentsMap = new Map<string, User>();
+    if (homework.students) {
+      for (const st of homework.students) {
+        if (st.student) assignedStudentsMap.set(st.student.id, st.student);
+      }
+    }
+    if (homework.submissions) {
+      for (const sub of homework.submissions) {
+        if (sub.student) assignedStudentsMap.set(sub.student.id, sub.student);
+      }
+    }
+
+    const assignedUserIds = Array.from(assignedStudentsMap.keys());
+    const studentProfiles =
+      assignedUserIds.length > 0
+        ? await AppDataSource.getRepository(Student).find({
+            where: { userId: In(assignedUserIds) },
+            relations: { guardianLinks: { guardian: true } },
+          })
+        : [];
+
+    const studentProfileMap = new Map<string, Student>();
+    for (const sp of studentProfiles) {
+      if (sp.userId) studentProfileMap.set(sp.userId, sp);
+    }
+
+    const submissionMap = new Map<string, HomeworkSubmission>();
+    if (homework.submissions) {
+      for (const sub of homework.submissions) {
+        submissionMap.set(sub.studentId, sub);
+      }
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    let submittedCount = 0;
+    let gradedCount = 0;
+    let pendingCount = 0;
+    let lateCount = 0;
+    let sumPercentages = 0;
+    let scoredCount = 0;
+
+    const studentRoster = assignedUserIds.map((userId) => {
+      const user = assignedStudentsMap.get(userId)!;
+      const profile = studentProfileMap.get(userId);
+      const sub = submissionMap.get(userId);
+
+      const guardians = (profile?.guardianLinks || [])
+        .map((gl) => gl.guardian)
+        .filter(Boolean)
+        .map((g) => ({
+          name: g.fullName,
+          email: g.email || "",
+          mobile: g.mobile || "",
+        }));
+
+      const primaryGuardian = guardians[0] || null;
+
+      const isSubmitted = Boolean(sub && sub.status === "SUBMITTED");
+      const isGraded = Boolean(sub && (sub.markedAt != null || sub.marks != null));
+      const submittedDateStr = sub?.submittedAt
+        ? new Date(sub.submittedAt).toISOString().slice(0, 10)
+        : null;
+
+      const isLate = Boolean(
+        (submittedDateStr && submittedDateStr > homework.dueDate) ||
+        (!isSubmitted && todayStr > homework.dueDate)
+      );
+
+      const marks = sub?.marks != null ? Number(sub.marks) : null;
+      const maxMarks = sub?.maxMarks != null ? Number(sub.maxMarks) : 100;
+      const percentage =
+        marks !== null && maxMarks > 0
+          ? Math.round((marks / maxMarks) * 1000) / 10
+          : null;
+
+      if (isSubmitted) {
+        submittedCount++;
+      } else {
+        pendingCount++;
+      }
+
+      if (isLate) {
+        lateCount++;
+      }
+
+      if (isGraded && percentage !== null) {
+        gradedCount++;
+        sumPercentages += percentage;
+        scoredCount++;
+      }
+
+      return {
+        studentId: user.id,
+        studentName: user.fullName || "Student",
+        studentEmail: user.email || null,
+        studentMobile: user.mobile || null,
+        username: user.username || null,
+        preferredName: profile?.preferredName && profile.preferredName.trim().toLowerCase() !== user.fullName.trim().toLowerCase() ? profile.preferredName : null,
+        guardianName: primaryGuardian?.name || "—",
+        guardianEmail: primaryGuardian?.email || "—",
+        guardianMobile: primaryGuardian?.mobile || "—",
+        status: isGraded ? "GRADED" : isSubmitted ? "SUBMITTED" : "PENDING",
+        isLate,
+        submissionId: sub?.id || null,
+        submittedAt: sub?.submittedAt || null,
+        marks,
+        maxMarks,
+        percentage,
+        feedback: sub?.feedback || null,
+        markedAt: sub?.markedAt || null,
+        markedByName: sub?.markedBy?.fullName || null,
+        filesCount: sub?.files?.length || 0,
+      };
+    });
+
+    const averageScore =
+      scoredCount > 0 ? Math.round((sumPercentages / scoredCount) * 10) / 10 : null;
+
+    return {
+      homework: {
+        id: homework.id,
+        title: homework.title,
+        subject: homework.subject?.name || "General",
+        yearGroup: homework.yearGroup,
+        dueDate: homework.dueDate,
+        createdByName: homework.createdBy?.fullName || "Unknown",
+      },
+      summary: {
+        totalAssigned: assignedUserIds.length,
+        submittedCount,
+        pendingCount,
+        gradedCount,
+        lateCount,
+        submissionRate:
+          assignedUserIds.length > 0
+            ? Math.round((submittedCount / assignedUserIds.length) * 100)
+            : 0,
+        averageScore,
+      },
+      students: studentRoster,
     };
   }
 }
