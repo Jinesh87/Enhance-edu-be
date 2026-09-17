@@ -10,6 +10,7 @@ import { adminReportsController } from "./admin-reports.controller.js";
 import {
   reportQuerySchema,
   reportExportSchema,
+  notifyGuardianSchema,
 } from "./admin-reports.validation.js";
 
 const adminReportsRouter = Router();
@@ -45,15 +46,31 @@ adminReportsRouter.get(
 );
 
 adminReportsRouter.get(
+  "/assessments/:id/submissions",
+  adminReportsController.assessmentSubmissions,
+);
+
+adminReportsRouter.get(
   "/homework",
   validate(reportQuerySchema, "query"),
   adminReportsController.homework,
+);
+
+adminReportsRouter.get(
+  "/homework/:id/submissions",
+  adminReportsController.homeworkSubmissions,
 );
 
 adminReportsRouter.post(
   "/export",
   validate(reportExportSchema),
   adminReportsController.exportReport,
+);
+
+adminReportsRouter.post(
+  "/notify-guardian",
+  validate(notifyGuardianSchema),
+  adminReportsController.notifyGuardian,
 );
 
 export default adminReportsRouter;

@@ -50,6 +50,8 @@ type EnquiryListFilters = {
   termId?: string;
   subject?: string;
   sort?: string;
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 type Named = { id: string; name: string };
@@ -1181,6 +1183,16 @@ export class AdminEnquiriesService {
     if (filters.subject) {
       qb.andWhere("enquiry.subjectOfInterest ILIKE :subject", {
         subject: `%${filters.subject}%`,
+      });
+    }
+    if (filters.dateFrom) {
+      qb.andWhere("enquiry.createdAt >= :dateFrom", {
+        dateFrom: `${filters.dateFrom}T00:00:00Z`,
+      });
+    }
+    if (filters.dateTo) {
+      qb.andWhere("enquiry.createdAt <= :dateTo", {
+        dateTo: `${filters.dateTo}T23:59:59Z`,
       });
     }
   }
