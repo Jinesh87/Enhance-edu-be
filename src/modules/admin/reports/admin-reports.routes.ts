@@ -10,6 +10,7 @@ import { adminReportsController } from "./admin-reports.controller.js";
 import {
   reportQuerySchema,
   reportExportSchema,
+  notifyGuardianSchema,
 } from "./admin-reports.validation.js";
 
 const adminReportsRouter = Router();
@@ -54,6 +55,12 @@ adminReportsRouter.post(
   "/export",
   validate(reportExportSchema),
   adminReportsController.exportReport,
+);
+
+adminReportsRouter.post(
+  "/notify-guardian",
+  validate(notifyGuardianSchema),
+  adminReportsController.notifyGuardian,
 );
 
 export default adminReportsRouter;

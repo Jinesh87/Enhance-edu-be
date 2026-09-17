@@ -21,9 +21,12 @@ import {
   Subject,
   YearLevel,
   Term,
+  Student,
+  GuardianStudent,
 } from "../../../entities/index.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
-import type { ReportQueryInput } from "./admin-reports.validation.js";
+import { emailService } from "../../email/email.service.js";
+import type { ReportQueryInput, NotifyGuardianInput } from "./admin-reports.validation.js";
 
 function csvEscape(val: unknown): string {
   if (val === null || val === undefined) return '""';
@@ -45,7 +48,10 @@ export class AdminReportsService {
   }
 
   async getAttendanceReport(filters: ReportQueryInput) {
-    const threshold = filters.threshold ?? 80;
+    const threshold =
+      filters.threshold !== undefined && filters.threshold !== null
+        ? Number(filters.threshold)
+        : 80;
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 20;
 
@@ -68,7 +74,12 @@ export class AdminReportsService {
       .innerJoinAndSelect("ar.session", "s")
       .innerJoinAndSelect("ar.student", "u")
       .leftJoinAndSelect("s.class", "c")
+      .leftJoinAndSelect("c.term", "cterm")
+      .leftJoinAndSelect("cterm.academicYear", "cay")
+      .leftJoinAndSelect("cterm.yearLevel", "cyl")
       .leftJoinAndSelect("c.teacher", "ct")
+      .leftJoinAndSelect("s.teacher", "st")
+      .leftJoinAndSelect("s.classroom", "sroom")
       .leftJoinAndSelect("s.assessment", "a");
 
     if (filters.dateFrom) {
@@ -80,6 +91,21 @@ export class AdminReportsService {
       query.andWhere("s.startAt <= :dateTo", {
         dateTo: `${filters.dateTo}T23:59:59Z`,
       });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(cay.year = :acadYear OR cay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("cay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("cyl.name = :yearGroup", { yearGroup: filters.yearGroup });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("cyl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.subjectId) {
       const resolved = await this.resolveSubjectFilter(filters.subjectId);
@@ -97,6 +123,15 @@ export class AdminReportsService {
         {
           teacherId: filters.teacherId,
         },
+      );
+    }
+    if (filters.studentId) {
+      query.andWhere("ar.studentId = :studentId", { studentId: filters.studentId });
+    }
+    if (filters.search && filters.search.trim()) {
+      query.andWhere(
+        "(LOWER(u.fullName) LIKE :search OR LOWER(u.email) LIKE :search)",
+        { search: `%${filters.search.trim().toLowerCase()}%` },
       );
     }
 
@@ -118,17 +153,43 @@ export class AdminReportsService {
     let totalExceptions = 0;
     let inGraceWindow = 0;
 
+    type StudentSessionLog = {
+      sessionId: string;
+      date: string;
+      time: string;
+      subject: string;
+      teacher: string;
+      room: string;
+      status: string;
+      scannedAt: string | null;
+    };
+
     const studentMap = new Map<
       string,
       {
         studentId: string;
         fullName: string;
         email: string | null;
+        academicYear: string | number | null;
+        yearLevel: string | null;
+        termName: string | null;
         total: number;
         present: number;
         late: number;
         absent: number;
         excused: number;
+        sessionLogs: StudentSessionLog[];
+        subjectStats: Map<
+          string,
+          {
+            total: number;
+            present: number;
+            late: number;
+            absent: number;
+            excused: number;
+            teacherName: string;
+          }
+        >;
       }
     >();
 
@@ -165,11 +226,16 @@ export class AdminReportsService {
           studentId: sId,
           fullName: r.student.fullName,
           email: r.student.email,
+          academicYear: null,
+          yearLevel: null,
+          termName: null,
           total: 0,
           present: 0,
           late: 0,
           absent: 0,
           excused: 0,
+          sessionLogs: [],
+          subjectStats: new Map(),
         });
       }
       const st = studentMap.get(sId)!;
@@ -179,8 +245,62 @@ export class AdminReportsService {
       else if (status === AttendanceStatus.ABSENT) st.absent++;
       else if (status === AttendanceStatus.EXCUSED) st.excused++;
 
+      if (r.session.class?.term) {
+        const term = r.session.class.term;
+        if (!st.academicYear && term.academicYear) {
+          st.academicYear = term.academicYear.year || term.academicYear.displayName;
+        }
+        if (!st.yearLevel && term.yearLevel) {
+          st.yearLevel = term.yearLevel.name;
+        }
+        if (!st.termName && term.name) {
+          st.termName = term.name;
+        }
+      }
+
       const subjectName =
-        r.session.class?.name || r.session.assessment?.subject || "General";
+        r.session.class?.subject || r.session.class?.name || r.session.assessment?.subject || "General";
+      const teacherName =
+        r.session.teacher?.fullName || r.session.class?.teacher?.fullName || "Unassigned";
+      const roomName =
+        r.session.classroom?.name || r.session.room || "Main Room";
+      const sessionDate = r.session.startAt ? r.session.startAt.toISOString().slice(0, 10) : "-";
+      const sessionTime =
+        r.session.startAt && r.session.endAt
+          ? `${new Date(r.session.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${new Date(r.session.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+          : "-";
+
+      st.sessionLogs.push({
+        sessionId: r.session.id,
+        date: sessionDate,
+        time: sessionTime,
+        subject: subjectName,
+        teacher: teacherName,
+        room: roomName,
+        status: r.status,
+        scannedAt: r.scannedAt ? r.scannedAt.toISOString() : null,
+      });
+
+      if (!st.subjectStats.has(subjectName)) {
+        st.subjectStats.set(subjectName, {
+          total: 0,
+          present: 0,
+          late: 0,
+          absent: 0,
+          excused: 0,
+          teacherName,
+        });
+      }
+      const stSub = st.subjectStats.get(subjectName)!;
+      stSub.total++;
+      if (teacherName !== "Unassigned") {
+        stSub.teacherName = teacherName;
+      }
+      if (status === AttendanceStatus.PRESENT) stSub.present++;
+      else if (status === AttendanceStatus.LATE) stSub.late++;
+      else if (status === AttendanceStatus.ABSENT) stSub.absent++;
+      else if (status === AttendanceStatus.EXCUSED) stSub.excused++;
+
       if (!subjectMap.has(subjectName)) {
         subjectMap.set(subjectName, {
           subject: subjectName,
@@ -204,21 +324,79 @@ export class AdminReportsService {
         ? ((totalPresent + totalLate) / totalCalculated) * 100
         : 100;
 
+    const studentUserIds = Array.from(studentMap.keys());
+    const guardianMap = new Map<
+      string,
+      { guardianName: string | null; guardianEmail: string | null; guardianPhone: string | null }
+    >();
+
+    if (studentUserIds.length > 0) {
+      try {
+        const studentEntities = await AppDataSource.getRepository(Student).find({
+          where: [{ userId: In(studentUserIds) }, { id: In(studentUserIds) }],
+          relations: { guardianLinks: { guardian: true } },
+        });
+
+        for (const sEnt of studentEntities) {
+          const key = sEnt.userId || sEnt.id;
+          const firstLink = sEnt.guardianLinks?.[0];
+          if (firstLink?.guardian) {
+            guardianMap.set(key, {
+              guardianName: firstLink.guardian.fullName,
+              guardianEmail: firstLink.guardian.email,
+              guardianPhone: firstLink.guardian.mobile || null,
+            });
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
     const studentRows = Array.from(studentMap.values()).map((s) => {
       const activeTotal = s.present + s.late + s.absent + s.excused;
       const rate =
         activeTotal > 0 ? ((s.present + s.late) / activeTotal) * 100 : 100;
+
+      const guardian = guardianMap.get(s.studentId);
+
+      const subjectBreakdown = Array.from(s.subjectStats.entries()).map(([sub, stat]) => {
+        const subActive = stat.present + stat.late + stat.absent + stat.excused;
+        const subRate = subActive > 0 ? ((stat.present + stat.late) / subActive) * 100 : 100;
+        return {
+          subject: sub,
+          teacherName: stat.teacherName,
+          total: stat.total,
+          present: stat.present,
+          late: stat.late,
+          absent: stat.absent,
+          excused: stat.excused,
+          attendanceRate: Math.round(subRate * 10) / 10,
+        };
+      });
+
+      // Ascending chronological order by date (earliest first: Sep 7 -> ... -> Dec 29)
+      s.sessionLogs.sort((a, b) => a.date.localeCompare(b.date));
+
       return {
         studentId: s.studentId,
         studentName: s.fullName,
         email: s.email,
+        academicYear: s.academicYear,
+        yearLevel: s.yearLevel,
+        termName: s.termName,
+        guardianName: guardian?.guardianName || null,
+        guardianEmail: guardian?.guardianEmail || null,
+        guardianPhone: guardian?.guardianPhone || null,
         totalSessions: s.total,
         present: s.present,
         late: s.late,
         absent: s.absent,
         excused: s.excused,
         attendanceRate: Math.round(rate * 10) / 10,
-        isBelowThreshold: rate < threshold,
+        isBelowThreshold: threshold > 0 ? rate < threshold : false,
+        sessionLogs: s.sessionLogs,
+        subjectBreakdown,
       };
     });
 
@@ -473,6 +651,9 @@ export class AdminReportsService {
     const query = AppDataSource.getRepository(Session)
       .createQueryBuilder("s")
       .leftJoinAndSelect("s.class", "c")
+      .leftJoinAndSelect("c.term", "cterm")
+      .leftJoinAndSelect("cterm.academicYear", "cay")
+      .leftJoinAndSelect("cterm.yearLevel", "cyl")
       .leftJoinAndSelect("s.classroom", "cr")
       .leftJoinAndSelect("s.teacher", "st")
       .leftJoinAndSelect("c.teacher", "ct")
@@ -487,6 +668,21 @@ export class AdminReportsService {
       query.andWhere("s.startAt <= :dateTo", {
         dateTo: `${filters.dateTo}T23:59:59Z`,
       });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(cay.year = :acadYear OR cay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("cay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("cyl.name = :yearGroup", { yearGroup: filters.yearGroup });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("cyl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.termId) {
       query.andWhere("c.termId = :termId", { termId: filters.termId });
@@ -590,6 +786,8 @@ export class AdminReportsService {
     const query = AppDataSource.getRepository(Assessment)
       .createQueryBuilder("a")
       .leftJoinAndSelect("a.term", "t")
+      .leftJoinAndSelect("t.academicYear", "ay")
+      .leftJoinAndSelect("t.yearLevel", "yl")
       .leftJoinAndSelect("a.teacher", "u")
       .leftJoinAndSelect("a.students", "ast")
       .leftJoinAndSelect("a.linkedClass", "c");
@@ -601,6 +799,23 @@ export class AdminReportsService {
     }
     if (filters.dateTo) {
       query.andWhere("a.assessmentDate <= :dateTo", { dateTo: filters.dateTo });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(ay.year = :acadYear OR ay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("ay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("(a.yearGroup = :yearGroup OR yl.name = :yearGroup)", {
+        yearGroup: filters.yearGroup,
+      });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("yl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.termId) {
       query.andWhere("a.termId = :termId", { termId: filters.termId });
@@ -706,6 +921,8 @@ export class AdminReportsService {
     const query = AppDataSource.getRepository(Homework)
       .createQueryBuilder("hw")
       .leftJoinAndSelect("hw.term", "t")
+      .leftJoinAndSelect("t.academicYear", "ay")
+      .leftJoinAndSelect("t.yearLevel", "yl")
       .leftJoinAndSelect("hw.subject", "sub")
       .leftJoinAndSelect("hw.createdBy", "u")
       .leftJoinAndSelect("hw.students", "hs")
@@ -716,6 +933,23 @@ export class AdminReportsService {
     }
     if (filters.dateTo) {
       query.andWhere("hw.dueDate <= :dateTo", { dateTo: filters.dateTo });
+    }
+    if (filters.academicYear) {
+      query.andWhere("(ay.year = :acadYear OR ay.displayName = :acadYearStr)", {
+        acadYear: Number(filters.academicYear) || 0,
+        acadYearStr: String(filters.academicYear),
+      });
+    }
+    if (filters.academicYearId) {
+      query.andWhere("ay.id = :acadYearId", { acadYearId: filters.academicYearId });
+    }
+    if (filters.yearGroup) {
+      query.andWhere("(hw.yearGroup = :yearGroup OR yl.name = :yearGroup)", {
+        yearGroup: filters.yearGroup,
+      });
+    }
+    if (filters.yearLevelId) {
+      query.andWhere("yl.id = :yearLevelId", { yearLevelId: filters.yearLevelId });
     }
     if (filters.termId) {
       query.andWhere("hw.termId = :termId", { termId: filters.termId });
@@ -823,14 +1057,60 @@ export class AdminReportsService {
 
     if (tab === "attendance") {
       const data = await this.getAttendanceReport({ ...filters, limit: 10000 });
-      recordCount = data.students.total;
-      csvContent = [
-        "Student Name,Email,Total Sessions,Present,Late,Absent,Excused,Attendance Rate (%),Below Threshold",
-        ...data.students.items.map(
-          (s) =>
-            `${csvEscape(s.studentName)},${csvEscape(s.email)},${csvEscape(s.totalSessions)},${csvEscape(s.present)},${csvEscape(s.late)},${csvEscape(s.absent)},${csvEscape(s.excused)},${csvEscape(`${s.attendanceRate}%`)},${csvEscape(s.isBelowThreshold ? "YES" : "NO")}`,
-        ),
-      ].join("\n");
+      const periodStr =
+        filters.dateFrom && filters.dateTo
+          ? `${filters.dateFrom} to ${filters.dateTo}`
+          : filters.dateFrom
+            ? `From ${filters.dateFrom}`
+            : filters.dateTo
+              ? `Up to ${filters.dateTo}`
+              : "All Time";
+
+      if (filters.studentId && data.students.items.length === 1) {
+        const student = data.students.items[0];
+        recordCount = student.sessionLogs?.length || 0;
+        csvContent = [
+          `"Enhance Education - Student Attendance Transcript",""`,
+          `"Student Name",${csvEscape(student.studentName)}`,
+          `"Student Email",${csvEscape(student.email || "N/A")}`,
+          `"Academic Year",${csvEscape(student.academicYear || "All Years")}`,
+          `"Year Level",${csvEscape(student.yearLevel || "All Levels")}`,
+          `"Term",${csvEscape(student.termName || "All Terms")}`,
+          `"Guardian Name",${csvEscape(student.guardianName || "N/A")}`,
+          `"Guardian Phone",${csvEscape(student.guardianPhone || "N/A")}`,
+          `"Guardian Email",${csvEscape(student.guardianEmail || "N/A")}`,
+          `"Reporting Period",${csvEscape(periodStr)}`,
+          `"Total Sessions","${student.totalSessions}"`,
+          `"Attendance Rate","${student.attendanceRate}%"`,
+          `""`,
+          `"Date","Time","Subject","Teacher","Room","Status","Check-in Time"`,
+          ...(student.sessionLogs || []).map(
+            (log) =>
+              `${csvEscape(log.date)},${csvEscape(log.time)},${csvEscape(log.subject)},${csvEscape(log.teacher)},${csvEscape(log.room)},${csvEscape(log.status)},${csvEscape(log.scannedAt || "N/A")}`,
+          ),
+        ].join("\n");
+      } else {
+        recordCount = data.students.total;
+        csvContent = [
+          `"Enhance Education - Attendance & Roll Analysis Report",""`,
+          `"Generated Date",${csvEscape(new Date().toISOString().slice(0, 10))}`,
+          `"Generated By",${csvEscape(user.fullName)}`,
+          `"Reporting Period",${csvEscape(periodStr)}`,
+          `"Academic Year",${csvEscape(String(filters.academicYear || "All Years"))}`,
+          `"Year Level",${csvEscape(String(filters.yearGroup || "All Levels"))}`,
+          `"Total Students","${data.students.total}"`,
+          `"Overall Attendance Rate","${data.summary.overallAttendanceRate}%"`,
+          `"Below Threshold",${csvEscape(data.summary.threshold > 0 ? `${data.summary.studentsBelowThreshold} (Below ${data.summary.threshold}%)` : "None / Off")}`,
+          `""`,
+          `"Student Name","Email","Academic Year","Year Level","Term","Guardian Name","Guardian Phone","Guardian Email","Subjects Breakdown","Total Sessions","Present","Late","Absent","Excused","Attendance Rate (%)","Below Threshold"`,
+          ...data.students.items.map((s) => {
+            const subsStr = (s.subjectBreakdown || [])
+              .map((sb) => `${sb.subject}: ${sb.attendanceRate}% (${sb.teacherName || "No teacher"})`)
+              .join("; ");
+            return `${csvEscape(s.studentName)},${csvEscape(s.email || "N/A")},${csvEscape(s.academicYear || "N/A")},${csvEscape(s.yearLevel || "N/A")},${csvEscape(s.termName || "N/A")},${csvEscape(s.guardianName || "N/A")},${csvEscape(s.guardianPhone || "N/A")},${csvEscape(s.guardianEmail || "N/A")},${csvEscape(subsStr || "General")},${csvEscape(s.totalSessions)},${csvEscape(s.present)},${csvEscape(s.late)},${csvEscape(s.absent)},${csvEscape(s.excused)},${csvEscape(`${s.attendanceRate}%`)},${csvEscape(s.isBelowThreshold ? "YES" : "NO")}`;
+          }),
+        ].join("\n");
+      }
     } else if (tab === "enquiries") {
       const data = await this.getEnquiryFunnelReport({
         ...filters,
@@ -897,6 +1177,105 @@ export class AdminReportsService {
     });
 
     return { csvContent, filename, recordCount };
+  }
+
+  async notifyGuardianAttendance(
+    input: NotifyGuardianInput,
+    user: { id: string; fullName: string },
+  ) {
+    const student = await AppDataSource.getRepository(User).findOne({
+      where: { id: input.studentId },
+    });
+
+    if (!student) {
+      throw new Error("Student record not found.");
+    }
+
+    const deliveredChannels: ("email" | "sms")[] = [];
+    const errors: string[] = [];
+
+    if (input.channels.includes("email")) {
+      const targetEmail = input.guardianEmail?.trim();
+      if (!targetEmail) {
+        errors.push("No guardian email address provided.");
+      } else {
+        try {
+          const config = await emailService.getConfig();
+          if (config?.enabled && config.resendApiKey) {
+            const { Resend } = await import("resend");
+            const resend = new Resend(config.resendApiKey);
+            await resend.emails.send({
+              from: `${config.fromName} <${config.fromEmail}>`,
+              to: targetEmail,
+              subject: input.subject || `Attendance Notice: ${student.fullName} – Enhance Education`,
+              text: input.message,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 10px; background: #ffffff;">
+                  <h2 style="color: #002a1c; margin-top: 0; font-size: 20px;">Enhance Education</h2>
+                  <h3 style="color: #1F5C50; margin-top: 4px; font-size: 15px;">${input.subject || "Official Attendance Notice"}</h3>
+                  <div style="white-space: pre-wrap; font-size: 13.5px; line-height: 1.65; color: #334155; margin: 20px 0; background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #1F5C50;">${input.message}</div>
+                  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+                  <p style="font-size: 11px; color: #64748b; margin-bottom: 0;">This is an automated official communication from Enhance Education Management System.</p>
+                </div>
+              `,
+            });
+          }
+          deliveredChannels.push("email");
+        } catch (err) {
+          errors.push(`Email delivery error: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+      }
+    }
+
+    if (input.channels.includes("sms")) {
+      const targetPhone = input.guardianPhone?.trim();
+      if (!targetPhone) {
+        errors.push("No guardian phone number provided.");
+      } else {
+        try {
+          const config = await emailService.getConfig();
+          if (config?.smsEnabled && config.twilioAccountSid && config.twilioAuthToken && config.twilioFromNumber) {
+            const twilioModule = await import("twilio");
+            const twilioClient = twilioModule.default(config.twilioAccountSid, config.twilioAuthToken);
+            await twilioClient.messages.create({
+              body: input.message,
+              from: config.twilioFromNumber,
+              to: targetPhone,
+            });
+          }
+          deliveredChannels.push("sms");
+        } catch (err) {
+          errors.push(`SMS delivery error: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+      }
+    }
+
+    await writeAuditLog({
+      actorUserId: user.id,
+      actorName: user.fullName,
+      action: "CREATED",
+      recordType: "attendance_guardian_alert",
+      recordId: student.id,
+      recordLabel: `Sent attendance alert to guardian for ${student.fullName}`,
+      after: {
+        studentId: student.id,
+        studentName: student.fullName,
+        channels: input.channels,
+        deliveredChannels,
+        guardianEmail: input.guardianEmail,
+        guardianPhone: input.guardianPhone,
+        subject: input.subject,
+        errors,
+        sentAt: new Date().toISOString(),
+      },
+    });
+
+    return {
+      success: deliveredChannels.length > 0,
+      deliveredChannels,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Attendance notice sent successfully via ${deliveredChannels.join(" & ").toUpperCase() || "channels"}.`,
+    };
   }
 }
 
