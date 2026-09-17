@@ -14,7 +14,7 @@ import {
   peerDisplayName,
   type ChatPeer,
 } from "./chat-auth.js";
-import { emitToUser, isUserOnline } from "./chat-socket.js";
+import { emitToUser, isUserOnline, isUserViewingConversation } from "./chat-socket.js";
 import {
   buildChatImageKey,
   deleteObject,
@@ -750,7 +750,11 @@ export class ChatService {
       conversation.studentUserId === peerId
         ? Boolean(conversation.studentMutedAt)
         : Boolean(conversation.teacherMutedAt);
-    if (!peerMuted) {
+    const peerViewing = await isUserViewingConversation(
+      peerId,
+      conversation.id,
+    );
+    if (!peerMuted && !peerViewing) {
       const senderName = sender
         ? peerDisplayName({
             fullName: sender.fullName,
