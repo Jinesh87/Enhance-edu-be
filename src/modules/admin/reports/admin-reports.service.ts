@@ -442,7 +442,26 @@ export class AdminReportsService {
       (s) => s.isBelowThreshold,
     ).length;
     const totalStudents = studentRows.length;
-    const paginatedStudents = studentRows.slice(
+
+    let filteredStudentRows = studentRows;
+
+    const statusUpper = (filters.statusFilter || "").toUpperCase().trim();
+    if (statusUpper === "AT_RISK") {
+      filteredStudentRows = filteredStudentRows.filter((s) => s.isBelowThreshold);
+    } else if (statusUpper === "GOOD_STANDING") {
+      filteredStudentRows = filteredStudentRows.filter((s) => !s.isBelowThreshold);
+    }
+
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      filteredStudentRows = filteredStudentRows.filter(
+        (s) =>
+          s.studentName.toLowerCase().includes(q) ||
+          (s.email && s.email.toLowerCase().includes(q)),
+      );
+    }
+
+    const paginatedStudents = filteredStudentRows.slice(
       (page - 1) * limit,
       page * limit,
     );
@@ -462,7 +481,7 @@ export class AdminReportsService {
     return {
       summary: {
         overallAttendanceRate: Math.round(overallRate * 10) / 10,
-        totalRecords: validRecords.length,
+        totalRecords: totalCalculated,
         totalPresent,
         totalLate,
         totalAbsent,
@@ -476,10 +495,10 @@ export class AdminReportsService {
       subjectBreakdown,
       students: {
         items: paginatedStudents,
-        total: totalStudents,
+        total: filteredStudentRows.length,
         page,
         limit,
-        totalPages: Math.ceil(totalStudents / limit) || 1,
+        totalPages: Math.ceil(filteredStudentRows.length / limit) || 1,
       },
       filtersApplied: filters,
       lastUpdated: new Date().toISOString(),
@@ -993,6 +1012,26 @@ export class AdminReportsService {
 
     let filteredActivity = combinedActivity;
 
+    const statusUpper = (filters.statusFilter || "").toUpperCase().trim();
+    if (statusUpper === "CONVERTED") {
+      filteredActivity = filteredActivity.filter(
+        (e) =>
+          e.currentStage.toLowerCase().includes("converted") ||
+          e.currentStage.toLowerCase().includes("enrolled"),
+      );
+    } else if (statusUpper === "LOST") {
+      filteredActivity = filteredActivity.filter((e) =>
+        e.currentStage.toLowerCase().includes("lost"),
+      );
+    } else if (statusUpper === "PIPELINE") {
+      filteredActivity = filteredActivity.filter(
+        (e) =>
+          !e.currentStage.toLowerCase().includes("converted") &&
+          !e.currentStage.toLowerCase().includes("enrolled") &&
+          !e.currentStage.toLowerCase().includes("lost"),
+      );
+    }
+
     if (filters.search && filters.search.trim()) {
       const q = filters.search.trim().toLowerCase();
       filteredActivity = filteredActivity.filter(
@@ -1278,6 +1317,21 @@ export class AdminReportsService {
 
     let filteredSessionItems = sessionItems;
 
+    const statusUpper = (filters.statusFilter || "").toUpperCase().trim();
+    if (statusUpper === "COMPLETED") {
+      filteredSessionItems = filteredSessionItems.filter((s) => s.isCompleted && !s.isHoliday);
+    } else if (statusUpper === "UPCOMING") {
+      filteredSessionItems = filteredSessionItems.filter((s) => !s.isCompleted && !s.isHoliday);
+    } else if (statusUpper === "TEACHER_GAPS") {
+      filteredSessionItems = filteredSessionItems.filter((s) => s.isTeacherGap);
+    } else if (statusUpper === "ROOM_GAPS") {
+      filteredSessionItems = filteredSessionItems.filter((s) => s.isRoomGap);
+    } else if (statusUpper === "SUBSTITUTES") {
+      filteredSessionItems = filteredSessionItems.filter((s) => s.isTeacherOverride);
+    } else if (statusUpper === "HOLIDAY" || statusUpper === "HOLIDAYS") {
+      filteredSessionItems = filteredSessionItems.filter((s) => s.isHoliday);
+    }
+
     if (filters.search && filters.search.trim()) {
       const q = filters.search.trim().toLowerCase();
       filteredSessionItems = filteredSessionItems.filter(
@@ -1481,7 +1535,38 @@ export class AdminReportsService {
         ? Math.round((totalSubmissionsCount / totalCandidates) * 100)
         : 0;
 
-    const paginatedItems = items.slice((page - 1) * limit, page * limit);
+    let filteredItems = items;
+
+    const statusLower = (filters.statusFilter || "").toLowerCase().trim();
+    if (statusLower === "school") {
+      filteredItems = filteredItems.filter((item) => item.kind === "SCHOOL");
+    } else if (statusLower === "entrance") {
+      filteredItems = filteredItems.filter((item) => item.kind === "ENTRANCE");
+    } else if (statusLower === "graded") {
+      filteredItems = filteredItems.filter(
+        (item) =>
+          item.status.toLowerCase().includes("graded") ||
+          item.status.toLowerCase().includes("published") ||
+          item.status.toLowerCase().includes("completed") ||
+          (item.submissionsCount > 0 && (!item.pendingGradingCount || item.pendingGradingCount === 0)),
+      );
+    } else if (statusLower === "pending_grading") {
+      filteredItems = filteredItems.filter(
+        (item) =>
+          (item.pendingGradingCount && item.pendingGradingCount > 0) ||
+          item.status.toLowerCase().includes("pending") ||
+          (item.submissionsCount > 0 && item.averageMark === null),
+      );
+    } else if (statusLower === "scheduled") {
+      filteredItems = filteredItems.filter(
+        (item) =>
+          item.status.toLowerCase().includes("scheduled") ||
+          item.status.toLowerCase().includes("draft") ||
+          item.status.toLowerCase().includes("active"),
+      );
+    }
+
+    const paginatedItems = filteredItems.slice((page - 1) * limit, page * limit);
 
     return {
       summary: {
@@ -1498,10 +1583,10 @@ export class AdminReportsService {
       },
       assessments: {
         items: paginatedItems,
-        total: items.length,
+        total: filteredItems.length,
         page,
         limit,
-        totalPages: Math.ceil(items.length / limit) || 1,
+        totalPages: Math.ceil(filteredItems.length / limit) || 1,
       },
       lastUpdated: new Date().toISOString(),
     };
@@ -1660,7 +1745,22 @@ export class AdminReportsService {
       }),
     );
 
-    const paginatedItems = items.slice((page - 1) * limit, page * limit);
+    let filteredItems = items;
+
+    const statusLower = (filters.statusFilter || "").toLowerCase().trim();
+    if (statusLower === "pending_marking") {
+      filteredItems = filteredItems.filter((item) => item.pendingMarkingCount > 0);
+    } else if (statusLower === "completed") {
+      filteredItems = filteredItems.filter(
+        (item) => item.fullyMarked || (item.submissionRate >= 100 && item.submissionsCount > 0),
+      );
+    } else if (statusLower === "active") {
+      filteredItems = filteredItems.filter((item) => item.dueDate >= todayStr);
+    } else if (statusLower === "overdue") {
+      filteredItems = filteredItems.filter((item) => item.isOverdue);
+    }
+
+    const paginatedItems = filteredItems.slice((page - 1) * limit, page * limit);
 
     return {
       summary: {
@@ -1680,10 +1780,10 @@ export class AdminReportsService {
       subjectBreakdown,
       homework: {
         items: paginatedItems,
-        total: items.length,
+        total: filteredItems.length,
         page,
         limit,
-        totalPages: Math.ceil(items.length / limit) || 1,
+        totalPages: Math.ceil(filteredItems.length / limit) || 1,
       },
       lastUpdated: new Date().toISOString(),
     };
