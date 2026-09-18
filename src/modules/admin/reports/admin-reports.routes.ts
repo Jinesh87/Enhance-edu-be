@@ -28,9 +28,20 @@ adminReportsRouter.get(
 );
 
 adminReportsRouter.get(
+  "/attendance/student/:studentId",
+  validate(reportQuerySchema, "query"),
+  adminReportsController.studentAttendanceDetails,
+);
+
+adminReportsRouter.get(
   "/enquiries-funnel",
   validate(reportQuerySchema, "query"),
   adminReportsController.enquiriesFunnel,
+);
+
+adminReportsRouter.get(
+  "/enquiries-funnel/:id/journey",
+  adminReportsController.enquiryJourney,
 );
 
 adminReportsRouter.get(

@@ -13,9 +13,10 @@ export const reportQuerySchema = Joi.object({
   touchPoint: Joi.string().valid("first", "last").optional(),
   threshold: Joi.number().min(0).max(100).optional(),
   studentId: Joi.string().uuid().optional(),
+  statusFilter: Joi.string().max(60).allow("").optional(),
   search: Joi.string().max(100).allow("").optional(),
   page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
+  limit: Joi.number().integer().min(1).max(10000).default(20),
   sortBy: Joi.string().max(40).optional(),
   sortDir: Joi.string().valid("ASC", "DESC", "asc", "desc").default("DESC"),
 });
@@ -31,6 +32,7 @@ export type ReportQueryInput = {
   subjectId?: string;
   teacherId?: string;
   studentId?: string;
+  statusFilter?: string;
   search?: string;
   touchPoint?: "first" | "last";
   threshold?: number;
