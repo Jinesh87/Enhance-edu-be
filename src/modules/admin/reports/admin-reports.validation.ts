@@ -16,7 +16,7 @@ export const reportQuerySchema = Joi.object({
   statusFilter: Joi.string().max(60).allow("").optional(),
   search: Joi.string().max(100).allow("").optional(),
   page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
+  limit: Joi.number().integer().min(1).max(10000).default(20),
   sortBy: Joi.string().max(40).optional(),
   sortDir: Joi.string().valid("ASC", "DESC", "asc", "desc").default("DESC"),
 });
