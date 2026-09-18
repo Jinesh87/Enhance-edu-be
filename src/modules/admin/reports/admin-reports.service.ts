@@ -457,7 +457,11 @@ export class AdminReportsService {
       filteredStudentRows = filteredStudentRows.filter(
         (s) =>
           s.studentName.toLowerCase().includes(q) ||
-          (s.email && s.email.toLowerCase().includes(q)),
+          (s.email && s.email.toLowerCase().includes(q)) ||
+          (s.guardianName && s.guardianName.toLowerCase().includes(q)) ||
+          (s.guardianPhone && s.guardianPhone.toLowerCase().includes(q)) ||
+          (s.yearLevel && s.yearLevel.toLowerCase().includes(q)) ||
+          (s.academicYear && String(s.academicYear).toLowerCase().includes(q)),
       );
     }
 
@@ -1566,6 +1570,19 @@ export class AdminReportsService {
       );
     }
 
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      filteredItems = filteredItems.filter(
+        (item) =>
+          item.name.toLowerCase().includes(q) ||
+          (item.subject && item.subject.toLowerCase().includes(q)) ||
+          (item.yearGroup && item.yearGroup.toLowerCase().includes(q)) ||
+          (item.teacherName && item.teacherName.toLowerCase().includes(q)) ||
+          (item.kind && item.kind.toLowerCase().includes(q)) ||
+          (item.status && item.status.toLowerCase().includes(q)),
+      );
+    }
+
     const paginatedItems = filteredItems.slice((page - 1) * limit, page * limit);
 
     return {
@@ -1758,6 +1775,17 @@ export class AdminReportsService {
       filteredItems = filteredItems.filter((item) => item.dueDate >= todayStr);
     } else if (statusLower === "overdue") {
       filteredItems = filteredItems.filter((item) => item.isOverdue);
+    }
+
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      filteredItems = filteredItems.filter(
+        (item) =>
+          item.title.toLowerCase().includes(q) ||
+          (item.subject && item.subject.toLowerCase().includes(q)) ||
+          (item.yearGroup && item.yearGroup.toLowerCase().includes(q)) ||
+          (item.teacherName && item.teacherName.toLowerCase().includes(q)),
+      );
     }
 
     const paginatedItems = filteredItems.slice((page - 1) * limit, page * limit);
