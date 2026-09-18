@@ -34,6 +34,11 @@ export const muteConversationSchema = Joi.object({
   muted: Joi.boolean().required(),
 });
 
+export const listConversationMediaQuerySchema = Joi.object({
+  kind: Joi.string().valid("image", "document", "all").optional(),
+  limit: Joi.number().integer().min(1).max(400).optional(),
+});
+
 export const searchChatQuerySchema = Joi.object({
   q: Joi.string().trim().min(1).max(120).required(),
 });

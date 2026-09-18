@@ -207,6 +207,45 @@ class ChatController {
     }
   };
 
+  clearConversation = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await chatService.clearConversation(
+        req.user!.id,
+        req.user!.role,
+        String(req.params.conversationId),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listMedia = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const kindRaw = req.query.kind;
+      const kind =
+        kindRaw === "image" || kindRaw === "document" || kindRaw === "all"
+          ? kindRaw
+          : undefined;
+      const data = await chatService.listConversationMedia(
+        req.user!.id,
+        req.user!.role,
+        String(req.params.conversationId),
+        {
+          kind,
+          limit: req.query.limit ? Number(req.query.limit) : undefined,
+        },
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   markVoicePlayed = async (
     req: Request,
     res: Response,

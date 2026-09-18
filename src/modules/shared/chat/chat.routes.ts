@@ -14,6 +14,7 @@ import {
   conversationIdParamsSchema,
   editChatMessageSchema,
   listMessagesQuerySchema,
+  listConversationMediaQuerySchema,
   messageMediaParamsSchema,
   muteConversationSchema,
   openConversationSchema,
@@ -46,6 +47,17 @@ router.get(
   validate(conversationIdParamsSchema, "params"),
   validate(listMessagesQuerySchema, "query"),
   chatController.listMessages,
+);
+router.get(
+  "/conversations/:conversationId/media",
+  validate(conversationIdParamsSchema, "params"),
+  validate(listConversationMediaQuerySchema, "query"),
+  chatController.listMedia,
+);
+router.post(
+  "/conversations/:conversationId/clear",
+  validate(conversationIdParamsSchema, "params"),
+  chatController.clearConversation,
 );
 router.get(
   "/conversations/:conversationId/messages/search",
