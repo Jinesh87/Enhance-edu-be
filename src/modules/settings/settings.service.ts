@@ -26,6 +26,7 @@ export interface GuardianPortalSettings {
   entranceExamsEnabled: boolean;
   attendanceEnabled: boolean;
   teacherChatEnabled: boolean;
+  teacherPeerChatEnabled: boolean;
 }
 
 export interface UpdateGuardianPortalSettingInput {
@@ -34,6 +35,7 @@ export interface UpdateGuardianPortalSettingInput {
   entranceExamsEnabled: boolean;
   attendanceEnabled: boolean;
   teacherChatEnabled: boolean;
+  teacherPeerChatEnabled: boolean;
 }
 
 export interface OpenAiSettings {
@@ -135,6 +137,7 @@ export class SettingsService {
         guardianPortalEntranceExamsEnabled: false,
         guardianPortalAttendanceEnabled: false,
         guardianTeacherChatEnabled: false,
+        teacherTeacherChatEnabled: false,
         openaiApiKey: null,
         sessionChangeEmailNotificationsEnabled: false,
         adminAiAssistantEnabled: true,
@@ -317,6 +320,7 @@ export class SettingsService {
       entranceExamsEnabled: setting.guardianPortalEntranceExamsEnabled ?? false,
       attendanceEnabled: setting.guardianPortalAttendanceEnabled ?? false,
       teacherChatEnabled: setting.guardianTeacherChatEnabled ?? false,
+      teacherPeerChatEnabled: setting.teacherTeacherChatEnabled ?? false,
     };
   }
 
@@ -336,6 +340,7 @@ export class SettingsService {
     setting.guardianPortalAttendanceEnabled = input.attendanceEnabled;
     if (options?.allowTeacherChatToggle) {
       setting.guardianTeacherChatEnabled = input.teacherChatEnabled;
+      setting.teacherTeacherChatEnabled = input.teacherPeerChatEnabled;
     }
     await this.settingRepo.save(setting);
     return this.mapGuardianPortalSettings(setting);
@@ -364,6 +369,11 @@ export class SettingsService {
   async isGuardianTeacherChatEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.guardianTeacherChatEnabled ?? false;
+  }
+
+  async isTeacherTeacherChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.teacherTeacherChatEnabled ?? false;
   }
 
   async getOpenAiSettings(): Promise<OpenAiSettings> {

@@ -49,6 +49,13 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   guardianTeacherChatEnabled!: boolean;
 
+  /**
+   * When true, teachers who share the same year level and term can
+   * message each other in-app.
+   */
+  @Column({ type: "boolean", default: false })
+  teacherTeacherChatEnabled!: boolean;
+
   /** OpenAI API key for institution AI features. */
   @Column({ type: "varchar", length: 255, nullable: true })
   openaiApiKey!: string | null;
