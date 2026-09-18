@@ -130,11 +130,14 @@ class ChatController {
     next: NextFunction,
   ) => {
     try {
+      const variant =
+        req.query.variant === "thumb" ? ("thumb" as const) : ("full" as const);
       const media = await chatService.getMessageMedia(
         req.user!.id,
         req.user!.role,
         String(req.params.conversationId),
         String(req.params.messageId),
+        variant,
       );
       await respondWithStoredFile(res, {
         storageKey: media.storageKey,

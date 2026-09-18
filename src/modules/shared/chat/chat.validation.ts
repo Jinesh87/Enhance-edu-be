@@ -13,6 +13,10 @@ export const messageMediaParamsSchema = Joi.object({
   messageId: Joi.string().uuid().required(),
 });
 
+export const messageMediaQuerySchema = Joi.object({
+  variant: Joi.string().valid("full", "thumb").optional(),
+});
+
 export const listMessagesQuerySchema = Joi.object({
   before: Joi.string().uuid().optional(),
   limit: Joi.number().integer().min(1).max(100).optional(),

@@ -199,10 +199,30 @@ export async function getSignedUploadUrl(
   return { url, expiresIn, storageKey: key };
 }
 
+function setStoredFileHeaders(
+  res: Response,
+  file: {
+    mimeType: string;
+    originalName: string;
+    inline?: boolean;
+  },
+  contentLength?: number,
+): void {
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader(
+    "Content-Disposition",
+    `${file.inline === false ? "attachment" : "inline"}; filename="${encodeURIComponent(file.originalName)}"`,
+  );
+  res.setHeader("Cache-Control", "private, max-age=60");
+  if (typeof contentLength === "number" && contentLength >= 0) {
+    res.setHeader("Content-Length", String(contentLength));
+  }
+}
+
 /**
  * Serve a stored file to the client.
  * - Browser-direct (opt-in): JSON `{ url }` signed download (needs Linode CORS).
- * - Default: proxy bytes through the API (works without bucket CORS).
+ * - Default: stream bytes through the API (works without bucket CORS; progress-friendly).
  */
 export async function respondWithStoredFile(
   res: Response,
@@ -228,14 +248,47 @@ export async function respondWithStoredFile(
     return;
   }
 
-  const buffer = await getObjectBuffer(file.storageKey);
-  res.setHeader("Content-Type", file.mimeType);
-  res.setHeader(
-    "Content-Disposition",
-    `${file.inline === false ? "attachment" : "inline"}; filename="${encodeURIComponent(file.originalName)}"`,
-  );
-  res.setHeader("Cache-Control", "private, max-age=60");
-  res.status(200).send(buffer);
+  if (isRemoteObjectStorage()) {
+    const result = await getS3().send(
+      new GetObjectCommand({
+        Bucket: env.LINODE_OBJECT_STORAGE_BUCKET,
+        Key: remoteKey(file.storageKey),
+      }),
+    );
+    if (!result.Body) {
+      throw new AppError(404, "File not found", "NOT_FOUND");
+    }
+
+    setStoredFileHeaders(
+      res,
+      file,
+      typeof result.ContentLength === "number"
+        ? result.ContentLength
+        : undefined,
+    );
+    res.status(200);
+
+    const body = result.Body as Readable | { transformToByteArray(): Promise<Uint8Array> };
+    if (typeof (body as Readable).pipe === "function") {
+      await pipeline(body as Readable, res);
+      return;
+    }
+
+    const bytes = await (
+      body as { transformToByteArray(): Promise<Uint8Array> }
+    ).transformToByteArray();
+    res.end(Buffer.from(bytes));
+    return;
+  }
+
+  const path = localPathForKey(file.storageKey);
+  if (!existsSync(path)) {
+    throw new AppError(404, "File not found", "NOT_FOUND");
+  }
+  const fileStat = await stat(path);
+  setStoredFileHeaders(res, file, fileStat.size);
+  res.status(200);
+  await pipeline(createReadStream(path), res);
 }
 
 export function buildExamAnswerKey(parts: {

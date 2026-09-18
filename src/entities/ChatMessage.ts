@@ -41,6 +41,10 @@ export class ChatMessage {
   @Column({ type: "varchar", length: 512, nullable: true })
   storageKey!: string | null;
 
+  /** Small compressed preview for image messages (e.g. WebP). */
+  @Column({ type: "varchar", length: 512, nullable: true })
+  thumbnailStorageKey!: string | null;
+
   @Column({ type: "varchar", length: 255, nullable: true })
   originalName!: string | null;
 

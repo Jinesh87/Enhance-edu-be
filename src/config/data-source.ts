@@ -1326,6 +1326,8 @@ export async function ensureChatSchema() {
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "storageKey" varchar(512);
     ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "thumbnailStorageKey" varchar(512);
+    ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "originalName" varchar(255);
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "mimeType" varchar(120);

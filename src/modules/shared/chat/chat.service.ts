@@ -22,15 +22,60 @@ import { emitToUser, isUserOnline, isUserViewingConversation } from "./chat-sock
 import {
   buildChatImageKey,
   deleteObject,
+  getObjectBuffer,
+  putObject,
   storeUploadedObject,
   type IncomingStoredFile,
 } from "../../../common/storage/object-storage.js";
 import { assertValidChatAttachmentBuffer, isChatAttachmentMime, isChatAudioMime, isChatDocumentMime, isChatImageMime } from "../../../common/validation/validate-upload.js";
 import { notifyUsers } from "../../notifications/domain-notifications.js";
 import { settingsService } from "../../settings/settings.service.js";
+import { logger } from "../../../config/logger.js";
+import sharp from "sharp";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_BODY_LENGTH = 4000;
+const CHAT_THUMB_MAX_EDGE = 480;
+const CHAT_THUMB_WEBP_QUALITY = 70;
+
+async function createAndStoreChatThumbnail(params: {
+  conversationId: string;
+  messageId: string;
+  sourceBuffer?: Buffer;
+  sourceStorageKey: string;
+}): Promise<string | null> {
+  try {
+    const source =
+      params.sourceBuffer && params.sourceBuffer.length > 0
+        ? params.sourceBuffer
+        : await getObjectBuffer(params.sourceStorageKey);
+    const thumbBuffer = await sharp(source)
+      .rotate()
+      .resize(CHAT_THUMB_MAX_EDGE, CHAT_THUMB_MAX_EDGE, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: CHAT_THUMB_WEBP_QUALITY })
+      .toBuffer();
+    const thumbKey = buildChatImageKey({
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      fileName: "thumb.webp",
+    });
+    await putObject({
+      key: thumbKey,
+      body: thumbBuffer,
+      contentType: "image/webp",
+    });
+    return thumbKey;
+  } catch (error) {
+    logger.warn(
+      { err: error, messageId: params.messageId },
+      "Failed to create chat image thumbnail",
+    );
+    return null;
+  }
+}
 
 async function assertChatRole(role: UserRole) {
   if (role === UserRole.STUDENT || role === UserRole.STAFF) return;
@@ -78,6 +123,7 @@ export type ChatMessageDto = {
   senderUserId: string;
   body: string;
   hasImage: boolean;
+  hasThumbnail: boolean;
   image: {
     originalName: string;
     mimeType: string;
@@ -148,6 +194,7 @@ function toMessageDto(
     senderUserId: message.senderUserId,
     body: deleted ? "" : message.body,
     hasImage,
+    hasThumbnail: hasImage && Boolean(message.thumbnailStorageKey),
     image:
       hasImage && message.originalName && message.mimeType
         ? {
@@ -832,6 +879,7 @@ export class ChatService {
       senderUserId: userId,
       body,
       storageKey: null,
+      thumbnailStorageKey: null,
       originalName: null,
       mimeType: null,
       byteSize: null,
@@ -861,10 +909,24 @@ export class ChatService {
         message.originalName = fileUpload.originalName;
         message.mimeType = fileUpload.mimeType;
         message.byteSize = stored.byteSize || fileUpload.size;
+
+        if (isChatImageMime(fileUpload.mimeType)) {
+          const thumbKey = await createAndStoreChatThumbnail({
+            conversationId: conversation.id,
+            messageId: message.id,
+            sourceBuffer: fileUpload.buffer,
+            sourceStorageKey: stored.key,
+          });
+          message.thumbnailStorageKey = thumbKey;
+        }
+
         await this.messages.save(message);
       } catch (error) {
         await this.messages.delete({ id: message.id });
         void deleteObject(storageKey).catch(() => undefined);
+        if (message.thumbnailStorageKey) {
+          void deleteObject(message.thumbnailStorageKey).catch(() => undefined);
+        }
         throw error;
       }
     }
@@ -1181,6 +1243,7 @@ export class ChatService {
     role: UserRole,
     conversationId: string,
     messageId: string,
+    variant: "full" | "thumb" = "full",
   ) {
     await assertChatRole(role);
 
@@ -1204,6 +1267,18 @@ export class ChatService {
       if (clearedAt && message.createdAt <= clearedAt) {
         throw new AppError(404, "Attachment not found", "NOT_FOUND");
       }
+    }
+
+    if (
+      variant === "thumb" &&
+      message.thumbnailStorageKey &&
+      isChatImageMime(message.mimeType)
+    ) {
+      return {
+        storageKey: message.thumbnailStorageKey,
+        mimeType: "image/webp",
+        originalName: "thumb.webp",
+      };
     }
 
     return {
@@ -1297,9 +1372,11 @@ export class ChatService {
     }
 
     const storageKey = message.storageKey;
+    const thumbnailStorageKey = message.thumbnailStorageKey;
     message.deletedAt = new Date();
     message.body = "";
     message.storageKey = null;
+    message.thumbnailStorageKey = null;
     message.originalName = null;
     message.mimeType = null;
     message.byteSize = null;
@@ -1308,6 +1385,9 @@ export class ChatService {
 
     if (storageKey) {
       await deleteObject(storageKey).catch(() => undefined);
+    }
+    if (thumbnailStorageKey) {
+      await deleteObject(thumbnailStorageKey).catch(() => undefined);
     }
 
     conversation.updatedAt = new Date();

@@ -16,6 +16,7 @@ import {
   listMessagesQuerySchema,
   listConversationMediaQuerySchema,
   messageMediaParamsSchema,
+  messageMediaQuerySchema,
   muteConversationSchema,
   openConversationSchema,
   searchChatQuerySchema,
@@ -76,6 +77,7 @@ router.post(
 router.get(
   "/conversations/:conversationId/messages/:messageId/media",
   validate(messageMediaParamsSchema, "params"),
+  validate(messageMediaQuerySchema, "query"),
   chatController.getMessageMedia,
 );
 router.post(
