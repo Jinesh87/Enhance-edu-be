@@ -1,4 +1,4 @@
-import { In, IsNull, LessThan, Not, type FindOptionsWhere } from "typeorm";
+import { In, IsNull, LessThan, MoreThan, Not, type FindOptionsWhere } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { UserRole } from "../../../common/constants/roles.js";
@@ -22,15 +22,60 @@ import { emitToUser, isUserOnline, isUserViewingConversation } from "./chat-sock
 import {
   buildChatImageKey,
   deleteObject,
+  getObjectBuffer,
+  putObject,
   storeUploadedObject,
   type IncomingStoredFile,
 } from "../../../common/storage/object-storage.js";
-import { assertValidChatAttachmentBuffer, isChatAttachmentMime, isChatAudioMime, isChatImageMime } from "../../../common/validation/validate-upload.js";
+import { assertValidChatAttachmentBuffer, isChatAttachmentMime, isChatAudioMime, isChatDocumentMime, isChatImageMime } from "../../../common/validation/validate-upload.js";
 import { notifyUsers } from "../../notifications/domain-notifications.js";
 import { settingsService } from "../../settings/settings.service.js";
+import { logger } from "../../../config/logger.js";
+import sharp from "sharp";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_BODY_LENGTH = 4000;
+const CHAT_THUMB_MAX_EDGE = 480;
+const CHAT_THUMB_WEBP_QUALITY = 70;
+
+async function createAndStoreChatThumbnail(params: {
+  conversationId: string;
+  messageId: string;
+  sourceBuffer?: Buffer;
+  sourceStorageKey: string;
+}): Promise<string | null> {
+  try {
+    const source =
+      params.sourceBuffer && params.sourceBuffer.length > 0
+        ? params.sourceBuffer
+        : await getObjectBuffer(params.sourceStorageKey);
+    const thumbBuffer = await sharp(source)
+      .rotate()
+      .resize(CHAT_THUMB_MAX_EDGE, CHAT_THUMB_MAX_EDGE, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: CHAT_THUMB_WEBP_QUALITY })
+      .toBuffer();
+    const thumbKey = buildChatImageKey({
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      fileName: "thumb.webp",
+    });
+    await putObject({
+      key: thumbKey,
+      body: thumbBuffer,
+      contentType: "image/webp",
+    });
+    return thumbKey;
+  } catch (error) {
+    logger.warn(
+      { err: error, messageId: params.messageId },
+      "Failed to create chat image thumbnail",
+    );
+    return null;
+  }
+}
 
 async function assertChatRole(role: UserRole) {
   if (role === UserRole.STUDENT || role === UserRole.STAFF) return;
@@ -78,6 +123,7 @@ export type ChatMessageDto = {
   senderUserId: string;
   body: string;
   hasImage: boolean;
+  hasThumbnail: boolean;
   image: {
     originalName: string;
     mimeType: string;
@@ -148,6 +194,7 @@ function toMessageDto(
     senderUserId: message.senderUserId,
     body: deleted ? "" : message.body,
     hasImage,
+    hasThumbnail: hasImage && Boolean(message.thumbnailStorageKey),
     image:
       hasImage && message.originalName && message.mimeType
         ? {
@@ -249,6 +296,14 @@ export class ChatService {
       .andWhere(
         "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId OR conversation.guardianUserId = :userId)",
         { userId },
+      )
+      .andWhere(
+        `(
+          (conversation.studentUserId = :userId AND (conversation.studentClearedAt IS NULL OR message.createdAt > conversation.studentClearedAt))
+          OR (conversation.teacherUserId = :userId AND (conversation.teacherClearedAt IS NULL OR message.createdAt > conversation.teacherClearedAt))
+          OR (conversation.guardianUserId = :userId AND (conversation.guardianClearedAt IS NULL OR message.createdAt > conversation.guardianClearedAt))
+        )`,
+        { userId },
       );
 
     if (conversationId) {
@@ -282,6 +337,33 @@ export class ChatService {
       return Boolean(conversation.studentMutedAt);
     }
     return Boolean(conversation.teacherMutedAt);
+  }
+
+  private clearedAtForUser(
+    conversation: ChatConversation,
+    viewerUserId: string,
+  ): Date | null {
+    if (conversation.guardianUserId === viewerUserId) {
+      return conversation.guardianClearedAt ?? null;
+    }
+    if (conversation.studentUserId === viewerUserId) {
+      return conversation.studentClearedAt ?? null;
+    }
+    return conversation.teacherClearedAt ?? null;
+  }
+
+  private setClearedAtForUser(
+    conversation: ChatConversation,
+    viewerUserId: string,
+    at: Date,
+  ) {
+    if (conversation.guardianUserId === viewerUserId) {
+      conversation.guardianClearedAt = at;
+    } else if (conversation.studentUserId === viewerUserId) {
+      conversation.studentClearedAt = at;
+    } else {
+      conversation.teacherClearedAt = at;
+    }
   }
 
   private async toConversationDto(
@@ -416,7 +498,7 @@ export class ChatService {
     );
 
     const dtos = await Promise.all(
-      conversations.map((conversation) => {
+      conversations.map(async (conversation) => {
         const peerId = this.peerUserId(conversation, userId);
         const peer = peerById.get(peerId) ?? null;
         const enriched = peer
@@ -425,12 +507,19 @@ export class ChatService {
               subtitle: guardianSubtitles.get(peerId) ?? null,
             }
           : null;
-        return this.toConversationDto(
-          conversation,
-          userId,
-          enriched,
-          lastByConversation.get(conversation.id) ?? null,
-        );
+        let last = lastByConversation.get(conversation.id) ?? null;
+        const clearedAt = this.clearedAtForUser(conversation, userId);
+        if (last && clearedAt && last.createdAt <= clearedAt) {
+          last =
+            (await this.messages.findOne({
+              where: {
+                conversationId: conversation.id,
+                createdAt: MoreThan(clearedAt),
+              },
+              order: { createdAt: "DESC" },
+            })) ?? null;
+        }
+        return this.toConversationDto(conversation, userId, enriched, last);
       }),
     );
 
@@ -473,10 +562,19 @@ export class ChatService {
       .createQueryBuilder("message")
       .innerJoinAndSelect("message.conversation", "conversation")
       .where(
-        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId)",
+        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId OR conversation.guardianUserId = :userId)",
         { userId },
       )
+      .andWhere("message.deletedAt IS NULL")
       .andWhere("message.body ILIKE :needle", { needle: `%${query}%` })
+      .andWhere(
+        `(
+          (conversation.studentUserId = :userId AND (conversation.studentClearedAt IS NULL OR message.createdAt > conversation.studentClearedAt))
+          OR (conversation.teacherUserId = :userId AND (conversation.teacherClearedAt IS NULL OR message.createdAt > conversation.teacherClearedAt))
+          OR (conversation.guardianUserId = :userId AND (conversation.guardianClearedAt IS NULL OR message.createdAt > conversation.guardianClearedAt))
+        )`,
+        { userId },
+      )
       .orderBy("message.createdAt", "DESC")
       .take(30)
       .getMany();
@@ -617,22 +715,29 @@ export class ChatService {
       100,
     );
 
-    const where: FindOptionsWhere<ChatMessage> = { conversationId };
+    const clearedAt = this.clearedAtForUser(conversation, userId);
+    const qb = this.messages
+      .createQueryBuilder("message")
+      .where("message.conversationId = :conversationId", { conversationId })
+      .orderBy("message.createdAt", "DESC")
+      .take(limit);
+
+    if (clearedAt) {
+      qb.andWhere("message.createdAt > :clearedAt", { clearedAt });
+    }
 
     if (options?.before) {
       const beforeMessage = await this.messages.findOne({
         where: { id: options.before, conversationId },
       });
       if (beforeMessage) {
-        where.createdAt = LessThan(beforeMessage.createdAt);
+        qb.andWhere("message.createdAt < :beforeAt", {
+          beforeAt: beforeMessage.createdAt,
+        });
       }
     }
 
-    const rows = await this.messages.find({
-      where,
-      order: { createdAt: "DESC" },
-      take: limit,
-    });
+    const rows = await qb.getMany();
 
     // Mark inbound undelivered messages as delivered when recipient opens history.
     const now = new Date();
@@ -680,8 +785,9 @@ export class ChatService {
     await assertCanChat(userId, role, peerId);
 
     const limit = Math.min(Math.max(options?.limit ?? 50, 1), 100);
+    const clearedAt = this.clearedAtForUser(conversation, userId);
 
-    const [rows, total] = await this.messages
+    const qb = this.messages
       .createQueryBuilder("message")
       .where("message.conversationId = :conversationId", { conversationId })
       .andWhere("message.deletedAt IS NULL")
@@ -690,8 +796,13 @@ export class ChatService {
         { needle: `%${query}%` },
       )
       .orderBy("message.createdAt", "DESC")
-      .take(limit)
-      .getManyAndCount();
+      .take(limit);
+
+    if (clearedAt) {
+      qb.andWhere("message.createdAt > :clearedAt", { clearedAt });
+    }
+
+    const [rows, total] = await qb.getManyAndCount();
 
     return {
       messages: await this.toMessageDtos(rows),
@@ -768,6 +879,7 @@ export class ChatService {
       senderUserId: userId,
       body,
       storageKey: null,
+      thumbnailStorageKey: null,
       originalName: null,
       mimeType: null,
       byteSize: null,
@@ -797,10 +909,24 @@ export class ChatService {
         message.originalName = fileUpload.originalName;
         message.mimeType = fileUpload.mimeType;
         message.byteSize = stored.byteSize || fileUpload.size;
+
+        if (isChatImageMime(fileUpload.mimeType)) {
+          const thumbKey = await createAndStoreChatThumbnail({
+            conversationId: conversation.id,
+            messageId: message.id,
+            sourceBuffer: fileUpload.buffer,
+            sourceStorageKey: stored.key,
+          });
+          message.thumbnailStorageKey = thumbKey;
+        }
+
         await this.messages.save(message);
       } catch (error) {
         await this.messages.delete({ id: message.id });
         void deleteObject(storageKey).catch(() => undefined);
+        if (message.thumbnailStorageKey) {
+          void deleteObject(message.thumbnailStorageKey).catch(() => undefined);
+        }
         throw error;
       }
     }
@@ -1022,15 +1148,109 @@ export class ChatService {
     return { conversation: dto };
   }
 
+  async clearConversation(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+  ) {
+    await assertChatRole(role);
+
+    const conversation = await this.requireParticipant(conversationId, userId);
+    this.setClearedAtForUser(conversation, userId, new Date());
+    conversation.updatedAt = new Date();
+    await this.conversations.save(conversation);
+
+    const peerId = this.peerUserId(conversation, userId);
+    const peer = await this.users.findOne({
+      where: { id: peerId },
+      select: { id: true, fullName: true, preferredName: true, role: true },
+    });
+    const dto = await this.toConversationDto(
+      conversation,
+      userId,
+      peer,
+      null,
+    );
+    return { conversation: dto, ok: true as const };
+  }
+
+  async listConversationMedia(
+    userId: string,
+    role: UserRole,
+    conversationId: string,
+    options?: { kind?: "image" | "document" | "all"; limit?: number },
+  ) {
+    await assertChatRole(role);
+
+    const conversation = await this.requireParticipant(conversationId, userId);
+    const peerId = this.peerUserId(conversation, userId);
+    await assertCanChat(userId, role, peerId);
+
+    const kind = options?.kind ?? "all";
+    const limit = Math.min(Math.max(options?.limit ?? 200, 1), 400);
+    const clearedAt = this.clearedAtForUser(conversation, userId);
+
+    const qb = this.messages
+      .createQueryBuilder("message")
+      .where("message.conversationId = :conversationId", { conversationId })
+      .andWhere("message.deletedAt IS NULL")
+      .andWhere("message.storageKey IS NOT NULL")
+      .andWhere("message.mimeType IS NOT NULL")
+      .orderBy("message.createdAt", "DESC")
+      .take(limit);
+
+    if (clearedAt) {
+      qb.andWhere("message.createdAt > :clearedAt", { clearedAt });
+    }
+
+    const rows = await qb.getMany();
+    const items = rows
+      .filter((row) => {
+        const mime = row.mimeType ?? "";
+        if (kind === "image") return isChatImageMime(mime);
+        if (kind === "document") {
+          return isChatDocumentMime(mime) && !isChatAudioMime(mime);
+        }
+        // all: images + documents (exclude voice)
+        return (
+          isChatImageMime(mime) ||
+          (isChatDocumentMime(mime) && !isChatAudioMime(mime))
+        );
+      })
+      .map((row) => {
+        const mime = row.mimeType!;
+        const mediaKind: "image" | "document" = isChatImageMime(mime)
+          ? "image"
+          : "document";
+        return {
+          messageId: row.id,
+          kind: mediaKind,
+          originalName: row.originalName ?? "file",
+          mimeType: mime,
+          byteSize: row.byteSize ?? 0,
+          createdAt: row.createdAt.toISOString(),
+        };
+      });
+
+    return {
+      images: items.filter((row) => row.kind === "image"),
+      documents: items.filter((row) => row.kind === "document"),
+    };
+  }
+
   async getMessageMedia(
     userId: string,
     role: UserRole,
     conversationId: string,
     messageId: string,
+    variant: "full" | "thumb" = "full",
   ) {
     await assertChatRole(role);
 
     await this.requireParticipant(conversationId, userId);
+    const conversation = await this.conversations.findOne({
+      where: { id: conversationId },
+    });
     const message = await this.messages.findOne({
       where: { id: messageId, conversationId },
     });
@@ -1041,6 +1261,24 @@ export class ChatService {
       !message.originalName
     ) {
       throw new AppError(404, "Attachment not found", "NOT_FOUND");
+    }
+    if (conversation) {
+      const clearedAt = this.clearedAtForUser(conversation, userId);
+      if (clearedAt && message.createdAt <= clearedAt) {
+        throw new AppError(404, "Attachment not found", "NOT_FOUND");
+      }
+    }
+
+    if (
+      variant === "thumb" &&
+      message.thumbnailStorageKey &&
+      isChatImageMime(message.mimeType)
+    ) {
+      return {
+        storageKey: message.thumbnailStorageKey,
+        mimeType: "image/webp",
+        originalName: "thumb.webp",
+      };
     }
 
     return {
@@ -1134,9 +1372,11 @@ export class ChatService {
     }
 
     const storageKey = message.storageKey;
+    const thumbnailStorageKey = message.thumbnailStorageKey;
     message.deletedAt = new Date();
     message.body = "";
     message.storageKey = null;
+    message.thumbnailStorageKey = null;
     message.originalName = null;
     message.mimeType = null;
     message.byteSize = null;
@@ -1145,6 +1385,9 @@ export class ChatService {
 
     if (storageKey) {
       await deleteObject(storageKey).catch(() => undefined);
+    }
+    if (thumbnailStorageKey) {
+      await deleteObject(thumbnailStorageKey).catch(() => undefined);
     }
 
     conversation.updatedAt = new Date();

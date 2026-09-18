@@ -68,6 +68,18 @@ export class ChatConversation {
   @Column({ type: "timestamptz", nullable: true })
   guardianMutedAt!: Date | null;
 
+  /** Clear-for-me: student no longer sees messages at/before this time. */
+  @Column({ type: "timestamptz", nullable: true })
+  studentClearedAt!: Date | null;
+
+  /** Clear-for-me: teacher no longer sees messages at/before this time. */
+  @Column({ type: "timestamptz", nullable: true })
+  teacherClearedAt!: Date | null;
+
+  /** Clear-for-me: guardian no longer sees messages at/before this time. */
+  @Column({ type: "timestamptz", nullable: true })
+  guardianClearedAt!: Date | null;
+
   @OneToMany(() => ChatMessage, (message) => message.conversation)
   messages!: Relation<ChatMessage>[];
 

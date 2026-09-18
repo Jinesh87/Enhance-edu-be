@@ -13,6 +13,10 @@ export const messageMediaParamsSchema = Joi.object({
   messageId: Joi.string().uuid().required(),
 });
 
+export const messageMediaQuerySchema = Joi.object({
+  variant: Joi.string().valid("full", "thumb").optional(),
+});
+
 export const listMessagesQuerySchema = Joi.object({
   before: Joi.string().uuid().optional(),
   limit: Joi.number().integer().min(1).max(100).optional(),
@@ -32,6 +36,11 @@ export const editChatMessageSchema = Joi.object({
 
 export const muteConversationSchema = Joi.object({
   muted: Joi.boolean().required(),
+});
+
+export const listConversationMediaQuerySchema = Joi.object({
+  kind: Joi.string().valid("image", "document", "all").optional(),
+  limit: Joi.number().integer().min(1).max(400).optional(),
 });
 
 export const searchChatQuerySchema = Joi.object({

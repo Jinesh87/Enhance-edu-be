@@ -1277,6 +1277,12 @@ export async function ensureChatSchema() {
     ALTER TABLE chat_conversations
       ADD COLUMN IF NOT EXISTS "guardianMutedAt" timestamptz;
     ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "studentClearedAt" timestamptz;
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "teacherClearedAt" timestamptz;
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "guardianClearedAt" timestamptz;
+    ALTER TABLE chat_conversations
       ALTER COLUMN "studentUserId" DROP NOT NULL;
     DO $$
     DECLARE r record;
@@ -1319,6 +1325,8 @@ export async function ensureChatSchema() {
       ADD COLUMN IF NOT EXISTS "deliveredAt" timestamptz;
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "storageKey" varchar(512);
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "thumbnailStorageKey" varchar(512);
     ALTER TABLE chat_messages
       ADD COLUMN IF NOT EXISTS "originalName" varchar(255);
     ALTER TABLE chat_messages
