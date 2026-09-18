@@ -19,6 +19,7 @@ export const NOTIFICATION_TYPES = [
   "HOMEWORK_CREATED",
   "ADMIN_AI_BRIEFING",
   "ANNOUNCEMENT",
+  "CHAT_MESSAGE",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

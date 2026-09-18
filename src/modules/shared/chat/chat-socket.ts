@@ -12,7 +12,12 @@ export type ChatSocketUser = {
   role: UserRole;
 };
 
-type AuthedSocket = Socket & { data: { user: ChatSocketUser } };
+type AuthedSocket = Socket & {
+  data: {
+    user: ChatSocketUser;
+    viewingConversationId?: string | null;
+  };
+};
 
 let io: Server | null = null;
 const socketsByUser = new Map<string, Set<string>>();
@@ -47,6 +52,27 @@ function parseCookieHeader(header: string): Record<string, string> {
 export function isUserOnline(userId: string): boolean {
   const sockets = socketsByUser.get(userId);
   return Boolean(sockets && sockets.size > 0);
+}
+
+/** True if any of the user's sockets currently has this conversation focused. */
+export async function isUserViewingConversation(
+  userId: string,
+  conversationId: string,
+): Promise<boolean> {
+  if (!io || !userId || !conversationId) return false;
+  try {
+    const sockets = await io
+      .in(conversationViewRoom(userId, conversationId))
+      .fetchSockets();
+    return sockets.length > 0;
+  } catch (error) {
+    logger.warn({ err: error, userId, conversationId }, "Failed to check chat focus");
+    return false;
+  }
+}
+
+function conversationViewRoom(userId: string, conversationId: string) {
+  return `convview:${conversationId}:user:${userId}`;
 }
 
 export function emitToUser(userId: string, event: string, payload: unknown) {
@@ -108,7 +134,8 @@ export function attachChatSocket(httpServer: HttpServer) {
       const payload = verifyAccessToken(token);
       if (
         payload.role !== UserRole.STUDENT &&
-        payload.role !== UserRole.STAFF
+        payload.role !== UserRole.STAFF &&
+        payload.role !== UserRole.GUARDIAN
       ) {
         next(new Error("FORBIDDEN"));
         return;
@@ -140,6 +167,40 @@ export function attachChatSocket(httpServer: HttpServer) {
 
     socket.emit("presence:snapshot", {
       onlineUserIds: [...socketsByUser.keys()],
+    });
+
+    socket.on(
+      "conversation:focus",
+      (payload: unknown, ack?: (result: unknown) => void) => {
+        const conversationId =
+          payload &&
+          typeof payload === "object" &&
+          typeof (payload as { conversationId?: unknown }).conversationId ===
+            "string"
+            ? (payload as { conversationId: string }).conversationId.trim()
+            : "";
+        const prev = (socket as AuthedSocket).data.viewingConversationId;
+        if (prev && prev !== conversationId) {
+          void socket.leave(conversationViewRoom(user.id, prev));
+        }
+        (socket as AuthedSocket).data.viewingConversationId =
+          conversationId || null;
+        if (conversationId) {
+          void socket.join(conversationViewRoom(user.id, conversationId));
+        }
+        if (typeof ack === "function") {
+          ack({ ok: true, conversationId: conversationId || null });
+        }
+      },
+    );
+
+    socket.on("conversation:blur", (_payload?: unknown, ack?: (result: unknown) => void) => {
+      const prev = (socket as AuthedSocket).data.viewingConversationId;
+      if (prev) {
+        void socket.leave(conversationViewRoom(user.id, prev));
+      }
+      (socket as AuthedSocket).data.viewingConversationId = null;
+      if (typeof ack === "function") ack({ ok: true });
     });
 
     socket.on(

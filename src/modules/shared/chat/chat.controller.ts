@@ -178,6 +178,35 @@ class ChatController {
     }
   };
 
+  editMessage = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await chatService.editMessage(
+        req.user!.id,
+        req.user!.role,
+        String(req.params.conversationId),
+        String(req.params.messageId),
+        String(req.body.body ?? ""),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  setMuted = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await chatService.setConversationMuted(
+        req.user!.id,
+        req.user!.role,
+        String(req.params.conversationId),
+        Boolean(req.body.muted),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   markVoicePlayed = async (
     req: Request,
     res: Response,
