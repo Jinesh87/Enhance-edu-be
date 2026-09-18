@@ -1,4 +1,10 @@
-import { Brackets, In, IsNull, LessThanOrEqual, MoreThanOrEqual } from "typeorm";
+import {
+  Brackets,
+  In,
+  IsNull,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+} from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { AppError } from "../../../common/errors/AppError.js";
@@ -188,7 +194,11 @@ function lessonStatus(input: {
   scannedAt: Date | null;
   online: boolean;
   now: Date;
-}): { status: StudentLessonStatus; minutesUntilStart: number | null; canCheckIn: boolean } {
+}): {
+  status: StudentLessonStatus;
+  minutesUntilStart: number | null;
+  canCheckIn: boolean;
+} {
   const minutesUntilStart = Math.round(
     (input.startAt.getTime() - input.now.getTime()) / 60_000,
   );
@@ -244,10 +254,45 @@ function weekLabelFor(startAt: Date, termStart?: string | null) {
   return `Week ${week}`;
 }
 
-function resourceKindFromMime(mimeType: string): StudentLessonDto["resources"][number]["kind"] {
+function resourceKindFromMime(
+  mimeType: string,
+): StudentLessonDto["resources"][number]["kind"] {
   if (mimeType.includes("pdf")) return "PAPER";
   if (mimeType.startsWith("image/")) return "SLIDES";
   return "DOCUMENT";
+}
+
+function toStudentHolidayDto(holiday: Holiday) {
+  return {
+    id: holiday.id,
+    name: holiday.name,
+    kind: holiday.kind,
+    termId: holiday.termId ?? null,
+    term: holiday.term
+      ? {
+          id: holiday.term.id,
+          name: holiday.term.name,
+          startDate: holiday.term.startDate,
+          endDate: holiday.term.endDate,
+          academicYear: holiday.term.academicYear
+            ? {
+                id: holiday.term.academicYear.id,
+                year: holiday.term.academicYear.year,
+                displayName: holiday.term.academicYear.displayName,
+              }
+            : undefined,
+          yearLevel: holiday.term.yearLevel
+            ? {
+                id: holiday.term.yearLevel.id,
+                name: holiday.term.yearLevel.name,
+                sequence: holiday.term.yearLevel.sequence,
+              }
+            : undefined,
+        }
+      : null,
+    startDate: holiday.startDate,
+    endDate: holiday.endDate,
+  };
 }
 
 export class StudentClassesService {
@@ -269,8 +314,9 @@ export class StudentClassesService {
     AppDataSource.getRepository(HomeworkStudent);
   private readonly homeworkSubmissions =
     AppDataSource.getRepository(HomeworkSubmission);
-  private readonly homeworkSubmissionFiles =
-    AppDataSource.getRepository(HomeworkSubmissionFile);
+  private readonly homeworkSubmissionFiles = AppDataSource.getRepository(
+    HomeworkSubmissionFile,
+  );
 
   async getTimetable(userId: string) {
     const lessons = await this.listLessons(userId);
@@ -346,6 +392,24 @@ export class StudentClassesService {
       nextLesson?.weekLabel ??
       null;
 
+    const holidays = await AppDataSource.getRepository(Holiday).find({
+      where: {
+        startDate: LessThanOrEqual(
+          calendarDateInTimeZone(endOfWeek, DEFAULT_CLASS_TIMEZONE),
+        ),
+        endDate: MoreThanOrEqual(
+          calendarDateInTimeZone(startOfWeek, DEFAULT_CLASS_TIMEZONE),
+        ),
+      },
+      relations: {
+        term: {
+          academicYear: true,
+          yearLevel: true,
+        },
+      },
+      order: { startDate: "ASC", name: "ASC" },
+    });
+
     return {
       term,
       weekLabel,
@@ -353,6 +417,7 @@ export class StudentClassesService {
       today,
       week,
       lessons: fromThisWeek,
+      holidays: holidays.map(toStudentHolidayDto),
       stats: {
         dueThisWeek,
         dueTomorrow,
@@ -375,12 +440,19 @@ export class StudentClassesService {
     return lesson;
   }
 
-  async listHomework(userId: string): Promise<{ homework: StudentHomeworkDto[] }> {
+  async listHomework(
+    userId: string,
+  ): Promise<{ homework: StudentHomeworkDto[] }> {
     const rows = await this.homework
       .createQueryBuilder("homework")
-      .innerJoin("homework.students", "student", "student.studentId = :userId", {
-        userId,
-      })
+      .innerJoin(
+        "homework.students",
+        "student",
+        "student.studentId = :userId",
+        {
+          userId,
+        },
+      )
       .leftJoinAndSelect("homework.attachments", "attachments")
       .leftJoinAndSelect("homework.subject", "subject")
       .leftJoinAndSelect("homework.term", "term")
@@ -397,7 +469,9 @@ export class StudentClassesService {
       .addOrderBy("homework.createdAt", "DESC")
       .getMany();
 
-    return { homework: rows.map((row) => this.toStudentHomeworkDto(row, userId)) };
+    return {
+      homework: rows.map((row) => this.toStudentHomeworkDto(row, userId)),
+    };
   }
 
   async getHomeworkAttachment(
@@ -606,11 +680,7 @@ export class StudentClassesService {
     return this.getHomeworkSubmission(userId, homeworkId);
   }
 
-  async removeHomeworkFile(
-    userId: string,
-    homeworkId: string,
-    fileId: string,
-  ) {
+  async removeHomeworkFile(userId: string, homeworkId: string, fileId: string) {
     const submission = await this.homeworkSubmissions.findOne({
       where: { homeworkId, studentId: userId },
       relations: { files: true },
@@ -726,12 +796,12 @@ export class StudentClassesService {
 
   private async listLessons(userId: string): Promise<StudentLessonDto[]> {
     const classes = await this.resolveStudentClasses(userId);
-    const classLessons = await this.buildClassLessons(userId, classes);
     const context = await this.buildTimetableContext(userId, classes);
     const assessmentLessons = await this.buildAssessmentLessons(
       userId,
       context,
     );
+
     const fullDayExamDates = new Set(
       assessmentLessons
         .filter((lesson) => lesson.scheduleType === "FULL_DAY")
@@ -742,15 +812,39 @@ export class StudentClassesService {
           ),
         ),
     );
+    const classLessons = await this.buildClassLessons(
+      userId,
+      classes,
+      fullDayExamDates,
+    );
+
+    const holidays = await AppDataSource.getRepository(Holiday).find();
+    const isHolidayDate = (date: Date, timeZone?: string) => {
+      const dateStr = calendarDateInTimeZone(
+        date,
+        timeZone || DEFAULT_CLASS_TIMEZONE,
+      );
+      return holidays.some(
+        (h) => dateStr >= h.startDate && dateStr <= h.endDate,
+      );
+    };
+
     const visibleClassLessons = classLessons.filter((lesson) => {
       const lessonDate = calendarDateInTimeZone(
         new Date(lesson.startAt),
         lesson.timeZone || DEFAULT_CLASS_TIMEZONE,
       );
-      return !fullDayExamDates.has(lessonDate);
+      return (
+        !fullDayExamDates.has(lessonDate) &&
+        !isHolidayDate(new Date(lesson.startAt), lesson.timeZone)
+      );
     });
 
-    return [...visibleClassLessons, ...assessmentLessons].sort(
+    const visibleAssessmentLessons = assessmentLessons.filter((lesson) => {
+      return !isHolidayDate(new Date(lesson.startAt), lesson.timeZone);
+    });
+
+    return [...visibleClassLessons, ...visibleAssessmentLessons].sort(
       (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
     );
   }
@@ -758,6 +852,7 @@ export class StudentClassesService {
   private async buildClassLessons(
     userId: string,
     classes: Class[],
+    fullDayExamDates?: Set<string>,
   ): Promise<StudentLessonDto[]> {
     if (classes.length === 0) return [];
 
@@ -767,12 +862,35 @@ export class StudentClassesService {
         const times = parseClassTimes(cls.dayTime, cls.timeZone);
         return times ? { cls, ...times } : null;
       })
-      .filter(
-        (row): row is { cls: Class; startAt: Date; endAt: Date } =>
-          Boolean(row),
+      .filter((row): row is { cls: Class; startAt: Date; endAt: Date } =>
+        Boolean(row),
       );
 
-    const classIds = timed.map((row) => row.cls.id);
+    const holidays = await AppDataSource.getRepository(Holiday).find();
+    const isHolidayDate = (date: Date, timeZone?: string | null) => {
+      const dateStr = calendarDateInTimeZone(
+        date,
+        timeZone || DEFAULT_CLASS_TIMEZONE,
+      );
+      return holidays.some(
+        (h) => dateStr >= h.startDate && dateStr <= h.endDate,
+      );
+    };
+
+    // Filter out class occurrences on holiday or full-day exam dates so they are NEVER created or scheduled
+    const nonHolidayTimed = timed.filter((row) => {
+      if (isHolidayDate(row.startAt, row.cls.timeZone)) return false;
+      if (fullDayExamDates) {
+        const dateKey = calendarDateInTimeZone(
+          row.startAt,
+          row.cls.timeZone || DEFAULT_CLASS_TIMEZONE,
+        );
+        if (fullDayExamDates.has(dateKey)) return false;
+      }
+      return true;
+    });
+
+    const classIds = nonHolidayTimed.map((row) => row.cls.id);
     const joinAtByClassId = await this.classJoinAtByClassId(userId, classIds);
     const existingSessions = classIds.length
       ? await this.sessions.find({
@@ -787,7 +905,7 @@ export class StudentClassesService {
       ]),
     );
 
-    const toCreate = timed.filter(
+    const toCreate = nonHolidayTimed.filter(
       (row) => !sessionByKey.has(`${row.cls.id}|${row.startAt.getTime()}`),
     );
     if (toCreate.length > 0) {
@@ -827,7 +945,7 @@ export class StudentClassesService {
     ]);
 
     const lessons: StudentLessonDto[] = [];
-    for (const row of timed) {
+    for (const row of nonHolidayTimed) {
       const session = sessionByKey.get(
         `${row.cls.id}|${row.startAt.getTime()}`,
       );
@@ -1012,7 +1130,11 @@ export class StudentClassesService {
     const linkedIds = [...context.linkedAssessmentIds];
     const classIds = [...context.classIds];
     const subjects = [...context.subjectKeys];
-    if (linkedIds.length === 0 && classIds.length === 0 && subjects.length === 0) {
+    if (
+      linkedIds.length === 0 &&
+      classIds.length === 0 &&
+      subjects.length === 0
+    ) {
       return [];
     }
 
@@ -1071,17 +1193,16 @@ export class StudentClassesService {
         (await assessmentSessionSyncService.findByAssessmentId(assessment.id));
       if (!session) continue;
 
-      const window =
-        assessmentScheduleWindow(
-          assessment.assessmentDate,
-          assessment.startTime,
-          assessment.durationMinutes,
-          assessment.scheduleType,
-          assessment.timeZone,
-        ) ?? {
-          startAt: session.startAt,
-          endAt: session.endAt,
-        };
+      const window = assessmentScheduleWindow(
+        assessment.assessmentDate,
+        assessment.startTime,
+        assessment.durationMinutes,
+        assessment.scheduleType,
+        assessment.timeZone,
+      ) ?? {
+        startAt: session.startAt,
+        endAt: session.endAt,
+      };
 
       const attendance = await this.attendance.findOne({
         where: { sessionId: session.id, studentId: userId },
@@ -1133,17 +1254,17 @@ export class StudentClassesService {
           ? attendance.scannedAt.toISOString()
           : null,
         isOnline: online,
-        canCheckIn: false,
+        canCheckIn: assessment.scheduleType === "FULL_DAY" ? false : canCheckIn,
         timeZone: resolveAssessmentTimeZone(assessment.timeZone),
         resources: [
-          ...resourcesByAssessment.get(assessment.id)?.map((resource) => ({
+          ...(resourcesByAssessment.get(assessment.id)?.map((resource) => ({
             id: resource.id,
             title: resource.originalName,
             kind: "DOCUMENT" as const,
             releasedAt: resource.createdAt.toISOString(),
             released: true,
             downloadable: true,
-          })) ?? [],
+          })) ?? []),
         ],
       });
     }
@@ -1332,39 +1453,6 @@ export class StudentClassesService {
     const subject = options.subject?.trim() || undefined;
     const ranges = buildTeacherUpcomingRanges();
 
-function toStudentHolidayDto(holiday: Holiday) {
-  return {
-    id: holiday.id,
-    name: holiday.name,
-    kind: holiday.kind,
-    termId: holiday.termId ?? null,
-    term: holiday.term
-      ? {
-          id: holiday.term.id,
-          name: holiday.term.name,
-          startDate: holiday.term.startDate,
-          endDate: holiday.term.endDate,
-          academicYear: holiday.term.academicYear
-            ? {
-                id: holiday.term.academicYear.id,
-                year: holiday.term.academicYear.year,
-                displayName: holiday.term.academicYear.displayName,
-              }
-            : undefined,
-          yearLevel: holiday.term.yearLevel
-            ? {
-                id: holiday.term.yearLevel.id,
-                name: holiday.term.yearLevel.name,
-                sequence: holiday.term.yearLevel.sequence,
-              }
-            : undefined,
-        }
-      : null,
-    startDate: holiday.startDate,
-    endDate: holiday.endDate,
-  };
-}
-
     if (options.range === "week") {
       if (!options.weekStart) {
         throw new AppError(400, "weekStart is required", "WEEK_START_REQUIRED");
@@ -1373,12 +1461,7 @@ function toStudentHolidayDto(holiday: Holiday) {
         options.weekStart,
       );
       const [sessions, holidays] = await Promise.all([
-        this.fetchStudentSessionsInRange(
-          userId,
-          start,
-          end,
-          subject,
-        ),
+        this.fetchStudentSessionsInRange(userId, start, end, subject),
         AppDataSource.getRepository(Holiday).find({
           where: {
             startDate: LessThanOrEqual(weekEndKey),
@@ -1394,7 +1477,11 @@ function toStudentHolidayDto(holiday: Holiday) {
         }),
       ]);
       const lessons = await this.mapSessionsToStudentLessons(userId, sessions);
-      const hasMoreWeeks = await this.hasStudentSessionsAfter(userId, end, subject);
+      const hasMoreWeeks = await this.hasStudentSessionsAfter(
+        userId,
+        end,
+        subject,
+      );
       return {
         range: "week" as const,
         weekStart: options.weekStart,
@@ -1429,7 +1516,10 @@ function toStudentHolidayDto(holiday: Holiday) {
         AppDataSource.getRepository(Holiday).find({
           where: {
             startDate: LessThanOrEqual(
-              calendarDateInTimeZone(ranges.nextWeekEnd, DEFAULT_CLASS_TIMEZONE),
+              calendarDateInTimeZone(
+                ranges.nextWeekEnd,
+                DEFAULT_CLASS_TIMEZONE,
+              ),
             ),
             endDate: MoreThanOrEqual(
               calendarDateInTimeZone(ranges.todayStart, DEFAULT_CLASS_TIMEZONE),
@@ -1454,8 +1544,14 @@ function toStudentHolidayDto(holiday: Holiday) {
     return {
       range: "initial" as const,
       today: await this.mapSessionsToStudentLessons(userId, todaySessions),
-      thisWeek: await this.mapSessionsToStudentLessons(userId, thisWeekSessions),
-      nextWeek: await this.mapSessionsToStudentLessons(userId, nextWeekSessions),
+      thisWeek: await this.mapSessionsToStudentLessons(
+        userId,
+        thisWeekSessions,
+      ),
+      nextWeek: await this.mapSessionsToStudentLessons(
+        userId,
+        nextWeekSessions,
+      ),
       holidays: holidays.map(toStudentHolidayDto),
       hasMoreWeeks,
       nextWeekStart: hasMoreWeeks ? ranges.nextExtraWeekStart : null,
@@ -1511,16 +1607,19 @@ function toStudentHolidayDto(holiday: Holiday) {
                     { classIds },
                   )
                   .andWhere(
-                    "EXISTS (SELECT 1 FROM class_students cs WHERE cs.\"classId\" = session.\"classId\" AND cs.\"studentId\" = :studentId AND session.\"endAt\" > cs.\"createdAt\")",
+                    'EXISTS (SELECT 1 FROM class_students cs WHERE cs."classId" = session."classId" AND cs."studentId" = :studentId AND session."endAt" > cs."createdAt")',
                     { studentId: userId },
                   );
               }),
             );
           }
           if (visibleAssessmentIds.length > 0) {
-            where.orWhere("session.assessmentId IN (:...visibleAssessmentIds)", {
-              visibleAssessmentIds,
-            });
+            where.orWhere(
+              "session.assessmentId IN (:...visibleAssessmentIds)",
+              {
+                visibleAssessmentIds,
+              },
+            );
           }
         }),
       );
@@ -1578,7 +1677,11 @@ function toStudentHolidayDto(holiday: Holiday) {
     const linkedIds = [...context.linkedAssessmentIds];
     const classIds = [...context.classIds];
     const subjects = [...context.subjectKeys];
-    if (linkedIds.length === 0 && classIds.length === 0 && subjects.length === 0) {
+    if (
+      linkedIds.length === 0 &&
+      classIds.length === 0 &&
+      subjects.length === 0
+    ) {
       return [];
     }
 
@@ -1651,8 +1754,10 @@ function toStudentHolidayDto(holiday: Holiday) {
       subject,
     );
 
-    const fullDayAssessmentSessions =
-      await this.findFullDayAssessmentSessions(since, until);
+    const fullDayAssessmentSessions = await this.findFullDayAssessmentSessions(
+      since,
+      until,
+    );
 
     const sinceDateKey = calendarDateInTimeZone(since, DEFAULT_CLASS_TIMEZONE);
     const untilDateKey = calendarDateInTimeZone(until, DEFAULT_CLASS_TIMEZONE);
@@ -1671,10 +1776,14 @@ function toStudentHolidayDto(holiday: Holiday) {
           (h) =>
             dateKey >= h.startDate &&
             dateKey <= h.endDate &&
-            (h.kind === "PUBLIC" || (h.termId && h.termId === session.class?.term?.id)),
+            (h.kind === "PUBLIC" ||
+              (h.termId && h.termId === session.class?.term?.id)),
         );
         if (isHolidayDate) return false;
-        return !this.isSupersededByFullDayExam(session, fullDayAssessmentSessions);
+        return !this.isSupersededByFullDayExam(
+          session,
+          fullDayAssessmentSessions,
+        );
       }),
     );
 
@@ -1836,17 +1945,16 @@ function toStudentHolidayDto(holiday: Holiday) {
     for (const session of sessions) {
       if (session.assessmentId && session.assessment) {
         const assessment = session.assessment;
-        const window =
-          assessmentScheduleWindow(
-            assessment.assessmentDate,
-            assessment.startTime,
-            assessment.durationMinutes,
-            assessment.scheduleType,
-            assessment.timeZone,
-          ) ?? {
-            startAt: session.startAt,
-            endAt: session.endAt,
-          };
+        const window = assessmentScheduleWindow(
+          assessment.assessmentDate,
+          assessment.startTime,
+          assessment.durationMinutes,
+          assessment.scheduleType,
+          assessment.timeZone,
+        ) ?? {
+          startAt: session.startAt,
+          endAt: session.endAt,
+        };
         const attendance = attendanceBySession.get(session.id);
         const online = isOnlineRoom(session.room || assessment.room);
         const { status, minutesUntilStart, canCheckIn } = lessonStatus({
