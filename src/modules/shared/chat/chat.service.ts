@@ -9,10 +9,15 @@ import {
 } from "../../../entities/index.js";
 import {
   assertCanChat,
+  assertGuardianAdminChatEnabled,
   assertGuardianTeacherChatEnabled,
   assertTeacherTeacherChatEnabled,
+  isAdminChatRole,
+  isGuardianAdminConversation,
   isGuardianTeacherConversation,
   isTeacherTeacherConversation,
+  listAdminsForGuardian,
+  listGuardiansForAdmin,
   listGuardiansForTeacher,
   listStudentsForTeacher,
   listTeachersForGuardian,
@@ -83,7 +88,21 @@ async function createAndStoreChatThumbnail(params: {
 async function assertChatRole(role: UserRole) {
   if (role === UserRole.STUDENT || role === UserRole.STAFF) return;
   if (role === UserRole.GUARDIAN) {
-    await assertGuardianTeacherChatEnabled();
+    const [teacherChat, adminChat] = await Promise.all([
+      settingsService.isGuardianTeacherChatEnabled(),
+      settingsService.isGuardianAdminChatEnabled(),
+    ]);
+    if (!teacherChat && !adminChat) {
+      throw new AppError(
+        403,
+        "Guardian chat is not enabled",
+        "CHAT_DISABLED",
+      );
+    }
+    return;
+  }
+  if (isAdminChatRole(role)) {
+    await assertGuardianAdminChatEnabled();
     return;
   }
   throw new AppError(
@@ -97,6 +116,11 @@ function chatNotificationHref(
   conversation: ChatConversation,
   recipientUserId: string,
 ) {
+  if (isGuardianAdminConversation(conversation)) {
+    return conversation.guardianUserId === recipientUserId
+      ? `/guardian/messages/${conversation.id}`
+      : `/admin/messages/${conversation.id}`;
+  }
   if (isGuardianTeacherConversation(conversation)) {
     return conversation.guardianUserId === recipientUserId
       ? `/guardian/messages/${conversation.id}`
@@ -267,7 +291,12 @@ export class ChatService {
     if (role === UserRole.STUDENT) {
       contacts = await listTeachersForStudent(userId);
     } else if (role === UserRole.GUARDIAN) {
-      contacts = await listTeachersForGuardian(userId);
+      if (await settingsService.isGuardianTeacherChatEnabled()) {
+        contacts = await listTeachersForGuardian(userId);
+      }
+      if (await settingsService.isGuardianAdminChatEnabled()) {
+        contacts = [...contacts, ...(await listAdminsForGuardian(userId))];
+      }
     } else if (role === UserRole.STAFF) {
       contacts = await listStudentsForTeacher(userId);
       if (await settingsService.isGuardianTeacherChatEnabled()) {
@@ -276,6 +305,8 @@ export class ChatService {
       if (await settingsService.isTeacherTeacherChatEnabled()) {
         contacts = [...contacts, ...(await listTeachersForTeacher(userId))];
       }
+    } else if (isAdminChatRole(role)) {
+      contacts = await listGuardiansForAdmin(userId);
     }
 
     return {
@@ -303,7 +334,7 @@ export class ChatService {
       .andWhere("message.readAt IS NULL")
       .andWhere("message.deletedAt IS NULL")
       .andWhere(
-        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId OR conversation.guardianUserId = :userId OR conversation.peerTeacherUserId = :userId)",
+        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId OR conversation.guardianUserId = :userId OR conversation.peerTeacherUserId = :userId OR conversation.adminUserId = :userId)",
         { userId },
       )
       .andWhere(
@@ -312,6 +343,7 @@ export class ChatService {
           OR (conversation.teacherUserId = :userId AND (conversation.teacherClearedAt IS NULL OR message.createdAt > conversation.teacherClearedAt))
           OR (conversation.guardianUserId = :userId AND (conversation.guardianClearedAt IS NULL OR message.createdAt > conversation.guardianClearedAt))
           OR (conversation.peerTeacherUserId = :userId AND (conversation.peerTeacherClearedAt IS NULL OR message.createdAt > conversation.peerTeacherClearedAt))
+          OR (conversation.adminUserId = :userId AND (conversation.adminClearedAt IS NULL OR message.createdAt > conversation.adminClearedAt))
         )`,
         { userId },
       );
@@ -326,18 +358,23 @@ export class ChatService {
   }
 
   private peerUserId(conversation: ChatConversation, viewerUserId: string) {
+    if (isGuardianAdminConversation(conversation)) {
+      return conversation.guardianUserId === viewerUserId
+        ? conversation.adminUserId!
+        : conversation.guardianUserId!;
+    }
     if (isTeacherTeacherConversation(conversation)) {
       return conversation.teacherUserId === viewerUserId
         ? conversation.peerTeacherUserId!
-        : conversation.teacherUserId;
+        : conversation.teacherUserId!;
     }
     if (isGuardianTeacherConversation(conversation)) {
       return conversation.guardianUserId === viewerUserId
-        ? conversation.teacherUserId
+        ? conversation.teacherUserId!
         : conversation.guardianUserId!;
     }
     return conversation.studentUserId === viewerUserId
-      ? conversation.teacherUserId
+      ? conversation.teacherUserId!
       : conversation.studentUserId!;
   }
 
@@ -345,6 +382,9 @@ export class ChatService {
     conversation: ChatConversation,
     viewerUserId: string,
   ) {
+    if (conversation.adminUserId === viewerUserId) {
+      return Boolean(conversation.adminMutedAt);
+    }
     if (conversation.peerTeacherUserId === viewerUserId) {
       return Boolean(conversation.peerTeacherMutedAt);
     }
@@ -361,6 +401,9 @@ export class ChatService {
     conversation: ChatConversation,
     viewerUserId: string,
   ): Date | null {
+    if (conversation.adminUserId === viewerUserId) {
+      return conversation.adminClearedAt ?? null;
+    }
     if (conversation.peerTeacherUserId === viewerUserId) {
       return conversation.peerTeacherClearedAt ?? null;
     }
@@ -378,7 +421,9 @@ export class ChatService {
     viewerUserId: string,
     at: Date,
   ) {
-    if (conversation.peerTeacherUserId === viewerUserId) {
+    if (conversation.adminUserId === viewerUserId) {
+      conversation.adminClearedAt = at;
+    } else if (conversation.peerTeacherUserId === viewerUserId) {
       conversation.peerTeacherClearedAt = at;
     } else if (conversation.guardianUserId === viewerUserId) {
       conversation.guardianClearedAt = at;
@@ -415,7 +460,12 @@ export class ChatService {
       }
     }
     if (!peerRole) {
-      if (isTeacherTeacherConversation(conversation)) {
+      if (isGuardianAdminConversation(conversation)) {
+        peerRole =
+          conversation.guardianUserId === peerId
+            ? UserRole.GUARDIAN
+            : UserRole.SUPER_ADMIN;
+      } else if (isTeacherTeacherConversation(conversation)) {
         peerRole = UserRole.STAFF;
       } else if (isGuardianTeacherConversation(conversation)) {
         peerRole =
@@ -435,6 +485,10 @@ export class ChatService {
     if (!peerSubtitle && isTeacherTeacherConversation(conversation)) {
       peerSubtitle = "Teacher";
     }
+    if (!peerSubtitle && isGuardianAdminConversation(conversation)) {
+      peerSubtitle =
+        conversation.adminUserId === peerId ? "Admin" : "Guardian";
+    }
 
     const unreadCount = await this.unreadCountForUser(
       viewerUserId,
@@ -443,11 +497,13 @@ export class ChatService {
 
     return {
       id: conversation.id,
-      kind: isTeacherTeacherConversation(conversation)
-        ? ("TEACHER_TEACHER" as const)
-        : isGuardianTeacherConversation(conversation)
-          ? ("GUARDIAN_TEACHER" as const)
-          : ("STUDENT_TEACHER" as const),
+      kind: isGuardianAdminConversation(conversation)
+        ? ("GUARDIAN_ADMIN" as const)
+        : isTeacherTeacherConversation(conversation)
+          ? ("TEACHER_TEACHER" as const)
+          : isGuardianTeacherConversation(conversation)
+            ? ("GUARDIAN_TEACHER" as const)
+            : ("STUDENT_TEACHER" as const),
       peerUserId: peerId,
       peerName,
       peerRole,
@@ -476,16 +532,35 @@ export class ChatService {
         ? { studentUserId: userId, lastMessageAt: Not(IsNull()) }
         : role === UserRole.GUARDIAN
           ? { guardianUserId: userId, lastMessageAt: Not(IsNull()) }
-          : [
-              { teacherUserId: userId, lastMessageAt: Not(IsNull()) },
-              { peerTeacherUserId: userId, lastMessageAt: Not(IsNull()) },
-            ];
+          : isAdminChatRole(role)
+            ? { adminUserId: userId, lastMessageAt: Not(IsNull()) }
+            : [
+                { teacherUserId: userId, lastMessageAt: Not(IsNull()) },
+                { peerTeacherUserId: userId, lastMessageAt: Not(IsNull()) },
+              ];
 
     let conversations = await this.conversations.find({
       where,
       order: { lastMessageAt: "DESC", updatedAt: "DESC" },
       take: 100,
     });
+
+    if (role === UserRole.GUARDIAN) {
+      const [teacherChat, adminChat] = await Promise.all([
+        settingsService.isGuardianTeacherChatEnabled(),
+        settingsService.isGuardianAdminChatEnabled(),
+      ]);
+      if (!teacherChat) {
+        conversations = conversations.filter(
+          (row) => !isGuardianTeacherConversation(row),
+        );
+      }
+      if (!adminChat) {
+        conversations = conversations.filter(
+          (row) => !isGuardianAdminConversation(row),
+        );
+      }
+    }
 
     if (role === UserRole.STAFF) {
       const [guardianEnabled, teacherPeerEnabled] = await Promise.all([
@@ -661,7 +736,7 @@ export class ChatService {
       .createQueryBuilder("message")
       .innerJoinAndSelect("message.conversation", "conversation")
       .where(
-        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId OR conversation.guardianUserId = :userId OR conversation.peerTeacherUserId = :userId)",
+        "(conversation.studentUserId = :userId OR conversation.teacherUserId = :userId OR conversation.guardianUserId = :userId OR conversation.peerTeacherUserId = :userId OR conversation.adminUserId = :userId)",
         { userId },
       )
       .andWhere("message.deletedAt IS NULL")
@@ -672,6 +747,7 @@ export class ChatService {
           OR (conversation.teacherUserId = :userId AND (conversation.teacherClearedAt IS NULL OR message.createdAt > conversation.teacherClearedAt))
           OR (conversation.guardianUserId = :userId AND (conversation.guardianClearedAt IS NULL OR message.createdAt > conversation.guardianClearedAt))
           OR (conversation.peerTeacherUserId = :userId AND (conversation.peerTeacherClearedAt IS NULL OR message.createdAt > conversation.peerTeacherClearedAt))
+          OR (conversation.adminUserId = :userId AND (conversation.adminClearedAt IS NULL OR message.createdAt > conversation.adminClearedAt))
         )`,
         { userId },
       )
@@ -743,13 +819,21 @@ export class ChatService {
                 peerTeacherUserId: pair.peerTeacherUserId,
               },
             })
-          : await this.conversations.findOne({
-              where: {
-                kind: "STUDENT_TEACHER",
-                studentUserId: pair.studentUserId,
-                teacherUserId: pair.teacherUserId,
-              },
-            });
+          : pair.kind === "GUARDIAN_ADMIN"
+            ? await this.conversations.findOne({
+                where: {
+                  kind: "GUARDIAN_ADMIN",
+                  guardianUserId: pair.guardianUserId,
+                  adminUserId: pair.adminUserId,
+                },
+              })
+            : await this.conversations.findOne({
+                where: {
+                  kind: "STUDENT_TEACHER",
+                  studentUserId: pair.studentUserId,
+                  teacherUserId: pair.teacherUserId,
+                },
+              });
 
     if (!conversation) {
       conversation = this.conversations.create({
@@ -758,6 +842,7 @@ export class ChatService {
         teacherUserId: pair.teacherUserId,
         guardianUserId: pair.guardianUserId,
         peerTeacherUserId: pair.peerTeacherUserId,
+        adminUserId: pair.adminUserId,
         lastMessageAt: null,
       });
       await this.conversations.save(conversation);
@@ -780,6 +865,16 @@ export class ChatService {
       const teachers = await listTeachersForTeacher(userId);
       const match = teachers.find((row) => row.userId === peerUserId);
       if (match) enriched = match;
+    } else if (pair.kind === "GUARDIAN_ADMIN") {
+      if (isAdminChatRole(role)) {
+        const guardians = await listGuardiansForAdmin(userId);
+        const match = guardians.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      } else if (role === UserRole.GUARDIAN) {
+        const admins = await listAdminsForGuardian(userId);
+        const match = admins.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      }
     }
 
     return {
@@ -806,7 +901,8 @@ export class ChatService {
       conversation.studentUserId !== userId &&
       conversation.teacherUserId !== userId &&
       conversation.guardianUserId !== userId &&
-      conversation.peerTeacherUserId !== userId
+      conversation.peerTeacherUserId !== userId &&
+      conversation.adminUserId !== userId
     ) {
       throw new AppError(403, "Conversation not found", "CHAT_FORBIDDEN");
     }
@@ -815,6 +911,9 @@ export class ChatService {
     }
     if (isTeacherTeacherConversation(conversation)) {
       await assertTeacherTeacherChatEnabled();
+    }
+    if (isGuardianAdminConversation(conversation)) {
+      await assertGuardianAdminChatEnabled();
     }
     return conversation;
   }
@@ -1241,7 +1340,9 @@ export class ChatService {
 
     const conversation = await this.requireParticipant(conversationId, userId);
     const now = muted ? new Date() : null;
-    if (conversation.peerTeacherUserId === userId) {
+    if (conversation.adminUserId === userId) {
+      conversation.adminMutedAt = now;
+    } else if (conversation.peerTeacherUserId === userId) {
       conversation.peerTeacherMutedAt = now;
     } else if (conversation.guardianUserId === userId) {
       conversation.guardianMutedAt = now;

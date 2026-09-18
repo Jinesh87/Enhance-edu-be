@@ -273,6 +273,8 @@ export async function ensureInstitutionSettingSchema() {
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "teacherTeacherChatEnabled" boolean NOT NULL DEFAULT false;
     ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "guardianAdminChatEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "openaiApiKey" varchar(255);
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "sessionChangeEmailNotificationsEnabled" boolean NOT NULL DEFAULT false;
@@ -1291,7 +1293,15 @@ export async function ensureChatSchema() {
     ALTER TABLE chat_conversations
       ADD COLUMN IF NOT EXISTS "peerTeacherClearedAt" timestamptz;
     ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "adminUserId" uuid REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "adminMutedAt" timestamptz;
+    ALTER TABLE chat_conversations
+      ADD COLUMN IF NOT EXISTS "adminClearedAt" timestamptz;
+    ALTER TABLE chat_conversations
       ALTER COLUMN "studentUserId" DROP NOT NULL;
+    ALTER TABLE chat_conversations
+      ALTER COLUMN "teacherUserId" DROP NOT NULL;
     DO $$
     DECLARE r record;
     BEGIN
@@ -1314,6 +1324,9 @@ export async function ensureChatSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_teacher_teacher"
       ON chat_conversations ("teacherUserId", "peerTeacherUserId")
       WHERE kind = 'TEACHER_TEACHER' AND "peerTeacherUserId" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_guardian_admin"
+      ON chat_conversations ("guardianUserId", "adminUserId")
+      WHERE kind = 'GUARDIAN_ADMIN' AND "guardianUserId" IS NOT NULL AND "adminUserId" IS NOT NULL;
     CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_guardian_last"
       ON chat_conversations ("guardianUserId", "lastMessageAt");
     CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_guardianUserId"
@@ -1322,6 +1335,10 @@ export async function ensureChatSchema() {
       ON chat_conversations ("peerTeacherUserId", "lastMessageAt");
     CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_peerTeacherUserId"
       ON chat_conversations ("peerTeacherUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_admin_last"
+      ON chat_conversations ("adminUserId", "lastMessageAt");
+    CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_adminUserId"
+      ON chat_conversations ("adminUserId");
 
     CREATE TABLE IF NOT EXISTS chat_messages (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

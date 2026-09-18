@@ -25,6 +25,7 @@ export type ChatPair =
       teacherUserId: string;
       guardianUserId: null;
       peerTeacherUserId: null;
+      adminUserId: null;
     }
   | {
       kind: "GUARDIAN_TEACHER";
@@ -32,6 +33,7 @@ export type ChatPair =
       teacherUserId: string;
       guardianUserId: string;
       peerTeacherUserId: null;
+      adminUserId: null;
     }
   | {
       kind: "TEACHER_TEACHER";
@@ -39,7 +41,20 @@ export type ChatPair =
       teacherUserId: string;
       guardianUserId: null;
       peerTeacherUserId: string;
+      adminUserId: null;
+    }
+  | {
+      kind: "GUARDIAN_ADMIN";
+      studentUserId: null;
+      teacherUserId: null;
+      guardianUserId: string;
+      peerTeacherUserId: null;
+      adminUserId: string;
     };
+
+export function isAdminChatRole(role: UserRole) {
+  return role === UserRole.SUPER_ADMIN;
+}
 
 /** Canonical order so teacher–teacher pairs are unique regardless of who opens. */
 export function orderedTeacherPair(a: string, b: string): {
@@ -541,6 +556,104 @@ export async function assertTeacherTeacherChatEnabled() {
   }
 }
 
+export async function assertGuardianAdminChatEnabled() {
+  if (!(await settingsService.isGuardianAdminChatEnabled())) {
+    throw new AppError(
+      403,
+      "Guardian–admin chat is not enabled",
+      "CHAT_DISABLED",
+    );
+  }
+}
+
+/** Active Super Admins a guardian may message. */
+export async function listAdminsForGuardian(
+  _guardianUserId: string,
+): Promise<ChatPeer[]> {
+  const rows = (await AppDataSource.query(
+    `
+    SELECT
+      u.id AS "userId",
+      u."fullName" AS "fullName",
+      u."preferredName" AS "preferredName",
+      u.role AS "role",
+      '[]'::json AS "sharedClasses"
+    FROM users u
+    WHERE u.role = $1
+      AND u.status = $2
+    ORDER BY COALESCE(NULLIF(u."preferredName", ''), u."fullName") ASC
+    `,
+    [UserRole.SUPER_ADMIN, UserStatus.ACTIVE],
+  )) as Array<{
+    userId: string;
+    fullName: string;
+    preferredName: string | null;
+    role: UserRole;
+    sharedClasses: ChatPeer["sharedClasses"] | string;
+  }>;
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    fullName: row.fullName,
+    preferredName: row.preferredName,
+    role: row.role,
+    sharedClasses: parseSharedClasses(row.sharedClasses),
+    subtitle: "Super Admin",
+  }));
+}
+
+/** Active guardians an admin may message. */
+export async function listGuardiansForAdmin(
+  _adminUserId: string,
+): Promise<ChatPeer[]> {
+  const rows = (await AppDataSource.query(
+    `
+    SELECT
+      u.id AS "userId",
+      u."fullName" AS "fullName",
+      u."preferredName" AS "preferredName",
+      u.role AS "role",
+      '[]'::json AS "sharedClasses",
+      COALESCE(
+        (
+          SELECT string_agg(DISTINCT student_name, ', ')
+          FROM (
+            SELECT COALESCE(NULLIF(su."preferredName", ''), su."fullName", st."fullName") AS student_name
+            FROM guardian_students gs
+            INNER JOIN students st ON st.id = gs."studentId"
+            LEFT JOIN users su ON su.id = st."userId"
+            WHERE gs."guardianId" = u.id
+          ) names
+        ),
+        ''
+      ) AS "studentNames"
+    FROM users u
+    WHERE u.role = $1
+      AND u.status = $2
+    ORDER BY COALESCE(NULLIF(u."preferredName", ''), u."fullName") ASC
+    `,
+    [UserRole.GUARDIAN, UserStatus.ACTIVE],
+  )) as Array<{
+    userId: string;
+    fullName: string;
+    preferredName: string | null;
+    role: UserRole;
+    sharedClasses: ChatPeer["sharedClasses"] | string;
+    studentNames: string;
+  }>;
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    fullName: row.fullName,
+    preferredName: row.preferredName,
+    role: row.role,
+    sharedClasses: parseSharedClasses(row.sharedClasses),
+    subtitle: row.studentNames
+      ? `Parent of ${row.studentNames}`
+      : "Guardian",
+  }));
+}
+
 export async function assertCanChat(
   actorUserId: string,
   actorRole: UserRole,
@@ -569,26 +682,44 @@ export async function assertCanChat(
       teacherUserId: peerUserId,
       guardianUserId: null,
       peerTeacherUserId: null,
+      adminUserId: null,
     };
   }
 
   if (actorRole === UserRole.GUARDIAN) {
-    await assertGuardianTeacherChatEnabled();
-    const teachers = await listTeachersForGuardian(actorUserId);
-    if (!teachers.some((peer) => peer.userId === peerUserId)) {
-      throw new AppError(
-        403,
-        "You can only message teachers of your linked students",
-        "CHAT_FORBIDDEN",
-      );
+    if (await settingsService.isGuardianTeacherChatEnabled()) {
+      const teachers = await listTeachersForGuardian(actorUserId);
+      if (teachers.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "GUARDIAN_TEACHER",
+          studentUserId: null,
+          teacherUserId: peerUserId,
+          guardianUserId: actorUserId,
+          peerTeacherUserId: null,
+          adminUserId: null,
+        };
+      }
     }
-    return {
-      kind: "GUARDIAN_TEACHER",
-      studentUserId: null,
-      teacherUserId: peerUserId,
-      guardianUserId: actorUserId,
-      peerTeacherUserId: null,
-    };
+
+    if (await settingsService.isGuardianAdminChatEnabled()) {
+      const admins = await listAdminsForGuardian(actorUserId);
+      if (admins.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "GUARDIAN_ADMIN",
+          studentUserId: null,
+          teacherUserId: null,
+          guardianUserId: actorUserId,
+          peerTeacherUserId: null,
+          adminUserId: peerUserId,
+        };
+      }
+    }
+
+    throw new AppError(
+      403,
+      "You can only message teachers of your linked students or Super Admins",
+      "CHAT_FORBIDDEN",
+    );
   }
 
   if (actorRole === UserRole.STAFF) {
@@ -600,6 +731,7 @@ export async function assertCanChat(
         teacherUserId: actorUserId,
         guardianUserId: null,
         peerTeacherUserId: null,
+        adminUserId: null,
       };
     }
 
@@ -612,6 +744,7 @@ export async function assertCanChat(
           teacherUserId: actorUserId,
           guardianUserId: peerUserId,
           peerTeacherUserId: null,
+          adminUserId: null,
         };
       }
     }
@@ -626,6 +759,7 @@ export async function assertCanChat(
           teacherUserId: ordered.teacherUserId,
           guardianUserId: null,
           peerTeacherUserId: ordered.peerTeacherUserId,
+          adminUserId: null,
         };
       }
     }
@@ -637,16 +771,41 @@ export async function assertCanChat(
     );
   }
 
+  if (isAdminChatRole(actorRole)) {
+    await assertGuardianAdminChatEnabled();
+    const guardians = await listGuardiansForAdmin(actorUserId);
+    if (!guardians.some((peer) => peer.userId === peerUserId)) {
+      throw new AppError(
+        403,
+        "You can only message guardians",
+        "CHAT_FORBIDDEN",
+      );
+    }
+    return {
+      kind: "GUARDIAN_ADMIN",
+      studentUserId: null,
+      teacherUserId: null,
+      guardianUserId: peerUserId,
+      peerTeacherUserId: null,
+      adminUserId: actorUserId,
+    };
+  }
+
   throw new AppError(403, "Chat is not available for this role", "CHAT_FORBIDDEN");
 }
 
 export function isGuardianTeacherConversation(conversation: {
   kind?: ChatConversationKind | string | null;
   guardianUserId?: string | null;
+  teacherUserId?: string | null;
+  adminUserId?: string | null;
 }) {
+  if (conversation.kind === "GUARDIAN_TEACHER") return true;
+  if (conversation.kind === "GUARDIAN_ADMIN") return false;
   return (
-    conversation.kind === "GUARDIAN_TEACHER" ||
-    Boolean(conversation.guardianUserId)
+    Boolean(conversation.guardianUserId) &&
+    Boolean(conversation.teacherUserId) &&
+    !conversation.adminUserId
   );
 }
 
@@ -657,6 +816,16 @@ export function isTeacherTeacherConversation(conversation: {
   return (
     conversation.kind === "TEACHER_TEACHER" ||
     Boolean(conversation.peerTeacherUserId)
+  );
+}
+
+export function isGuardianAdminConversation(conversation: {
+  kind?: ChatConversationKind | string | null;
+  adminUserId?: string | null;
+}) {
+  return (
+    conversation.kind === "GUARDIAN_ADMIN" ||
+    Boolean(conversation.adminUserId)
   );
 }
 

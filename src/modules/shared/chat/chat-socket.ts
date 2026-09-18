@@ -135,7 +135,8 @@ export function attachChatSocket(httpServer: HttpServer) {
       if (
         payload.role !== UserRole.STUDENT &&
         payload.role !== UserRole.STAFF &&
-        payload.role !== UserRole.GUARDIAN
+        payload.role !== UserRole.GUARDIAN &&
+        payload.role !== UserRole.SUPER_ADMIN
       ) {
         next(new Error("FORBIDDEN"));
         return;

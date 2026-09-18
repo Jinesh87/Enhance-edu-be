@@ -16,18 +16,20 @@ import { ChatMessage } from "./ChatMessage.js";
 export type ChatConversationKind =
   | "STUDENT_TEACHER"
   | "GUARDIAN_TEACHER"
-  | "TEACHER_TEACHER";
+  | "TEACHER_TEACHER"
+  | "GUARDIAN_ADMIN";
 
 @Entity("chat_conversations")
 @Index(["studentUserId", "lastMessageAt"])
 @Index(["teacherUserId", "lastMessageAt"])
 @Index(["guardianUserId", "lastMessageAt"])
 @Index(["peerTeacherUserId", "lastMessageAt"])
+@Index(["adminUserId", "lastMessageAt"])
 export class ChatConversation {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  /** STUDENT_TEACHER, GUARDIAN_TEACHER, or TEACHER_TEACHER. */
+  /** Conversation pair kind. */
   @Column({ type: "varchar", length: 32, default: "STUDENT_TEACHER" })
   kind!: ChatConversationKind;
 
@@ -41,18 +43,18 @@ export class ChatConversation {
   studentUser!: Relation<User> | null;
 
   /**
-   * Staff participant for student/guardian chats, or the ordered first
-   * teacher for TEACHER_TEACHER (lexicographically smaller user id).
+   * Staff participant for student/guardian–teacher chats, or the ordered
+   * first teacher for TEACHER_TEACHER; null for GUARDIAN_ADMIN.
    */
-  @Column({ type: "uuid" })
+  @Column({ type: "uuid", nullable: true })
   @Index()
-  teacherUserId!: string;
+  teacherUserId!: string | null;
 
-  @ManyToOne(() => User, { onDelete: "CASCADE" })
+  @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
   @JoinColumn({ name: "teacherUserId" })
-  teacherUser!: Relation<User>;
+  teacherUser!: Relation<User> | null;
 
-  /** Guardian user id for guardian–teacher chats; null otherwise. */
+  /** Guardian user id for guardian chats; null otherwise. */
   @Column({ type: "uuid", nullable: true })
   @Index()
   guardianUserId!: string | null;
@@ -73,6 +75,15 @@ export class ChatConversation {
   @JoinColumn({ name: "peerTeacherUserId" })
   peerTeacherUser!: Relation<User> | null;
 
+  /** Super Admin participant for GUARDIAN_ADMIN chats. */
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  adminUserId!: string | null;
+
+  @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
+  @JoinColumn({ name: "adminUserId" })
+  adminUser!: Relation<User> | null;
+
   @Column({ type: "timestamptz", nullable: true })
   lastMessageAt!: Date | null;
 
@@ -92,6 +103,10 @@ export class ChatConversation {
   @Column({ type: "timestamptz", nullable: true })
   peerTeacherMutedAt!: Date | null;
 
+  /** When set, the admin (GUARDIAN_ADMIN) has muted this chat. */
+  @Column({ type: "timestamptz", nullable: true })
+  adminMutedAt!: Date | null;
+
   /** Clear-for-me: student no longer sees messages at/before this time. */
   @Column({ type: "timestamptz", nullable: true })
   studentClearedAt!: Date | null;
@@ -107,6 +122,10 @@ export class ChatConversation {
   /** Clear-for-me: peer teacher no longer sees messages at/before this time. */
   @Column({ type: "timestamptz", nullable: true })
   peerTeacherClearedAt!: Date | null;
+
+  /** Clear-for-me: admin no longer sees messages at/before this time. */
+  @Column({ type: "timestamptz", nullable: true })
+  adminClearedAt!: Date | null;
 
   @OneToMany(() => ChatMessage, (message) => message.conversation)
   messages!: Relation<ChatMessage>[];
