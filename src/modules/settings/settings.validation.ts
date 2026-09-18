@@ -16,6 +16,8 @@ export const updateGuardianPortalSettingSchema = Joi.object({
   entranceExamsEnabled: Joi.boolean().required(),
   attendanceEnabled: Joi.boolean().required(),
   teacherChatEnabled: Joi.boolean().required(),
+  teacherPeerChatEnabled: Joi.boolean().required(),
+  adminChatEnabled: Joi.boolean().required(),
 });
 
 export const updateOpenAiSettingSchema = Joi.object({

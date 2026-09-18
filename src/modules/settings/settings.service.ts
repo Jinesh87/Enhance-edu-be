@@ -26,6 +26,8 @@ export interface GuardianPortalSettings {
   entranceExamsEnabled: boolean;
   attendanceEnabled: boolean;
   teacherChatEnabled: boolean;
+  teacherPeerChatEnabled: boolean;
+  adminChatEnabled: boolean;
 }
 
 export interface UpdateGuardianPortalSettingInput {
@@ -34,6 +36,8 @@ export interface UpdateGuardianPortalSettingInput {
   entranceExamsEnabled: boolean;
   attendanceEnabled: boolean;
   teacherChatEnabled: boolean;
+  teacherPeerChatEnabled: boolean;
+  adminChatEnabled: boolean;
 }
 
 export interface OpenAiSettings {
@@ -135,6 +139,8 @@ export class SettingsService {
         guardianPortalEntranceExamsEnabled: false,
         guardianPortalAttendanceEnabled: false,
         guardianTeacherChatEnabled: false,
+        teacherTeacherChatEnabled: false,
+        guardianAdminChatEnabled: false,
         openaiApiKey: null,
         sessionChangeEmailNotificationsEnabled: false,
         adminAiAssistantEnabled: true,
@@ -317,6 +323,8 @@ export class SettingsService {
       entranceExamsEnabled: setting.guardianPortalEntranceExamsEnabled ?? false,
       attendanceEnabled: setting.guardianPortalAttendanceEnabled ?? false,
       teacherChatEnabled: setting.guardianTeacherChatEnabled ?? false,
+      teacherPeerChatEnabled: setting.teacherTeacherChatEnabled ?? false,
+      adminChatEnabled: setting.guardianAdminChatEnabled ?? false,
     };
   }
 
@@ -336,6 +344,8 @@ export class SettingsService {
     setting.guardianPortalAttendanceEnabled = input.attendanceEnabled;
     if (options?.allowTeacherChatToggle) {
       setting.guardianTeacherChatEnabled = input.teacherChatEnabled;
+      setting.teacherTeacherChatEnabled = input.teacherPeerChatEnabled;
+      setting.guardianAdminChatEnabled = input.adminChatEnabled;
     }
     await this.settingRepo.save(setting);
     return this.mapGuardianPortalSettings(setting);
@@ -364,6 +374,16 @@ export class SettingsService {
   async isGuardianTeacherChatEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.guardianTeacherChatEnabled ?? false;
+  }
+
+  async isTeacherTeacherChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.teacherTeacherChatEnabled ?? false;
+  }
+
+  async isGuardianAdminChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.guardianAdminChatEnabled ?? false;
   }
 
   async getOpenAiSettings(): Promise<OpenAiSettings> {

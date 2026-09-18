@@ -13,21 +13,27 @@ import {
 import { User } from "./User.js";
 import { ChatMessage } from "./ChatMessage.js";
 
-export type ChatConversationKind = "STUDENT_TEACHER" | "GUARDIAN_TEACHER";
+export type ChatConversationKind =
+  | "STUDENT_TEACHER"
+  | "GUARDIAN_TEACHER"
+  | "TEACHER_TEACHER"
+  | "GUARDIAN_ADMIN";
 
 @Entity("chat_conversations")
 @Index(["studentUserId", "lastMessageAt"])
 @Index(["teacherUserId", "lastMessageAt"])
 @Index(["guardianUserId", "lastMessageAt"])
+@Index(["peerTeacherUserId", "lastMessageAt"])
+@Index(["adminUserId", "lastMessageAt"])
 export class ChatConversation {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  /** STUDENT_TEACHER (default) or GUARDIAN_TEACHER. */
+  /** Conversation pair kind. */
   @Column({ type: "varchar", length: 32, default: "STUDENT_TEACHER" })
   kind!: ChatConversationKind;
 
-  /** Student user id for student–teacher chats; null for guardian–teacher. */
+  /** Student user id for student–teacher chats; null otherwise. */
   @Column({ type: "uuid", nullable: true })
   @Index()
   studentUserId!: string | null;
@@ -36,15 +42,19 @@ export class ChatConversation {
   @JoinColumn({ name: "studentUserId" })
   studentUser!: Relation<User> | null;
 
-  @Column({ type: "uuid" })
+  /**
+   * Staff participant for student/guardian–teacher chats, or the ordered
+   * first teacher for TEACHER_TEACHER; null for GUARDIAN_ADMIN.
+   */
+  @Column({ type: "uuid", nullable: true })
   @Index()
-  teacherUserId!: string;
+  teacherUserId!: string | null;
 
-  @ManyToOne(() => User, { onDelete: "CASCADE" })
+  @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
   @JoinColumn({ name: "teacherUserId" })
-  teacherUser!: Relation<User>;
+  teacherUser!: Relation<User> | null;
 
-  /** Guardian user id for guardian–teacher chats; null for student–teacher. */
+  /** Guardian user id for guardian chats; null otherwise. */
   @Column({ type: "uuid", nullable: true })
   @Index()
   guardianUserId!: string | null;
@@ -52,6 +62,27 @@ export class ChatConversation {
   @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
   @JoinColumn({ name: "guardianUserId" })
   guardianUser!: Relation<User> | null;
+
+  /**
+   * Second staff participant for TEACHER_TEACHER chats (lexicographically
+   * larger user id); null for other kinds.
+   */
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  peerTeacherUserId!: string | null;
+
+  @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
+  @JoinColumn({ name: "peerTeacherUserId" })
+  peerTeacherUser!: Relation<User> | null;
+
+  /** Super Admin participant for GUARDIAN_ADMIN chats. */
+  @Column({ type: "uuid", nullable: true })
+  @Index()
+  adminUserId!: string | null;
+
+  @ManyToOne(() => User, { onDelete: "CASCADE", nullable: true })
+  @JoinColumn({ name: "adminUserId" })
+  adminUser!: Relation<User> | null;
 
   @Column({ type: "timestamptz", nullable: true })
   lastMessageAt!: Date | null;
@@ -68,6 +99,14 @@ export class ChatConversation {
   @Column({ type: "timestamptz", nullable: true })
   guardianMutedAt!: Date | null;
 
+  /** When set, the peer teacher (TEACHER_TEACHER) has muted this chat. */
+  @Column({ type: "timestamptz", nullable: true })
+  peerTeacherMutedAt!: Date | null;
+
+  /** When set, the admin (GUARDIAN_ADMIN) has muted this chat. */
+  @Column({ type: "timestamptz", nullable: true })
+  adminMutedAt!: Date | null;
+
   /** Clear-for-me: student no longer sees messages at/before this time. */
   @Column({ type: "timestamptz", nullable: true })
   studentClearedAt!: Date | null;
@@ -79,6 +118,14 @@ export class ChatConversation {
   /** Clear-for-me: guardian no longer sees messages at/before this time. */
   @Column({ type: "timestamptz", nullable: true })
   guardianClearedAt!: Date | null;
+
+  /** Clear-for-me: peer teacher no longer sees messages at/before this time. */
+  @Column({ type: "timestamptz", nullable: true })
+  peerTeacherClearedAt!: Date | null;
+
+  /** Clear-for-me: admin no longer sees messages at/before this time. */
+  @Column({ type: "timestamptz", nullable: true })
+  adminClearedAt!: Date | null;
 
   @OneToMany(() => ChatMessage, (message) => message.conversation)
   messages!: Relation<ChatMessage>[];
