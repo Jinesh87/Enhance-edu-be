@@ -748,6 +748,17 @@ export class StudentClassesService {
       );
     }
 
+    // Idempotent: offline/retry submit when already submitted.
+    if (submission.status === "SUBMITTED") {
+      if (input?.studentNotes !== undefined) {
+        submission.studentNotes = input.studentNotes
+          ? input.studentNotes.trim()
+          : null;
+        await this.homeworkSubmissions.save(submission);
+      }
+      return this.getHomeworkSubmission(userId, homeworkId);
+    }
+
     if (input?.studentNotes !== undefined) {
       submission.studentNotes = input.studentNotes
         ? input.studentNotes.trim()

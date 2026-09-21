@@ -1,6 +1,7 @@
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { MarkManualRollInput } from "../../shared/attendance/attendance.types.js";
+import { isAttendanceConflict } from "../../shared/attendance/attendance-conflict.js";
 import { generateAttendanceQr } from "../../shared/attendance/attendance-qr.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { Session } from "../../../entities/Session.js";
@@ -81,7 +82,7 @@ export class TeacherAttendanceService {
     session: Session,
     input: Omit<MarkManualRollInput, "sessionId">,
   ) {
-    const { studentId, status, reason, markedByUserId } = input;
+    const { studentId, status, reason, markedByUserId, baseUpdatedAt } = input;
 
     if (!reason?.trim()) {
       throw new AppError(
@@ -103,6 +104,33 @@ export class TeacherAttendanceService {
     }
 
     let record = await this.repo.findAttendanceRecord(session.id, studentId);
+
+    if (
+      record &&
+      isAttendanceConflict({
+        clientBaseUpdatedAt: baseUpdatedAt,
+        serverUpdatedAt: record.updatedAt,
+        serverStatus: record.status,
+        nextStatus: status,
+      })
+    ) {
+      throw new AppError(
+        409,
+        "Attendance was updated on another device. Refresh and try again.",
+        "ATTENDANCE_CONFLICT",
+        {
+          record: {
+            id: record.id,
+            sessionId: record.sessionId,
+            studentId: record.studentId,
+            status: record.status,
+            updatedAt: record.updatedAt.toISOString(),
+            markedManually: record.markedManually,
+            manualReason: record.manualReason,
+          },
+        },
+      );
+    }
 
     if (!record) {
       record = await this.repo.createAttendanceRecord({

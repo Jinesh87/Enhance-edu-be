@@ -12,3 +12,16 @@ export const listNotificationsQuerySchema = Joi.object({
   cursor: Joi.string().isoDate().optional(),
   type: Joi.string().trim().max(60).optional(),
 });
+
+export const pushSubscribeBodySchema = Joi.object({
+  endpoint: Joi.string().uri().max(2048).required(),
+  keys: Joi.object({
+    p256dh: Joi.string().trim().min(1).max(255).required(),
+    auth: Joi.string().trim().min(1).max(255).required(),
+  }).required(),
+  userAgent: Joi.string().trim().max(255).allow("", null).optional(),
+});
+
+export const pushUnsubscribeBodySchema = Joi.object({
+  endpoint: Joi.string().uri().max(2048).required(),
+});

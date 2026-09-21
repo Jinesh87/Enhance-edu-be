@@ -3,6 +3,10 @@ import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
+  homeworkGradeContentDiffers,
+  isOptimisticConflict,
+} from "../../shared/attendance/attendance-conflict.js";
+import {
   buildHomeworkAttachmentKey,
   deleteObject,
   storeUploadedObject,
@@ -561,6 +565,7 @@ export class TeacherHomeworkService {
               feedback: sub.feedback,
               isCompleted: Boolean(sub.isCompleted),
               markedAt: sub.markedAt ? sub.markedAt.toISOString() : null,
+              updatedAt: sub.updatedAt.toISOString(),
               markedBy: sub.markedBy
                 ? {
                     id: sub.markedBy.id,
@@ -701,6 +706,7 @@ export class TeacherHomeworkService {
       maxMarks?: number | null;
       feedback?: string | null;
       isCompleted?: boolean;
+      baseUpdatedAt?: string | null;
     },
   ) {
     const homework = await this.homework.findOne({
@@ -725,6 +731,49 @@ export class TeacherHomeworkService {
       where: { homeworkId, studentId },
       relations: { files: true, markedBy: true },
     });
+
+    if (submission) {
+      const contentDiffers = homeworkGradeContentDiffers(
+        {
+          marks: submission.marks != null ? Number(submission.marks) : null,
+          maxMarks:
+            submission.maxMarks != null ? Number(submission.maxMarks) : 100,
+          feedback: submission.feedback,
+          isCompleted: Boolean(submission.isCompleted),
+        },
+        input,
+      );
+      if (
+        isOptimisticConflict({
+          clientBaseUpdatedAt: input.baseUpdatedAt,
+          serverUpdatedAt: submission.updatedAt,
+          contentDiffers,
+        })
+      ) {
+        throw new AppError(
+          409,
+          "Homework grade was updated on another device. Refresh and try again.",
+          "HOMEWORK_GRADE_CONFLICT",
+          {
+            submission: {
+              id: submission.id,
+              marks:
+                submission.marks != null ? Number(submission.marks) : null,
+              maxMarks:
+                submission.maxMarks != null
+                  ? Number(submission.maxMarks)
+                  : 100,
+              feedback: submission.feedback,
+              isCompleted: Boolean(submission.isCompleted),
+              updatedAt: submission.updatedAt.toISOString(),
+              markedAt: submission.markedAt
+                ? submission.markedAt.toISOString()
+                : null,
+            },
+          },
+        );
+      }
+    }
 
     if (!submission) {
       submission = this.submissions.create({
@@ -786,6 +835,7 @@ export class TeacherHomeworkService {
       feedback: updated!.feedback,
       isCompleted: Boolean(updated!.isCompleted),
       markedAt: updated!.markedAt ? updated!.markedAt.toISOString() : null,
+      updatedAt: updated!.updatedAt.toISOString(),
       markedBy: updated!.markedBy
         ? {
             id: updated!.markedBy.id,

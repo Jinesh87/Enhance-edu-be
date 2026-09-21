@@ -182,6 +182,17 @@ class TeacherHomeworkController {
     next: NextFunction,
   ) => {
     try {
+      const {
+        idempotencyLookup,
+        idempotencyStore,
+        readIdempotencyKey,
+      } = await import("../../../common/utils/idempotency.js");
+      const idemKey = readIdempotencyKey(req);
+      const cached = await idempotencyLookup(idemKey);
+      if (cached) {
+        return res.status(cached.status).json(cached.body);
+      }
+
       const result = await teacherHomeworkService.gradeSubmission(
         req.user!.id,
         req.user!.role as UserRole,
@@ -189,7 +200,9 @@ class TeacherHomeworkController {
         req.params.studentId as string,
         req.body,
       );
-      res.status(200).json({ submission: result });
+      const body = { submission: result };
+      await idempotencyStore(idemKey, 200, body);
+      res.status(200).json(body);
     } catch (error) {
       next(error);
     }

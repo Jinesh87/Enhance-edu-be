@@ -6,6 +6,8 @@ import {
 } from "../../entities/Notification.js";
 import { IsNull } from "typeorm";
 import { userNotificationManager } from "./notification-updates.js";
+import { pushSubscriptionService } from "./push.service.js";
+import { logger } from "../../config/logger.js";
 
 export type NotificationDto = {
   id: string;
@@ -56,6 +58,10 @@ export class NotificationsService {
 
     const saved = await this.repo.save(rows);
     const unreadByUser = new Map<string, number>();
+    const dtos = saved.map((row) => {
+      const dto = toDto(row);
+      return { userId: row.userId, notification: dto };
+    });
 
     for (const row of saved) {
       if (!unreadByUser.has(row.userId)) {
@@ -70,7 +76,11 @@ export class NotificationsService {
       });
     }
 
-    return saved.map(toDto);
+    void pushSubscriptionService.sendNotificationTargets(dtos).catch((error) => {
+      logger.warn({ err: error }, "Web push fan-out failed");
+    });
+
+    return dtos.map((row) => row.notification);
   }
 
   async listForUser(
