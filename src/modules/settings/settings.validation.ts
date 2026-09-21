@@ -18,6 +18,11 @@ export const updateGuardianPortalSettingSchema = Joi.object({
   teacherChatEnabled: Joi.boolean().required(),
   teacherPeerChatEnabled: Joi.boolean().required(),
   adminChatEnabled: Joi.boolean().required(),
+  officeStaffChatEnabled: Joi.boolean().required(),
+  studentAdminChatEnabled: Joi.boolean().required(),
+  officeTeacherChatEnabled: Joi.boolean().required(),
+  officeAdminChatEnabled: Joi.boolean().required(),
+  teacherAdminChatEnabled: Joi.boolean().required(),
 });
 
 export const updateOpenAiSettingSchema = Joi.object({

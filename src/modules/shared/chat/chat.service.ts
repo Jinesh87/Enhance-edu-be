@@ -11,17 +11,36 @@ import {
   assertCanChat,
   assertGuardianAdminChatEnabled,
   assertGuardianTeacherChatEnabled,
+  assertOfficeAdminChatEnabled,
+  assertOfficeStaffChatEnabled,
+  assertOfficeTeacherChatEnabled,
+  assertStudentAdminChatEnabled,
+  assertTeacherAdminChatEnabled,
   assertTeacherTeacherChatEnabled,
   isAdminChatRole,
   isGuardianAdminConversation,
   isGuardianTeacherConversation,
+  isOfficeAdminConversation,
+  isOfficeStaffPeerConversation,
+  isOfficeTeacherConversation,
+  isStudentAdminConversation,
+  isTeacherAdminConversation,
   isTeacherTeacherConversation,
   listAdminsForGuardian,
   listGuardiansForAdmin,
   listGuardiansForTeacher,
+  listOfficeStaffForOfficeStaff,
+  listOfficeStaffForSuperAdmin,
+  listOfficeStaffForTeacher,
+  listStudentsForSuperAdmin,
   listStudentsForTeacher,
+  listSuperAdminsForOfficeStaff,
+  listSuperAdminsForStudent,
+  listSuperAdminsForTeacher,
   listTeachersForGuardian,
+  listTeachersForOfficeStaff,
   listTeachersForStudent,
+  listTeachersForSuperAdmin,
   listTeachersForTeacher,
   peerDisplayName,
   type ChatPeer,
@@ -102,7 +121,35 @@ async function assertChatRole(role: UserRole) {
     return;
   }
   if (isAdminChatRole(role)) {
-    await assertGuardianAdminChatEnabled();
+    const [guardianAdmin, studentAdmin, teacherAdmin, officeAdmin] =
+      await Promise.all([
+        settingsService.isGuardianAdminChatEnabled(),
+        settingsService.isStudentAdminChatEnabled(),
+        settingsService.isTeacherAdminChatEnabled(),
+        settingsService.isOfficeAdminChatEnabled(),
+      ]);
+    if (!guardianAdmin && !studentAdmin && !teacherAdmin && !officeAdmin) {
+      throw new AppError(
+        403,
+        "Admin chat is not enabled",
+        "CHAT_DISABLED",
+      );
+    }
+    return;
+  }
+  if (role === UserRole.OFFICE_STAFF) {
+    const [officeStaff, officeTeacher, officeAdmin] = await Promise.all([
+      settingsService.isOfficeStaffChatEnabled(),
+      settingsService.isOfficeTeacherChatEnabled(),
+      settingsService.isOfficeAdminChatEnabled(),
+    ]);
+    if (!officeStaff && !officeTeacher && !officeAdmin) {
+      throw new AppError(
+        403,
+        "Office staff chat is not enabled",
+        "CHAT_DISABLED",
+      );
+    }
     return;
   }
   throw new AppError(
@@ -120,6 +167,27 @@ function chatNotificationHref(
     return conversation.guardianUserId === recipientUserId
       ? `/guardian/messages/${conversation.id}`
       : `/admin/messages/${conversation.id}`;
+  }
+  if (isStudentAdminConversation(conversation)) {
+    return conversation.studentUserId === recipientUserId
+      ? `/student/messages/${conversation.id}`
+      : `/admin/messages/${conversation.id}`;
+  }
+  if (isOfficeTeacherConversation(conversation)) {
+    return conversation.adminUserId === recipientUserId
+      ? `/admin/messages/${conversation.id}`
+      : `/tutor/messages/${conversation.id}`;
+  }
+  if (isOfficeAdminConversation(conversation)) {
+    return `/admin/messages/${conversation.id}`;
+  }
+  if (isTeacherAdminConversation(conversation)) {
+    return conversation.adminUserId === recipientUserId
+      ? `/admin/messages/${conversation.id}`
+      : `/tutor/messages/${conversation.id}`;
+  }
+  if (isOfficeStaffPeerConversation(conversation)) {
+    return `/admin/messages/${conversation.id}`;
   }
   if (isGuardianTeacherConversation(conversation)) {
     return conversation.guardianUserId === recipientUserId
@@ -290,6 +358,9 @@ export class ChatService {
     let contacts: ChatPeer[] = [];
     if (role === UserRole.STUDENT) {
       contacts = await listTeachersForStudent(userId);
+      if (await settingsService.isStudentAdminChatEnabled()) {
+        contacts = [...contacts, ...(await listSuperAdminsForStudent(userId))];
+      }
     } else if (role === UserRole.GUARDIAN) {
       if (await settingsService.isGuardianTeacherChatEnabled()) {
         contacts = await listTeachersForGuardian(userId);
@@ -305,8 +376,50 @@ export class ChatService {
       if (await settingsService.isTeacherTeacherChatEnabled()) {
         contacts = [...contacts, ...(await listTeachersForTeacher(userId))];
       }
+      if (await settingsService.isOfficeTeacherChatEnabled()) {
+        contacts = [...contacts, ...(await listOfficeStaffForTeacher(userId))];
+      }
+      if (await settingsService.isTeacherAdminChatEnabled()) {
+        contacts = [...contacts, ...(await listSuperAdminsForTeacher(userId))];
+      }
+    } else if (role === UserRole.OFFICE_STAFF) {
+      if (await settingsService.isOfficeStaffChatEnabled()) {
+        contacts = await listOfficeStaffForOfficeStaff(userId);
+      }
+      if (await settingsService.isOfficeTeacherChatEnabled()) {
+        contacts = [
+          ...contacts,
+          ...(await listTeachersForOfficeStaff(userId)),
+        ];
+      }
+      if (await settingsService.isOfficeAdminChatEnabled()) {
+        contacts = [
+          ...contacts,
+          ...(await listSuperAdminsForOfficeStaff(userId)),
+        ];
+      }
     } else if (isAdminChatRole(role)) {
-      contacts = await listGuardiansForAdmin(userId);
+      if (await settingsService.isGuardianAdminChatEnabled()) {
+        contacts = await listGuardiansForAdmin(userId);
+      }
+      if (await settingsService.isStudentAdminChatEnabled()) {
+        contacts = [
+          ...contacts,
+          ...(await listStudentsForSuperAdmin(userId)),
+        ];
+      }
+      if (await settingsService.isTeacherAdminChatEnabled()) {
+        contacts = [
+          ...contacts,
+          ...(await listTeachersForSuperAdmin(userId)),
+        ];
+      }
+      if (await settingsService.isOfficeAdminChatEnabled()) {
+        contacts = [
+          ...contacts,
+          ...(await listOfficeStaffForSuperAdmin(userId)),
+        ];
+      }
     }
 
     return {
@@ -363,7 +476,24 @@ export class ChatService {
         ? conversation.adminUserId!
         : conversation.guardianUserId!;
     }
-    if (isTeacherTeacherConversation(conversation)) {
+    if (isStudentAdminConversation(conversation)) {
+      return conversation.studentUserId === viewerUserId
+        ? conversation.adminUserId!
+        : conversation.studentUserId!;
+    }
+    if (
+      isOfficeTeacherConversation(conversation) ||
+      isOfficeAdminConversation(conversation) ||
+      isTeacherAdminConversation(conversation)
+    ) {
+      return conversation.teacherUserId === viewerUserId
+        ? conversation.adminUserId!
+        : conversation.teacherUserId!;
+    }
+    if (
+      isTeacherTeacherConversation(conversation) ||
+      isOfficeStaffPeerConversation(conversation)
+    ) {
       return conversation.teacherUserId === viewerUserId
         ? conversation.peerTeacherUserId!
         : conversation.teacherUserId!;
@@ -465,8 +595,30 @@ export class ChatService {
           conversation.guardianUserId === peerId
             ? UserRole.GUARDIAN
             : UserRole.SUPER_ADMIN;
+      } else if (isStudentAdminConversation(conversation)) {
+        peerRole =
+          conversation.studentUserId === peerId
+            ? UserRole.STUDENT
+            : UserRole.SUPER_ADMIN;
+      } else if (isOfficeTeacherConversation(conversation)) {
+        peerRole =
+          conversation.teacherUserId === peerId
+            ? UserRole.STAFF
+            : UserRole.OFFICE_STAFF;
+      } else if (isOfficeAdminConversation(conversation)) {
+        peerRole =
+          conversation.teacherUserId === peerId
+            ? UserRole.OFFICE_STAFF
+            : UserRole.SUPER_ADMIN;
+      } else if (isTeacherAdminConversation(conversation)) {
+        peerRole =
+          conversation.teacherUserId === peerId
+            ? UserRole.STAFF
+            : UserRole.SUPER_ADMIN;
       } else if (isTeacherTeacherConversation(conversation)) {
         peerRole = UserRole.STAFF;
+      } else if (isOfficeStaffPeerConversation(conversation)) {
+        peerRole = UserRole.OFFICE_STAFF;
       } else if (isGuardianTeacherConversation(conversation)) {
         peerRole =
           conversation.guardianUserId === peerId
@@ -485,9 +637,33 @@ export class ChatService {
     if (!peerSubtitle && isTeacherTeacherConversation(conversation)) {
       peerSubtitle = "Teacher";
     }
+    if (!peerSubtitle && isOfficeStaffPeerConversation(conversation)) {
+      peerSubtitle = "Office Staff";
+    }
     if (!peerSubtitle && isGuardianAdminConversation(conversation)) {
+      if (conversation.guardianUserId === peerId) {
+        peerSubtitle = "Guardian";
+      } else {
+        peerSubtitle = "Super Admin";
+      }
+    }
+    if (!peerSubtitle && isStudentAdminConversation(conversation)) {
       peerSubtitle =
-        conversation.adminUserId === peerId ? "Admin" : "Guardian";
+        conversation.studentUserId === peerId ? "Student" : "Super Admin";
+    }
+    if (!peerSubtitle && isOfficeTeacherConversation(conversation)) {
+      peerSubtitle =
+        conversation.teacherUserId === peerId ? "Teacher" : "Office Staff";
+    }
+    if (!peerSubtitle && isOfficeAdminConversation(conversation)) {
+      peerSubtitle =
+        conversation.teacherUserId === peerId
+          ? "Office Staff"
+          : "Super Admin";
+    }
+    if (!peerSubtitle && isTeacherAdminConversation(conversation)) {
+      peerSubtitle =
+        conversation.teacherUserId === peerId ? "Teacher" : "Super Admin";
     }
 
     const unreadCount = await this.unreadCountForUser(
@@ -499,11 +675,21 @@ export class ChatService {
       id: conversation.id,
       kind: isGuardianAdminConversation(conversation)
         ? ("GUARDIAN_ADMIN" as const)
-        : isTeacherTeacherConversation(conversation)
-          ? ("TEACHER_TEACHER" as const)
-          : isGuardianTeacherConversation(conversation)
-            ? ("GUARDIAN_TEACHER" as const)
-            : ("STUDENT_TEACHER" as const),
+        : isStudentAdminConversation(conversation)
+          ? ("STUDENT_ADMIN" as const)
+          : isOfficeTeacherConversation(conversation)
+            ? ("OFFICE_TEACHER" as const)
+            : isOfficeAdminConversation(conversation)
+              ? ("OFFICE_ADMIN" as const)
+              : isTeacherAdminConversation(conversation)
+                ? ("TEACHER_ADMIN" as const)
+                : isOfficeStaffPeerConversation(conversation)
+                  ? ("OFFICE_STAFF_OFFICE_STAFF" as const)
+                  : isTeacherTeacherConversation(conversation)
+                    ? ("TEACHER_TEACHER" as const)
+                    : isGuardianTeacherConversation(conversation)
+                      ? ("GUARDIAN_TEACHER" as const)
+                      : ("STUDENT_TEACHER" as const),
       peerUserId: peerId,
       peerName,
       peerRole,
@@ -534,16 +720,47 @@ export class ChatService {
           ? { guardianUserId: userId, lastMessageAt: Not(IsNull()) }
           : isAdminChatRole(role)
             ? { adminUserId: userId, lastMessageAt: Not(IsNull()) }
-            : [
-                { teacherUserId: userId, lastMessageAt: Not(IsNull()) },
-                { peerTeacherUserId: userId, lastMessageAt: Not(IsNull()) },
-              ];
+            : role === UserRole.OFFICE_STAFF
+              ? [
+                  {
+                    kind: "OFFICE_STAFF_OFFICE_STAFF" as const,
+                    teacherUserId: userId,
+                    lastMessageAt: Not(IsNull()),
+                  },
+                  {
+                    kind: "OFFICE_STAFF_OFFICE_STAFF" as const,
+                    peerTeacherUserId: userId,
+                    lastMessageAt: Not(IsNull()),
+                  },
+                  {
+                    kind: "OFFICE_TEACHER" as const,
+                    adminUserId: userId,
+                    lastMessageAt: Not(IsNull()),
+                  },
+                  {
+                    kind: "OFFICE_ADMIN" as const,
+                    teacherUserId: userId,
+                    lastMessageAt: Not(IsNull()),
+                  },
+                ]
+              : [
+                  { teacherUserId: userId, lastMessageAt: Not(IsNull()) },
+                  { peerTeacherUserId: userId, lastMessageAt: Not(IsNull()) },
+                ];
 
     let conversations = await this.conversations.find({
       where,
       order: { lastMessageAt: "DESC", updatedAt: "DESC" },
       take: 100,
     });
+
+    if (role === UserRole.STUDENT) {
+      if (!(await settingsService.isStudentAdminChatEnabled())) {
+        conversations = conversations.filter(
+          (row) => !isStudentAdminConversation(row),
+        );
+      }
+    }
 
     if (role === UserRole.GUARDIAN) {
       const [teacherChat, adminChat] = await Promise.all([
@@ -562,10 +779,70 @@ export class ChatService {
       }
     }
 
+    if (isAdminChatRole(role)) {
+      const [guardianAdmin, studentAdmin, teacherAdmin, officeAdmin] =
+        await Promise.all([
+          settingsService.isGuardianAdminChatEnabled(),
+          settingsService.isStudentAdminChatEnabled(),
+          settingsService.isTeacherAdminChatEnabled(),
+          settingsService.isOfficeAdminChatEnabled(),
+        ]);
+      if (!guardianAdmin) {
+        conversations = conversations.filter(
+          (row) => !isGuardianAdminConversation(row),
+        );
+      }
+      if (!studentAdmin) {
+        conversations = conversations.filter(
+          (row) => !isStudentAdminConversation(row),
+        );
+      }
+      if (!teacherAdmin) {
+        conversations = conversations.filter(
+          (row) => !isTeacherAdminConversation(row),
+        );
+      }
+      if (!officeAdmin) {
+        conversations = conversations.filter(
+          (row) => !isOfficeAdminConversation(row),
+        );
+      }
+    }
+
+    if (role === UserRole.OFFICE_STAFF) {
+      const [officeStaff, officeTeacher, officeAdmin] = await Promise.all([
+        settingsService.isOfficeStaffChatEnabled(),
+        settingsService.isOfficeTeacherChatEnabled(),
+        settingsService.isOfficeAdminChatEnabled(),
+      ]);
+      if (!officeStaff) {
+        conversations = conversations.filter(
+          (row) => !isOfficeStaffPeerConversation(row),
+        );
+      }
+      if (!officeTeacher) {
+        conversations = conversations.filter(
+          (row) => !isOfficeTeacherConversation(row),
+        );
+      }
+      if (!officeAdmin) {
+        conversations = conversations.filter(
+          (row) => !isOfficeAdminConversation(row),
+        );
+      }
+    }
+
     if (role === UserRole.STAFF) {
-      const [guardianEnabled, teacherPeerEnabled] = await Promise.all([
+      const [
+        guardianEnabled,
+        teacherPeerEnabled,
+        officeTeacherEnabled,
+        teacherAdminEnabled,
+      ] = await Promise.all([
         settingsService.isGuardianTeacherChatEnabled(),
         settingsService.isTeacherTeacherChatEnabled(),
+        settingsService.isOfficeTeacherChatEnabled(),
+        settingsService.isTeacherAdminChatEnabled(),
       ]);
       if (!guardianEnabled) {
         conversations = conversations.filter(
@@ -575,6 +852,16 @@ export class ChatService {
       if (!teacherPeerEnabled) {
         conversations = conversations.filter(
           (row) => !isTeacherTeacherConversation(row),
+        );
+      }
+      if (!officeTeacherEnabled) {
+        conversations = conversations.filter(
+          (row) => !isOfficeTeacherConversation(row),
+        );
+      }
+      if (!teacherAdminEnabled) {
+        conversations = conversations.filter(
+          (row) => !isTeacherAdminConversation(row),
         );
       }
 
@@ -593,16 +880,22 @@ export class ChatService {
       });
       const peerById = new Map(peers.map((peer) => [peer.id, peer]));
 
-      const [guardians, teachers] = await Promise.all([
+      const [guardians, teachers, officeStaff, admins] = await Promise.all([
         guardianEnabled
           ? listGuardiansForTeacher(userId)
           : Promise.resolve([] as ChatPeer[]),
         teacherPeerEnabled
           ? listTeachersForTeacher(userId)
           : Promise.resolve([] as ChatPeer[]),
+        officeTeacherEnabled
+          ? listOfficeStaffForTeacher(userId)
+          : Promise.resolve([] as ChatPeer[]),
+        teacherAdminEnabled
+          ? listSuperAdminsForTeacher(userId)
+          : Promise.resolve([] as ChatPeer[]),
       ]);
       const peerSubtitles = new Map(
-        [...guardians, ...teachers]
+        [...guardians, ...teachers, ...officeStaff, ...admins]
           .filter((row) => row.subtitle)
           .map((row) => [row.userId, row.subtitle!]),
       );
@@ -811,10 +1104,11 @@ export class ChatService {
               teacherUserId: pair.teacherUserId,
             },
           })
-        : pair.kind === "TEACHER_TEACHER"
+        : pair.kind === "TEACHER_TEACHER" ||
+            pair.kind === "OFFICE_STAFF_OFFICE_STAFF"
           ? await this.conversations.findOne({
               where: {
-                kind: "TEACHER_TEACHER",
+                kind: pair.kind,
                 teacherUserId: pair.teacherUserId,
                 peerTeacherUserId: pair.peerTeacherUserId,
               },
@@ -827,13 +1121,31 @@ export class ChatService {
                   adminUserId: pair.adminUserId,
                 },
               })
-            : await this.conversations.findOne({
-                where: {
-                  kind: "STUDENT_TEACHER",
-                  studentUserId: pair.studentUserId,
-                  teacherUserId: pair.teacherUserId,
-                },
-              });
+            : pair.kind === "STUDENT_ADMIN"
+              ? await this.conversations.findOne({
+                  where: {
+                    kind: "STUDENT_ADMIN",
+                    studentUserId: pair.studentUserId,
+                    adminUserId: pair.adminUserId,
+                  },
+                })
+              : pair.kind === "OFFICE_TEACHER" ||
+                  pair.kind === "OFFICE_ADMIN" ||
+                  pair.kind === "TEACHER_ADMIN"
+                ? await this.conversations.findOne({
+                    where: {
+                      kind: pair.kind,
+                      teacherUserId: pair.teacherUserId,
+                      adminUserId: pair.adminUserId,
+                    },
+                  })
+                : await this.conversations.findOne({
+                    where: {
+                      kind: "STUDENT_TEACHER",
+                      studentUserId: pair.studentUserId,
+                      teacherUserId: pair.teacherUserId,
+                    },
+                  });
 
     if (!conversation) {
       conversation = this.conversations.create({
@@ -865,6 +1177,14 @@ export class ChatService {
       const teachers = await listTeachersForTeacher(userId);
       const match = teachers.find((row) => row.userId === peerUserId);
       if (match) enriched = match;
+    } else if (
+      peer?.role === UserRole.OFFICE_STAFF &&
+      role === UserRole.OFFICE_STAFF &&
+      pair.kind === "OFFICE_STAFF_OFFICE_STAFF"
+    ) {
+      const peers = await listOfficeStaffForOfficeStaff(userId);
+      const match = peers.find((row) => row.userId === peerUserId);
+      if (match) enriched = match;
     } else if (pair.kind === "GUARDIAN_ADMIN") {
       if (isAdminChatRole(role)) {
         const guardians = await listGuardiansForAdmin(userId);
@@ -872,6 +1192,46 @@ export class ChatService {
         if (match) enriched = match;
       } else if (role === UserRole.GUARDIAN) {
         const admins = await listAdminsForGuardian(userId);
+        const match = admins.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      }
+    } else if (pair.kind === "STUDENT_ADMIN") {
+      if (isAdminChatRole(role)) {
+        const students = await listStudentsForSuperAdmin(userId);
+        const match = students.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      } else if (role === UserRole.STUDENT) {
+        const admins = await listSuperAdminsForStudent(userId);
+        const match = admins.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      }
+    } else if (pair.kind === "OFFICE_TEACHER") {
+      if (role === UserRole.OFFICE_STAFF) {
+        const teachers = await listTeachersForOfficeStaff(userId);
+        const match = teachers.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      } else if (role === UserRole.STAFF) {
+        const officeStaff = await listOfficeStaffForTeacher(userId);
+        const match = officeStaff.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      }
+    } else if (pair.kind === "OFFICE_ADMIN") {
+      if (isAdminChatRole(role)) {
+        const officeStaff = await listOfficeStaffForSuperAdmin(userId);
+        const match = officeStaff.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      } else if (role === UserRole.OFFICE_STAFF) {
+        const admins = await listSuperAdminsForOfficeStaff(userId);
+        const match = admins.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      }
+    } else if (pair.kind === "TEACHER_ADMIN") {
+      if (isAdminChatRole(role)) {
+        const teachers = await listTeachersForSuperAdmin(userId);
+        const match = teachers.find((row) => row.userId === peerUserId);
+        if (match) enriched = match;
+      } else if (role === UserRole.STAFF) {
+        const admins = await listSuperAdminsForTeacher(userId);
         const match = admins.find((row) => row.userId === peerUserId);
         if (match) enriched = match;
       }
@@ -912,8 +1272,23 @@ export class ChatService {
     if (isTeacherTeacherConversation(conversation)) {
       await assertTeacherTeacherChatEnabled();
     }
+    if (isOfficeStaffPeerConversation(conversation)) {
+      await assertOfficeStaffChatEnabled();
+    }
     if (isGuardianAdminConversation(conversation)) {
       await assertGuardianAdminChatEnabled();
+    }
+    if (isStudentAdminConversation(conversation)) {
+      await assertStudentAdminChatEnabled();
+    }
+    if (isOfficeTeacherConversation(conversation)) {
+      await assertOfficeTeacherChatEnabled();
+    }
+    if (isOfficeAdminConversation(conversation)) {
+      await assertOfficeAdminChatEnabled();
+    }
+    if (isTeacherAdminConversation(conversation)) {
+      await assertTeacherAdminChatEnabled();
     }
     return conversation;
   }

@@ -56,9 +56,31 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   teacherTeacherChatEnabled!: boolean;
 
-  /** When true, guardians and office admins can message each other in-app. */
+  /** When true, guardians and Super Admins can message each other in-app. */
   @Column({ type: "boolean", default: false })
   guardianAdminChatEnabled!: boolean;
+
+  /**
+   * When true, office staff can message other office staff in-app.
+   */
+  @Column({ type: "boolean", default: false })
+  officeStaffChatEnabled!: boolean;
+
+  /** When true, students and Super Admins can message each other in-app. */
+  @Column({ type: "boolean", default: false })
+  studentAdminChatEnabled!: boolean;
+
+  /** When true, office staff and teachers can message each other in-app. */
+  @Column({ type: "boolean", default: false })
+  officeTeacherChatEnabled!: boolean;
+
+  /** When true, office staff and Super Admins can message each other in-app. */
+  @Column({ type: "boolean", default: false })
+  officeAdminChatEnabled!: boolean;
+
+  /** When true, teachers and Super Admins can message each other in-app. */
+  @Column({ type: "boolean", default: false })
+  teacherAdminChatEnabled!: boolean;
 
   /** OpenAI API key for institution AI features. */
   @Column({ type: "varchar", length: 255, nullable: true })
