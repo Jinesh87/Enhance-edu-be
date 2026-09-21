@@ -28,6 +28,11 @@ export interface GuardianPortalSettings {
   teacherChatEnabled: boolean;
   teacherPeerChatEnabled: boolean;
   adminChatEnabled: boolean;
+  officeStaffChatEnabled: boolean;
+  studentAdminChatEnabled: boolean;
+  officeTeacherChatEnabled: boolean;
+  officeAdminChatEnabled: boolean;
+  teacherAdminChatEnabled: boolean;
 }
 
 export interface UpdateGuardianPortalSettingInput {
@@ -38,6 +43,11 @@ export interface UpdateGuardianPortalSettingInput {
   teacherChatEnabled: boolean;
   teacherPeerChatEnabled: boolean;
   adminChatEnabled: boolean;
+  officeStaffChatEnabled: boolean;
+  studentAdminChatEnabled: boolean;
+  officeTeacherChatEnabled: boolean;
+  officeAdminChatEnabled: boolean;
+  teacherAdminChatEnabled: boolean;
 }
 
 export interface OpenAiSettings {
@@ -141,6 +151,11 @@ export class SettingsService {
         guardianTeacherChatEnabled: false,
         teacherTeacherChatEnabled: false,
         guardianAdminChatEnabled: false,
+        officeStaffChatEnabled: false,
+        studentAdminChatEnabled: false,
+        officeTeacherChatEnabled: false,
+        officeAdminChatEnabled: false,
+        teacherAdminChatEnabled: false,
         openaiApiKey: null,
         sessionChangeEmailNotificationsEnabled: false,
         adminAiAssistantEnabled: true,
@@ -325,6 +340,11 @@ export class SettingsService {
       teacherChatEnabled: setting.guardianTeacherChatEnabled ?? false,
       teacherPeerChatEnabled: setting.teacherTeacherChatEnabled ?? false,
       adminChatEnabled: setting.guardianAdminChatEnabled ?? false,
+      officeStaffChatEnabled: setting.officeStaffChatEnabled ?? false,
+      studentAdminChatEnabled: setting.studentAdminChatEnabled ?? false,
+      officeTeacherChatEnabled: setting.officeTeacherChatEnabled ?? false,
+      officeAdminChatEnabled: setting.officeAdminChatEnabled ?? false,
+      teacherAdminChatEnabled: setting.teacherAdminChatEnabled ?? false,
     };
   }
 
@@ -346,6 +366,11 @@ export class SettingsService {
       setting.guardianTeacherChatEnabled = input.teacherChatEnabled;
       setting.teacherTeacherChatEnabled = input.teacherPeerChatEnabled;
       setting.guardianAdminChatEnabled = input.adminChatEnabled;
+      setting.officeStaffChatEnabled = input.officeStaffChatEnabled;
+      setting.studentAdminChatEnabled = input.studentAdminChatEnabled;
+      setting.officeTeacherChatEnabled = input.officeTeacherChatEnabled;
+      setting.officeAdminChatEnabled = input.officeAdminChatEnabled;
+      setting.teacherAdminChatEnabled = input.teacherAdminChatEnabled;
     }
     await this.settingRepo.save(setting);
     return this.mapGuardianPortalSettings(setting);
@@ -384,6 +409,31 @@ export class SettingsService {
   async isGuardianAdminChatEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.guardianAdminChatEnabled ?? false;
+  }
+
+  async isOfficeStaffChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.officeStaffChatEnabled ?? false;
+  }
+
+  async isStudentAdminChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.studentAdminChatEnabled ?? false;
+  }
+
+  async isOfficeTeacherChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.officeTeacherChatEnabled ?? false;
+  }
+
+  async isOfficeAdminChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.officeAdminChatEnabled ?? false;
+  }
+
+  async isTeacherAdminChatEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.teacherAdminChatEnabled ?? false;
   }
 
   async getOpenAiSettings(): Promise<OpenAiSettings> {

@@ -17,7 +17,12 @@ export type ChatConversationKind =
   | "STUDENT_TEACHER"
   | "GUARDIAN_TEACHER"
   | "TEACHER_TEACHER"
-  | "GUARDIAN_ADMIN";
+  | "GUARDIAN_ADMIN"
+  | "OFFICE_STAFF_OFFICE_STAFF"
+  | "STUDENT_ADMIN"
+  | "OFFICE_TEACHER"
+  | "OFFICE_ADMIN"
+  | "TEACHER_ADMIN";
 
 @Entity("chat_conversations")
 @Index(["studentUserId", "lastMessageAt"])
@@ -33,7 +38,7 @@ export class ChatConversation {
   @Column({ type: "varchar", length: 32, default: "STUDENT_TEACHER" })
   kind!: ChatConversationKind;
 
-  /** Student user id for student–teacher chats; null otherwise. */
+  /** Student user id for STUDENT_TEACHER / STUDENT_ADMIN; null otherwise. */
   @Column({ type: "uuid", nullable: true })
   @Index()
   studentUserId!: string | null;
@@ -43,8 +48,11 @@ export class ChatConversation {
   studentUser!: Relation<User> | null;
 
   /**
-   * Staff participant for student/guardian–teacher chats, or the ordered
-   * first teacher for TEACHER_TEACHER; null for GUARDIAN_ADMIN.
+   * Staff participant for student/guardian–teacher chats; the ordered
+   * first teacher for TEACHER_TEACHER or first office staff for
+   * OFFICE_STAFF_OFFICE_STAFF; the teacher for OFFICE_TEACHER /
+   * TEACHER_ADMIN; the office staff for OFFICE_ADMIN; null for
+   * GUARDIAN_ADMIN / STUDENT_ADMIN.
    */
   @Column({ type: "uuid", nullable: true })
   @Index()
@@ -64,8 +72,8 @@ export class ChatConversation {
   guardianUser!: Relation<User> | null;
 
   /**
-   * Second staff participant for TEACHER_TEACHER chats (lexicographically
-   * larger user id); null for other kinds.
+   * Second staff participant for TEACHER_TEACHER / OFFICE_STAFF_OFFICE_STAFF
+   * chats (lexicographically larger user id); null for other kinds.
    */
   @Column({ type: "uuid", nullable: true })
   @Index()
@@ -75,7 +83,10 @@ export class ChatConversation {
   @JoinColumn({ name: "peerTeacherUserId" })
   peerTeacherUser!: Relation<User> | null;
 
-  /** Super Admin participant for GUARDIAN_ADMIN chats. */
+  /**
+   * Super Admin for GUARDIAN_ADMIN / STUDENT_ADMIN / OFFICE_ADMIN /
+   * TEACHER_ADMIN, or office staff for OFFICE_TEACHER.
+   */
   @Column({ type: "uuid", nullable: true })
   @Index()
   adminUserId!: string | null;
@@ -103,7 +114,7 @@ export class ChatConversation {
   @Column({ type: "timestamptz", nullable: true })
   peerTeacherMutedAt!: Date | null;
 
-  /** When set, the admin (GUARDIAN_ADMIN) has muted this chat. */
+  /** When set, the adminUserId participant has muted this chat. */
   @Column({ type: "timestamptz", nullable: true })
   adminMutedAt!: Date | null;
 

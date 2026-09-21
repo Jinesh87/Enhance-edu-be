@@ -275,6 +275,16 @@ export async function ensureInstitutionSettingSchema() {
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "guardianAdminChatEnabled" boolean NOT NULL DEFAULT false;
     ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "officeStaffChatEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "studentAdminChatEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "officeTeacherChatEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "officeAdminChatEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "teacherAdminChatEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "openaiApiKey" varchar(255);
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "sessionChangeEmailNotificationsEnabled" boolean NOT NULL DEFAULT false;
@@ -1324,9 +1334,24 @@ export async function ensureChatSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_teacher_teacher"
       ON chat_conversations ("teacherUserId", "peerTeacherUserId")
       WHERE kind = 'TEACHER_TEACHER' AND "peerTeacherUserId" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_office_staff_peer"
+      ON chat_conversations ("teacherUserId", "peerTeacherUserId")
+      WHERE kind = 'OFFICE_STAFF_OFFICE_STAFF' AND "peerTeacherUserId" IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_guardian_admin"
       ON chat_conversations ("guardianUserId", "adminUserId")
       WHERE kind = 'GUARDIAN_ADMIN' AND "guardianUserId" IS NOT NULL AND "adminUserId" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_student_admin"
+      ON chat_conversations ("studentUserId", "adminUserId")
+      WHERE kind = 'STUDENT_ADMIN' AND "studentUserId" IS NOT NULL AND "adminUserId" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_office_teacher"
+      ON chat_conversations ("teacherUserId", "adminUserId")
+      WHERE kind = 'OFFICE_TEACHER' AND "teacherUserId" IS NOT NULL AND "adminUserId" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_office_admin"
+      ON chat_conversations ("teacherUserId", "adminUserId")
+      WHERE kind = 'OFFICE_ADMIN' AND "teacherUserId" IS NOT NULL AND "adminUserId" IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_chat_conversations_teacher_admin"
+      ON chat_conversations ("teacherUserId", "adminUserId")
+      WHERE kind = 'TEACHER_ADMIN' AND "teacherUserId" IS NOT NULL AND "adminUserId" IS NOT NULL;
     CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_guardian_last"
       ON chat_conversations ("guardianUserId", "lastMessageAt");
     CREATE INDEX IF NOT EXISTS "IDX_chat_conversations_guardianUserId"
