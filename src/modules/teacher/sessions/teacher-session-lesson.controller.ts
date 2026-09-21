@@ -4,6 +4,11 @@ import {
   resolveIncomingFiles,
   respondWithStoredFile,
 } from "../../../common/storage/object-storage.js";
+import {
+  idempotencyLookup,
+  idempotencyStore,
+  readIdempotencyKey,
+} from "../../../common/utils/idempotency.js";
 import { sessionLessonService } from "../../shared/sessions/session-lesson.service.js";
 
 class TeacherSessionLessonController {
@@ -22,12 +27,19 @@ class TeacherSessionLessonController {
 
   upsertLesson = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const idemKey = readIdempotencyKey(req);
+      const cached = await idempotencyLookup(idemKey);
+      if (cached) {
+        return res.status(cached.status).json(cached.body);
+      }
+
       const result = await sessionLessonService.upsertLesson(
         String(req.params.sessionId),
         req.user!.id,
         req.user!.role as UserRole,
         req.body,
       );
+      await idempotencyStore(idemKey, 200, result);
       res.status(200).json(result);
     } catch (error) {
       next(error);
@@ -47,29 +59,6 @@ class TeacherSessionLessonController {
     }
   };
 
-  getResourceStream = async (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    try {
-      const resource = await sessionLessonService.getResourceForTeacher(
-        String(req.params.sessionId),
-        String(req.params.resourceId),
-        req.user!.id,
-        req.user!.role as UserRole,
-      );
-      await respondWithStoredFile(res, {
-        storageKey: resource.storageKey,
-        mimeType: resource.mimeType,
-        originalName: resource.originalName,
-        inline: true,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
   uploadResources = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const uploads = resolveIncomingFiles(
@@ -77,31 +66,36 @@ class TeacherSessionLessonController {
         req.body,
         req.user!.id,
       );
-      let meta: Array<{ title?: string; description?: string }> = [];
-      if (typeof req.body.meta === "string" && req.body.meta.trim()) {
-        try {
-          const parsed = JSON.parse(req.body.meta) as unknown;
-          if (Array.isArray(parsed)) {
-            meta = parsed as Array<{ title?: string; description?: string }>;
-          }
-        } catch {
-          meta = [];
-        }
-      } else if (Array.isArray(req.body.meta)) {
-        meta = req.body.meta as Array<{ title?: string; description?: string }>;
-      }
-
       const result = await sessionLessonService.uploadResources(
         String(req.params.sessionId),
         req.user!.id,
         req.user!.role as UserRole,
-        uploads.map((file, index) => ({
-          ...file,
-          title: meta[index]?.title,
-          description: meta[index]?.description,
-        })),
+        uploads,
       );
       res.status(201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getResourceStream = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const file = await sessionLessonService.getResourceForTeacher(
+        String(req.params.sessionId),
+        String(req.params.resourceId),
+        req.user!.id,
+        req.user!.role as UserRole,
+      );
+      await respondWithStoredFile(res, {
+        storageKey: file.storageKey,
+        mimeType: file.mimeType,
+        originalName: file.originalName,
+        inline: true,
+      });
     } catch (error) {
       next(error);
     }
@@ -137,5 +131,4 @@ class TeacherSessionLessonController {
   };
 }
 
-export const teacherSessionLessonController =
-  new TeacherSessionLessonController();
+export const teacherSessionLessonController = new TeacherSessionLessonController();

@@ -41,4 +41,5 @@ export const gradeTeacherHomeworkSubmissionSchema = Joi.object({
   maxMarks: Joi.number().min(1).max(1000).allow(null).optional(),
   feedback: Joi.string().trim().max(5000).allow("", null).optional(),
   isCompleted: Joi.boolean().optional(),
+  baseUpdatedAt: Joi.string().isoDate().allow(null, "").optional(),
 });

@@ -178,6 +178,9 @@ export class SharedAttendanceService {
       time: scannedAt ? this.formatRollTime(scannedAt) : "",
       scannedAt: scannedAt ? scannedAt.toISOString() : null,
       exceptionReason,
+      attendanceUpdatedAt: record?.updatedAt
+        ? record.updatedAt.toISOString()
+        : null,
     };
   }
 }

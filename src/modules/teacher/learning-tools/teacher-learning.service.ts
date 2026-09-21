@@ -775,6 +775,43 @@ export class TeacherLearningService {
     set.status = "PUBLISHED";
     set.publishedAt = new Date();
     await this.sets.save(set);
+
+    try {
+      const full = await this.sets.findOne({
+        where: { id: set.id },
+        relations: { subject: true, term: true },
+      });
+      if (full?.term) {
+        const studentUserIds = await this.resolveStudentIds(
+          full.term,
+          full.subjectId,
+        );
+        if (studentUserIds.length > 0) {
+          const {
+            learningSetPublishedNotificationPayload,
+            notifyUsers,
+          } = await import("../../notifications/domain-notifications.js");
+          const payload = learningSetPublishedNotificationPayload({
+            setId: full.id,
+            title: full.title,
+            subjectName: full.subject?.name ?? "Subject",
+            generationType: full.generationType,
+          });
+          void notifyUsers(
+            studentUserIds.map((studentUserId) => ({
+              userId: studentUserId,
+              type: payload.type,
+              title: payload.title,
+              body: payload.body,
+              data: payload.data ?? null,
+            })),
+          );
+        }
+      }
+    } catch {
+      /* non-blocking notify */
+    }
+
     return { learningSet: await this.toSetDetail(set) };
   }
 

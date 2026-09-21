@@ -16,6 +16,7 @@ export const upsertSessionLessonSchema = Joi.object({
   sequence: Joi.string().trim().max(10000).allow("", null).optional(),
   watchFor: Joi.string().trim().max(10000).allow("", null).optional(),
   notes: Joi.string().trim().max(10000).allow("", null).optional(),
+  baseUpdatedAt: Joi.string().isoDate().allow(null, "").optional(),
 });
 
 export const updateSessionResourceSchema = Joi.object({
