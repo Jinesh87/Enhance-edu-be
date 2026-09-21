@@ -382,7 +382,8 @@ export class StudentLearningService {
     const attempt = await this.repo.findAttemptForStudent(attemptId, studentId);
     if (!attempt) throw new AppError(404, "Attempt not found", "NOT_FOUND");
     if (attempt.completedAt) {
-      throw new AppError(400, "Attempt already completed", "ALREADY_COMPLETED");
+      // Idempotent retry after offline sync — return existing result.
+      return this.getAttemptResult(studentId, attemptId);
     }
 
     await this.assertLearningAccess(studentId, attempt.learningSetId, "continue");

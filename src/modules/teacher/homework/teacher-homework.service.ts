@@ -3,6 +3,10 @@ import { EnrollmentStatus } from "../../../common/constants/enrollment.js";
 import { UserRole } from "../../../common/constants/roles.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import {
+  homeworkGradeContentDiffers,
+  isOptimisticConflict,
+} from "../../shared/attendance/attendance-conflict.js";
+import {
   buildHomeworkAttachmentKey,
   deleteObject,
   storeUploadedObject,
@@ -24,8 +28,9 @@ import {
   Term,
 } from "../../../entities/index.js";
 import {
+  homeworkGradedNotificationPayload,
   homeworkNotificationPayload,
-  notifyStudentUsers,
+  notifyUsers,
 } from "../../notifications/domain-notifications.js";
 
 export type CreateTeacherHomeworkInput = {
@@ -333,13 +338,22 @@ export class TeacherHomeworkService {
       throw error;
     }
 
-    void notifyStudentUsers(studentIds, () =>
-      homeworkNotificationPayload({
-        homeworkId: homework.id,
-        title: homework.title,
-        subjectName: subject.name,
-        dueDate: String(homework.dueDate).slice(0, 10),
-      }),
+    // resolveStudentIds returns User.id values (assignee key in this module).
+    // notifyStudentUsers expects Student.id — use notifyUsers with userIds instead.
+    const payload = homeworkNotificationPayload({
+      homeworkId: homework.id,
+      title: homework.title,
+      subjectName: subject.name,
+      dueDate: String(homework.dueDate).slice(0, 10),
+    });
+    void notifyUsers(
+      studentIds.map((userId) => ({
+        userId,
+        type: payload.type,
+        title: payload.title,
+        body: payload.body,
+        data: payload.data ?? null,
+      })),
     );
 
     const saved = await this.homework.findOneOrFail({
@@ -561,6 +575,7 @@ export class TeacherHomeworkService {
               feedback: sub.feedback,
               isCompleted: Boolean(sub.isCompleted),
               markedAt: sub.markedAt ? sub.markedAt.toISOString() : null,
+              updatedAt: sub.updatedAt.toISOString(),
               markedBy: sub.markedBy
                 ? {
                     id: sub.markedBy.id,
@@ -701,6 +716,7 @@ export class TeacherHomeworkService {
       maxMarks?: number | null;
       feedback?: string | null;
       isCompleted?: boolean;
+      baseUpdatedAt?: string | null;
     },
   ) {
     const homework = await this.homework.findOne({
@@ -725,6 +741,49 @@ export class TeacherHomeworkService {
       where: { homeworkId, studentId },
       relations: { files: true, markedBy: true },
     });
+
+    if (submission) {
+      const contentDiffers = homeworkGradeContentDiffers(
+        {
+          marks: submission.marks != null ? Number(submission.marks) : null,
+          maxMarks:
+            submission.maxMarks != null ? Number(submission.maxMarks) : 100,
+          feedback: submission.feedback,
+          isCompleted: Boolean(submission.isCompleted),
+        },
+        input,
+      );
+      if (
+        isOptimisticConflict({
+          clientBaseUpdatedAt: input.baseUpdatedAt,
+          serverUpdatedAt: submission.updatedAt,
+          contentDiffers,
+        })
+      ) {
+        throw new AppError(
+          409,
+          "Homework grade was updated on another device. Refresh and try again.",
+          "HOMEWORK_GRADE_CONFLICT",
+          {
+            submission: {
+              id: submission.id,
+              marks:
+                submission.marks != null ? Number(submission.marks) : null,
+              maxMarks:
+                submission.maxMarks != null
+                  ? Number(submission.maxMarks)
+                  : 100,
+              feedback: submission.feedback,
+              isCompleted: Boolean(submission.isCompleted),
+              updatedAt: submission.updatedAt.toISOString(),
+              markedAt: submission.markedAt
+                ? submission.markedAt.toISOString()
+                : null,
+            },
+          },
+        );
+      }
+    }
 
     if (!submission) {
       submission = this.submissions.create({
@@ -751,6 +810,25 @@ export class TeacherHomeworkService {
     submission.markedById = userId;
 
     await this.submissions.save(submission);
+
+    const gradedPayload = homeworkGradedNotificationPayload({
+      homeworkId,
+      title: homework.title,
+      marks:
+        submission.marks != null ? Number(submission.marks) : null,
+      maxMarks:
+        submission.maxMarks != null ? Number(submission.maxMarks) : null,
+      isCompleted: Boolean(submission.isCompleted),
+    });
+    void notifyUsers([
+      {
+        userId: studentId,
+        type: gradedPayload.type,
+        title: gradedPayload.title,
+        body: gradedPayload.body,
+        data: gradedPayload.data ?? null,
+      },
+    ]);
 
     try {
       const { AppDataSource: ds } = await import("../../../config/data-source.js");
@@ -786,6 +864,7 @@ export class TeacherHomeworkService {
       feedback: updated!.feedback,
       isCompleted: Boolean(updated!.isCompleted),
       markedAt: updated!.markedAt ? updated!.markedAt.toISOString() : null,
+      updatedAt: updated!.updatedAt.toISOString(),
       markedBy: updated!.markedBy
         ? {
             id: updated!.markedBy.id,
@@ -847,6 +926,7 @@ export class TeacherHomeworkService {
       ) {
         continue;
       }
+      // Assignee key in tutor homework is the linked User.id (not students.id).
       if (enrollment.student?.userId) {
         studentIds.add(enrollment.student.userId);
       }

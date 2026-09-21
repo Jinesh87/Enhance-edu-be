@@ -26,4 +26,6 @@ export interface MarkManualRollInput {
   status: AttendanceStatus;
   reason: string;
   markedByUserId: string;
+  /** ISO timestamp of the attendance row the client last saw (optimistic concurrency). */
+  baseUpdatedAt?: string | null;
 }

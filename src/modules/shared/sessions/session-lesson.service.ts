@@ -15,6 +15,10 @@ import {
 } from "../../../entities/index.js";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import { isStudentAccountableForSession } from "../../shared/attendance/student-session-eligibility.js";
+import {
+  isOptimisticConflict,
+  sessionLessonContentDiffers,
+} from "../../shared/attendance/attendance-conflict.js";
 import { sessionResourceIngestService } from "../../coach/session-resource-ingest.service.js";
 
 export type UploadedSessionResource = {
@@ -34,6 +38,7 @@ export type SessionLessonInput = {
   sequence?: string | null;
   watchFor?: string | null;
   notes?: string | null;
+  baseUpdatedAt?: string | null;
 };
 
 function toLessonDto(lesson: SessionLesson | null) {
@@ -193,6 +198,35 @@ export class SessionLessonService {
 
     let lesson = await this.lessons.findOne({ where: { sessionId } });
     if (lesson) {
+      const contentDiffers = sessionLessonContentDiffers(
+        {
+          title: lesson.title,
+          description: lesson.description,
+          objectives: lesson.objectives,
+          notes: lesson.notes,
+        },
+        {
+          title,
+          description: input.description,
+          objectives: input.objectives,
+          notes: input.notes,
+        },
+      );
+      if (
+        isOptimisticConflict({
+          clientBaseUpdatedAt: input.baseUpdatedAt,
+          serverUpdatedAt: lesson.updatedAt,
+          contentDiffers,
+        })
+      ) {
+        throw new AppError(
+          409,
+          "Lesson notes were updated on another device. Refresh and try again.",
+          "SESSION_NOTES_CONFLICT",
+          { lesson: toLessonDto(lesson) },
+        );
+      }
+
       lesson.title = title;
       lesson.description = input.description?.trim() || null;
       lesson.objectives = input.objectives?.trim() || null;

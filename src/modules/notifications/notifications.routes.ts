@@ -5,6 +5,8 @@ import { notificationsController } from "./notifications.controller.js";
 import {
   listNotificationsQuerySchema,
   notificationIdParamsSchema,
+  pushSubscribeBodySchema,
+  pushUnsubscribeBodySchema,
 } from "./notifications.validation.js";
 
 const router = Router();
@@ -18,6 +20,17 @@ router.get(
 );
 router.get("/unread-count", notificationsController.unreadCount);
 router.get("/live-updates", notificationsController.stream);
+router.get("/push/vapid-public-key", notificationsController.vapidPublicKey);
+router.post(
+  "/push/subscribe",
+  validate(pushSubscribeBodySchema),
+  notificationsController.subscribePush,
+);
+router.post(
+  "/push/unsubscribe",
+  validate(pushUnsubscribeBodySchema),
+  notificationsController.unsubscribePush,
+);
 router.post("/read-all", notificationsController.markAllRead);
 router.post(
   "/:id/read",

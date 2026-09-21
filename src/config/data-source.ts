@@ -65,6 +65,7 @@ import {
   AdminAiCommunicationDraft,
   AdminAiBriefing,
   Notification,
+  PushSubscription,
   OpenAiUsageLog,
   LearningSourceDocument,
   LearningSet,
@@ -339,6 +340,39 @@ export async function ensureNotificationSchema() {
       ON notifications ("readAt");
     CREATE INDEX IF NOT EXISTS "IDX_notifications_userId_createdAt"
       ON notifications ("userId", "createdAt" DESC);
+  `);
+  await bootstrap.destroy();
+}
+
+export async function ensurePushSubscriptionSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  const [{ usersTable }] = await bootstrap.query(`
+    SELECT to_regclass('public.users') IS NOT NULL AS "usersTable"
+  `);
+  if (!usersTable) {
+    await bootstrap.destroy();
+    return;
+  }
+
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "userId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "endpoint" text NOT NULL,
+      "p256dh" text NOT NULL,
+      "auth" text NOT NULL,
+      "userAgent" varchar(255),
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT "UQ_push_subscriptions_endpoint" UNIQUE ("endpoint")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_push_subscriptions_userId"
+      ON push_subscriptions ("userId");
   `);
   await bootstrap.destroy();
 }
@@ -1464,6 +1498,7 @@ export const AppDataSource = new DataSource({
     AdminAiCommunicationDraft,
     AdminAiBriefing,
     Notification,
+    PushSubscription,
     OpenAiUsageLog,
     LearningSourceDocument,
     LearningSet,

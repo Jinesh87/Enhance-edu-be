@@ -12,6 +12,7 @@ import {
   ensureInstitutionSettingSchema,
   ensureClassScheduleIndexes,
   ensureNotificationSchema,
+  ensurePushSubscriptionSchema,
   ensureOpenAiUsageSchema,
   ensureCoachSchema,
   ensureAdminAiSchema,
@@ -30,6 +31,7 @@ import { startSyllabusIngestWorker } from "./common/queues/syllabus-ingest-queue
 import { startSessionResourceIngestWorker } from "./common/queues/session-resource-ingest-queue.js";
 import { startBulkActionsWorker } from "./common/queues/bulk-actions-queue.js";
 import { startBriefingsWorker } from "./common/queues/briefings-queue.js";
+import { startNotificationsFanoutWorker } from "./common/queues/notifications-fanout-queue.js";
 import { attachChatSocket } from "./modules/shared/chat/chat-socket.js";
 import { repairChatMessageMediaLinks } from "./modules/shared/chat/repair-chat-media.js";
 
@@ -46,6 +48,7 @@ async function bootstrap() {
   await ensureHomeworkSchema();
   await ensureClassScheduleIndexes();
   await ensureNotificationSchema();
+  await ensurePushSubscriptionSchema();
   await ensureOpenAiUsageSchema();
   await AppDataSource.initialize();
   logger.info("Database connected");
@@ -66,6 +69,7 @@ async function bootstrap() {
   startSessionResourceIngestWorker();
   startBulkActionsWorker();
   startBriefingsWorker();
+  startNotificationsFanoutWorker();
 
   const server = http.createServer(app);
   attachChatSocket(server);

@@ -65,6 +65,7 @@ import {
 } from "../../shared/attendance/attendance.types.js";
 import { validateAttendanceQr } from "../../shared/attendance/attendance-qr.js";
 import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
+import { notifyStaffOfAttendanceException } from "../../notifications/attendance-notifications.service.js";
 
 export class StudentAttendanceService {
   private readonly repo = new AttendanceRepository();
@@ -239,6 +240,12 @@ export class StudentAttendanceService {
         reasonFlagged,
       });
 
+      void notifyStaffOfAttendanceException({
+        session,
+        studentUserId: studentId,
+        reasonFlagged,
+      });
+
       return {
         status: "EXCEPTION",
         reasonFlagged,
@@ -393,6 +400,12 @@ export class StudentAttendanceService {
           throw err;
         }
       }
+
+      void notifyStaffOfAttendanceException({
+        session,
+        studentUserId: studentId,
+        reasonFlagged,
+      });
 
       return {
         status: "EXCEPTION",

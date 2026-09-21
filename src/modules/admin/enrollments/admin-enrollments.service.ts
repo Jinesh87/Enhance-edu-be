@@ -31,6 +31,7 @@ import type { EmailAttachment, InvitationEnrollmentDetails } from "../../email/e
 import {
   notifyStudentUsers,
   notifyUsers,
+  enrollmentPendingNotificationPayload,
 } from "../../notifications/domain-notifications.js";
 import {
   enrollmentTimetableService,
@@ -1684,7 +1685,22 @@ export class AdminEnrollmentsService {
     pending: PendingEnrollment,
     _subjectRows: Subject[],
   ) {
-    if (!guardian?.email || guardian.status !== UserStatus.ACTIVE) {
+    if (!guardian?.id) {
+      return;
+    }
+
+    void notifyUsers([
+      {
+        userId: guardian.id,
+        ...enrollmentPendingNotificationPayload({
+          studentFullName: pending.studentFullName,
+          pendingEnrollmentId: pending.id,
+          isChange: true,
+        }),
+      },
+    ]);
+
+    if (!guardian.email || guardian.status !== UserStatus.ACTIVE) {
       return;
     }
 
@@ -1708,6 +1724,17 @@ export class AdminEnrollmentsService {
     pending: PendingEnrollment,
     attachments: EmailAttachment[] = [],
   ) {
+    void notifyUsers([
+      {
+        userId: guardian.id,
+        ...enrollmentPendingNotificationPayload({
+          studentFullName: pending.studentFullName,
+          pendingEnrollmentId: pending.id,
+          isChange: false,
+        }),
+      },
+    ]);
+
     if (!guardian.email || guardian.status !== UserStatus.ACTIVE) {
       return;
     }

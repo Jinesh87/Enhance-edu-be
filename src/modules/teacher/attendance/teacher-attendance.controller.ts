@@ -2,6 +2,11 @@ import { NextFunction, Request, Response } from "express";
 import { teacherAttendanceService } from "./teacher-attendance.service.js";
 import { sharedAttendanceService } from "../../shared/attendance/shared-attendance.service.js";
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
+import {
+  idempotencyLookup,
+  idempotencyStore,
+  readIdempotencyKey,
+} from "../../../common/utils/idempotency.js";
 
 class TeacherAttendanceController {
   async getQrCode(req: Request, res: Response, next: NextFunction) {
@@ -37,6 +42,12 @@ class TeacherAttendanceController {
 
   async markManual(req: Request, res: Response, next: NextFunction) {
     try {
+      const idemKey = readIdempotencyKey(req);
+      const cached = await idempotencyLookup(idemKey);
+      if (cached) {
+        return res.status(cached.status).json(cached.body);
+      }
+
       const sessionId = req.params.id as string;
       const session = await teacherAttendanceService.getAuthorizedSession(
         sessionId,
@@ -44,12 +55,14 @@ class TeacherAttendanceController {
         req.user!.role,
       );
       const markedByUserId = req.user!.id;
-      const { studentId, status, reason } = req.body;
+      const { studentId, status, reason, baseUpdatedAt } = req.body;
       const record = await teacherAttendanceService.markManualRoll(session, {
         studentId,
         status,
         reason,
         markedByUserId,
+        baseUpdatedAt:
+          typeof baseUpdatedAt === "string" ? baseUpdatedAt : null,
       });
 
       try {
@@ -63,7 +76,9 @@ class TeacherAttendanceController {
         console.error("Failed to broadcast manual roll update:", err);
       }
 
-      res.status(200).json({ record });
+      const body = { record };
+      await idempotencyStore(idemKey, 200, body);
+      res.status(200).json(body);
     } catch (error) {
       next(error);
     }

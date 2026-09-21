@@ -748,6 +748,17 @@ export class StudentClassesService {
       );
     }
 
+    // Idempotent: offline/retry submit when already submitted.
+    if (submission.status === "SUBMITTED") {
+      if (input?.studentNotes !== undefined) {
+        submission.studentNotes = input.studentNotes
+          ? input.studentNotes.trim()
+          : null;
+        await this.homeworkSubmissions.save(submission);
+      }
+      return this.getHomeworkSubmission(userId, homeworkId);
+    }
+
     if (input?.studentNotes !== undefined) {
       submission.studentNotes = input.studentNotes
         ? input.studentNotes.trim()
@@ -757,6 +768,46 @@ export class StudentClassesService {
     submission.status = "SUBMITTED";
     submission.submittedAt = new Date();
     await this.homeworkSubmissions.save(submission);
+
+    try {
+      const homework = await this.homework.findOne({
+        where: { id: homeworkId },
+        select: { id: true, title: true, createdById: true },
+      });
+      if (homework?.createdById && homework.createdById !== userId) {
+        const { User } = await import("../../../entities/User.js");
+        const {
+          homeworkSubmittedNotificationPayload,
+          notifyUsers,
+        } = await import(
+          "../../notifications/domain-notifications.js"
+        );
+        const studentUser = await AppDataSource.getRepository(User).findOne({
+          where: { id: userId },
+          select: { id: true, fullName: true, preferredName: true },
+        });
+        const studentName =
+          studentUser?.preferredName?.trim() ||
+          studentUser?.fullName?.trim() ||
+          "A student";
+        const payload = homeworkSubmittedNotificationPayload({
+          homeworkId,
+          title: homework.title,
+          studentName,
+        });
+        void notifyUsers([
+          {
+            userId: homework.createdById,
+            type: payload.type,
+            title: payload.title,
+            body: payload.body,
+            data: payload.data ?? null,
+          },
+        ]);
+      }
+    } catch {
+      /* non-blocking notify */
+    }
 
     return this.getHomeworkSubmission(userId, homeworkId);
   }
