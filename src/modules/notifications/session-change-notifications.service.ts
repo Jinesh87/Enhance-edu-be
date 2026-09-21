@@ -1,5 +1,6 @@
 import { In } from "typeorm";
 import { AppDataSource } from "../../config/data-source.js";
+import { UserRole } from "../../common/constants/roles.js";
 import { logger } from "../../config/logger.js";
 import {
   ClassStudent,
@@ -80,7 +81,7 @@ function buildMessages(
   };
 }
 
-async function resolveGuardianUserIdsForStudentUsers(
+export async function resolveGuardianUserIdsForStudentUsers(
   studentUserIds: string[],
 ): Promise<Map<string, Set<string>>> {
   const guardianIdsByStudentUser = new Map<string, Set<string>>();
@@ -188,7 +189,9 @@ export class SessionChangeNotificationService {
 
     const classDetailsEnabled =
       await settingsService.isGuardianPortalClassDetailsEnabled();
-    if (classDetailsEnabled) {
+    const attendanceEnabled =
+      await settingsService.isGuardianPortalAttendanceEnabled();
+    if (classDetailsEnabled || attendanceEnabled) {
       const guardiansByStudent =
         await resolveGuardianUserIdsForStudentUsers(studentUserIds);
       for (const guardianIds of guardiansByStudent.values()) {
@@ -198,9 +201,23 @@ export class SessionChangeNotificationService {
       }
     }
 
-    const inputs: CreateNotificationInput[] = Array.from(recipientIds).map(
-      (userId) => ({
-        userId,
+    const recipientList = Array.from(recipientIds);
+    if (recipientList.length === 0) return;
+
+    const users = await AppDataSource.getRepository(User).find({
+      where: { id: In(recipientList) },
+      select: { id: true, email: true, fullName: true, role: true },
+    });
+
+    const inputs: CreateNotificationInput[] = users.map((user) => {
+      const href =
+        user.role === UserRole.GUARDIAN
+          ? "/guardian/students"
+          : user.role === UserRole.STUDENT
+            ? "/student"
+            : "/tutor";
+      return {
+        userId: user.id,
         type: kind,
         title,
         body,
@@ -212,20 +229,16 @@ export class SessionChangeNotificationService {
           startAt: context.startAt.toISOString(),
           endAt: context.endAt.toISOString(),
           room: context.room,
+          href,
         },
-      }),
-    );
+      };
+    });
 
     await notificationsService.createMany(inputs);
 
     const emailEnabled =
       await settingsService.isSessionChangeEmailNotificationsEnabled();
     if (!emailEnabled || inputs.length === 0) return;
-
-    const users = await AppDataSource.getRepository(User).find({
-      where: { id: In(Array.from(recipientIds)) },
-      select: { id: true, email: true, fullName: true },
-    });
 
     await Promise.allSettled(
       users

@@ -8,6 +8,7 @@ import { Session } from "../../../entities/Session.js";
 import { AssessmentStudent } from "../../../entities/AssessmentStudent.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
+import { notifyGuardiansOfAttendanceMark } from "../../notifications/attendance-notifications.service.js";
 
 export class TeacherAttendanceService {
   private readonly repo = new AttendanceRepository();
@@ -156,6 +157,12 @@ export class TeacherAttendanceService {
       status,
       termId: session.class?.term?.id ?? session.assessment?.termId ?? null,
       actorId: markedByUserId,
+    });
+
+    void notifyGuardiansOfAttendanceMark({
+      session,
+      studentUserId: studentId,
+      status,
     });
 
     return record;

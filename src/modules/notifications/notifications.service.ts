@@ -5,8 +5,8 @@ import {
   type NotificationType,
 } from "../../entities/Notification.js";
 import { IsNull } from "typeorm";
+import { enqueueNotificationFanout } from "../../common/queues/notifications-fanout-queue.js";
 import { userNotificationManager } from "./notification-updates.js";
-import { pushSubscriptionService } from "./push.service.js";
 import { logger } from "../../config/logger.js";
 
 export type NotificationDto = {
@@ -57,30 +57,16 @@ export class NotificationsService {
     );
 
     const saved = await this.repo.save(rows);
-    const unreadByUser = new Map<string, number>();
-    const dtos = saved.map((row) => {
-      const dto = toDto(row);
-      return { userId: row.userId, notification: dto };
+    const targets = saved.map((row) => ({
+      userId: row.userId,
+      notification: toDto(row),
+    }));
+
+    void enqueueNotificationFanout(targets).catch((error) => {
+      logger.warn({ err: error }, "Notification fan-out scheduling failed");
     });
 
-    for (const row of saved) {
-      if (!unreadByUser.has(row.userId)) {
-        unreadByUser.set(row.userId, await this.countUnread(row.userId));
-      }
-      const dto = toDto(row);
-      userNotificationManager.publish({
-        userId: row.userId,
-        type: "NOTIFICATION_CREATED",
-        unreadCount: unreadByUser.get(row.userId) ?? 0,
-        notification: dto,
-      });
-    }
-
-    void pushSubscriptionService.sendNotificationTargets(dtos).catch((error) => {
-      logger.warn({ err: error }, "Web push fan-out failed");
-    });
-
-    return dtos.map((row) => row.notification);
+    return targets.map((row) => row.notification);
   }
 
   async listForUser(

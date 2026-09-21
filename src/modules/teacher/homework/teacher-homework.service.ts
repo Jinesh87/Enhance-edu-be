@@ -28,8 +28,9 @@ import {
   Term,
 } from "../../../entities/index.js";
 import {
+  homeworkGradedNotificationPayload,
   homeworkNotificationPayload,
-  notifyStudentUsers,
+  notifyUsers,
 } from "../../notifications/domain-notifications.js";
 
 export type CreateTeacherHomeworkInput = {
@@ -337,13 +338,22 @@ export class TeacherHomeworkService {
       throw error;
     }
 
-    void notifyStudentUsers(studentIds, () =>
-      homeworkNotificationPayload({
-        homeworkId: homework.id,
-        title: homework.title,
-        subjectName: subject.name,
-        dueDate: String(homework.dueDate).slice(0, 10),
-      }),
+    // resolveStudentIds returns User.id values (assignee key in this module).
+    // notifyStudentUsers expects Student.id — use notifyUsers with userIds instead.
+    const payload = homeworkNotificationPayload({
+      homeworkId: homework.id,
+      title: homework.title,
+      subjectName: subject.name,
+      dueDate: String(homework.dueDate).slice(0, 10),
+    });
+    void notifyUsers(
+      studentIds.map((userId) => ({
+        userId,
+        type: payload.type,
+        title: payload.title,
+        body: payload.body,
+        data: payload.data ?? null,
+      })),
     );
 
     const saved = await this.homework.findOneOrFail({
@@ -801,6 +811,25 @@ export class TeacherHomeworkService {
 
     await this.submissions.save(submission);
 
+    const gradedPayload = homeworkGradedNotificationPayload({
+      homeworkId,
+      title: homework.title,
+      marks:
+        submission.marks != null ? Number(submission.marks) : null,
+      maxMarks:
+        submission.maxMarks != null ? Number(submission.maxMarks) : null,
+      isCompleted: Boolean(submission.isCompleted),
+    });
+    void notifyUsers([
+      {
+        userId: studentId,
+        type: gradedPayload.type,
+        title: gradedPayload.title,
+        body: gradedPayload.body,
+        data: gradedPayload.data ?? null,
+      },
+    ]);
+
     try {
       const { AppDataSource: ds } = await import("../../../config/data-source.js");
       const { Student } = await import("../../../entities/Student.js");
@@ -897,6 +926,7 @@ export class TeacherHomeworkService {
       ) {
         continue;
       }
+      // Assignee key in tutor homework is the linked User.id (not students.id).
       if (enrollment.student?.userId) {
         studentIds.add(enrollment.student.userId);
       }

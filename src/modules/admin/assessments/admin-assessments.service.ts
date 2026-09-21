@@ -30,8 +30,9 @@ import {
   assessmentSessionSyncService,
 } from "./assessment-session-sync.service.js";
 import {
+  assessmentMarkedNotificationPayload,
   assessmentNotificationPayload,
-  notifyStudentUsers,
+  notifyUsers,
 } from "../../notifications/domain-notifications.js";
 
 export type AssessmentInput = {
@@ -1005,14 +1006,22 @@ export class AdminAssessmentsService {
       );
     }
     if (studentIds.length > 0) {
-      void notifyStudentUsers(studentIds, () =>
-        assessmentNotificationPayload({
-          assessmentId: saved.id,
-          name: saved.name,
-          subject: saved.subject,
-          assessmentDate: String(saved.assessmentDate).slice(0, 10),
-          kind: saved.kind,
-        }),
+      // studentIds are User.id values in this module — notifyUsers, not notifyStudentUsers.
+      const payload = assessmentNotificationPayload({
+        assessmentId: saved.id,
+        name: saved.name,
+        subject: saved.subject,
+        assessmentDate: String(saved.assessmentDate).slice(0, 10),
+        kind: saved.kind,
+      });
+      void notifyUsers(
+        studentIds.map((userId) => ({
+          userId,
+          type: payload.type,
+          title: payload.title,
+          body: payload.body,
+          data: payload.data ?? null,
+        })),
       );
     }
     return this.getById(saved.id);
@@ -1216,14 +1225,21 @@ export class AdminAssessmentsService {
 
     const newlyAdded = studentIds.filter((sid) => !existingStudentIds.includes(sid));
     if (newlyAdded.length > 0) {
-      void notifyStudentUsers(newlyAdded, () =>
-        assessmentNotificationPayload({
-          assessmentId: assessment.id,
-          name: assessment.name,
-          subject: assessment.subject,
-          assessmentDate: String(assessment.assessmentDate).slice(0, 10),
-          kind: assessment.kind,
-        }),
+      const payload = assessmentNotificationPayload({
+        assessmentId: assessment.id,
+        name: assessment.name,
+        subject: assessment.subject,
+        assessmentDate: String(assessment.assessmentDate).slice(0, 10),
+        kind: assessment.kind,
+      });
+      void notifyUsers(
+        newlyAdded.map((userId) => ({
+          userId,
+          type: payload.type,
+          title: payload.title,
+          body: payload.body,
+          data: payload.data ?? null,
+        })),
       );
     }
 
@@ -1538,6 +1554,23 @@ export class AdminAssessmentsService {
     submission.markedById = actor.id;
     submission.markNotes = input.markNotes?.trim() || null;
     await AppDataSource.getRepository(AssessmentSubmission).save(submission);
+
+    const markedPayload = assessmentMarkedNotificationPayload({
+      assessmentId,
+      name: assessment.name,
+      mark,
+      totalMarks: marksNumber(assessment.totalMarks),
+      kind: assessment.kind,
+    });
+    void notifyUsers([
+      {
+        userId: studentId,
+        type: markedPayload.type,
+        title: markedPayload.title,
+        body: markedPayload.body,
+        data: markedPayload.data ?? null,
+      },
+    ]);
 
     try {
       const {
