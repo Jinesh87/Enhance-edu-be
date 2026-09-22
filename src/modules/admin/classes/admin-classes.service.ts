@@ -4,6 +4,10 @@ import {
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
+import {
+  shouldSkipClassSessionCreation,
+} from "../../../common/utils/class-occurrence-guards.js";
+import { reconcileBlockedClassSessions } from "../../../common/utils/class-session-purge.js";
 import { buildScheduleSlotKey, startTimeFromDayTime } from "../../../common/utils/schedule-slot.js";
 import {
   sessionStatus,
@@ -18,6 +22,7 @@ import {
   ClassStudent,
   ScanEvent,
   Task,
+  Term,
 } from "../../../entities/index.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import { In, IsNull, Not } from "typeorm";
@@ -364,11 +369,7 @@ export class AdminClassesService {
     return dayName;
   }
 
-  /**
-   * Classes table list. Prefer summaryOnly=true — returns subject/term rows only.
-   * templateOnly=true — unique weekday slots for edit timetable (slim payload).
-   * Full class DTOs are returned only when both flags are false.
-   */
+
   async list(filters?: {
     page?: number;
     limit?: number;
@@ -643,39 +644,46 @@ export class AdminClassesService {
 
     // Generate Session entity in sessions table for calendar and timetable
     if (saved.dayTime) {
-      const times = parseDayTime(saved.dayTime, saved.timeZone);
-      if (times) {
-        const sessionRepo = AppDataSource.getRepository(Session);
-        const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
-        const classStudentRepo = AppDataSource.getRepository(ClassStudent);
+      const skip = await shouldSkipClassSessionCreation({
+        dayTime: saved.dayTime,
+        timeZone: saved.timeZone,
+        termId: saved.term?.id ?? null,
+      });
+      if (!skip) {
+        const times = parseDayTime(saved.dayTime, saved.timeZone);
+        if (times) {
+          const sessionRepo = AppDataSource.getRepository(Session);
+          const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
+          const classStudentRepo = AppDataSource.getRepository(ClassStudent);
 
-        const newSession = await sessionRepo.save(
-          sessionRepo.create({
-            classId: saved.id,
-            startAt: times.startAt,
-            endAt: times.endAt,
-            room: saved.room || null,
-            classroomId: saved.classroomId || null,
-            teacherId: saved.teacher?.id || null,
-            gracePeriodMinutes: resolved.gracePeriodMinutes ?? 25,
-          }),
-        );
-
-        const enrolments = await classStudentRepo.find({
-          where: { classId: saved.id },
-        });
-        for (const enrol of enrolments) {
-          if (!isStudentAccountableForSession(newSession, enrol.createdAt)) {
-            continue;
-          }
-          await attendanceRepo.save(
-            attendanceRepo.create({
-              sessionId: newSession.id,
-              studentId: enrol.studentId,
-              status: AttendanceStatus.PENDING,
-              scannedAt: null,
+          const newSession = await sessionRepo.save(
+            sessionRepo.create({
+              classId: saved.id,
+              startAt: times.startAt,
+              endAt: times.endAt,
+              room: saved.room || null,
+              classroomId: saved.classroomId || null,
+              teacherId: saved.teacher?.id || null,
+              gracePeriodMinutes: resolved.gracePeriodMinutes ?? 25,
             }),
           );
+
+          const enrolments = await classStudentRepo.find({
+            where: { classId: saved.id },
+          });
+          for (const enrol of enrolments) {
+            if (!isStudentAccountableForSession(newSession, enrol.createdAt)) {
+              continue;
+            }
+            await attendanceRepo.save(
+              attendanceRepo.create({
+                sessionId: newSession.id,
+                studentId: enrol.studentId,
+                status: AttendanceStatus.PENDING,
+                scannedAt: null,
+              }),
+            );
+          }
         }
       }
     }
@@ -866,7 +874,34 @@ export class AdminClassesService {
     subject?: string;
   }) {
     const sessionRepo = AppDataSource.getRepository(Session);
-    const classRepo = AppDataSource.getRepository(Class);
+
+    // Resolve matching terms first so we can purge illegal class sessions on
+    // active FULL_DAY / holiday dates before serving calendar data.
+    const termQb = AppDataSource.getRepository(Term)
+      .createQueryBuilder("term")
+      .leftJoin("term.academicYear", "academicYear")
+      .leftJoin("term.yearLevel", "yearLevel")
+      .select(["term.id"]);
+
+    if (filters?.year != null && !Number.isNaN(filters.year)) {
+      termQb.andWhere("academicYear.year = :year", { year: filters.year });
+    }
+    if (filters?.term?.trim()) {
+      termQb.andWhere("LOWER(term.name) LIKE :term", {
+        term: `%${filters.term.trim().toLowerCase()}%`,
+      });
+    }
+    if (filters?.yearLevel?.trim()) {
+      termQb.andWhere("yearLevel.name = :yearLevel", {
+        yearLevel: filters.yearLevel.trim(),
+      });
+    }
+
+    const matchedTerms = await termQb.getMany();
+    const termIds = matchedTerms.map((t) => t.id);
+    if (termIds.length > 0) {
+      await reconcileBlockedClassSessions(termIds);
+    }
 
     const qb = sessionRepo
       .createQueryBuilder("session")
@@ -940,117 +975,8 @@ export class AdminClassesService {
       });
     }
 
-    // Classes created via bulk schedule may have dayTime but no Session row
-    // (bulk historically skipped past/ended occurrences). Backfill those so
-    // calendar, attendance, and timetables stay consistent.
-    const classQb = classRepo
-      .createQueryBuilder("class")
-      .leftJoinAndSelect("class.teacher", "teacher")
-      .leftJoinAndSelect("class.term", "term")
-      .leftJoinAndSelect("term.academicYear", "academicYear")
-      .leftJoinAndSelect("term.yearLevel", "yearLevel")
-      .leftJoinAndSelect("class.classroom", "classroom")
-      .where("class.dayTime IS NOT NULL");
-
-    if (filters?.year != null && !Number.isNaN(filters.year)) {
-      classQb.andWhere("academicYear.year = :year", { year: filters.year });
-    }
-    if (filters?.term?.trim()) {
-      classQb.andWhere("LOWER(term.name) LIKE :term", {
-        term: `%${filters.term.trim().toLowerCase()}%`,
-      });
-    }
-    if (filters?.yearLevel?.trim()) {
-      classQb.andWhere("yearLevel.name = :yearLevel", {
-        yearLevel: filters.yearLevel.trim(),
-      });
-    }
-    if (filters?.teacherId?.trim()) {
-      classQb.andWhere("teacher.id = :teacherId", {
-        teacherId: filters.teacherId.trim(),
-      });
-    }
-    if (filters?.subject?.trim()) {
-      classQb.andWhere("class.subject = :subject", {
-        subject: filters.subject.trim(),
-      });
-    }
-
-    const matchingClasses = await classQb.getMany();
-    const existingKeys = new Set(
-      sessionRows.map(
-        (row) => `${row.classId}|${row.startAt.getTime()}`,
-      ),
-    );
-    // Also skip backfill when any session already exists for the class
-    // (one dayTime occurrence per class in this product model).
-    const classIdsWithSessions = new Set(
-      sessionRows
-        .map((row) => row.classId)
-        .filter((id): id is string => Boolean(id)),
-    );
-
-    const toBackfill: Session[] = [];
-    for (const cls of matchingClasses) {
-      if (!cls.id || classIdsWithSessions.has(cls.id)) continue;
-      const times = parseDayTime(cls.dayTime, cls.timeZone);
-      if (!times) continue;
-
-      const localDate = calendarDateInTimeZone(times.startAt, resolveIanaTimeZone(cls.timeZone));
-      if (fromKey && localDate < fromKey) continue;
-      if (toKey && localDate > toKey) continue;
-
-      const key = `${cls.id}|${times.startAt.getTime()}`;
-      if (existingKeys.has(key)) continue;
-
-      toBackfill.push(
-        sessionRepo.create({
-          classId: cls.id,
-          startAt: times.startAt,
-          endAt: times.endAt,
-          room: cls.room || null,
-          classroomId: cls.classroomId || null,
-          teacherId: cls.teacher?.id || null,
-          gracePeriodMinutes: 25,
-        }),
-      );
-      existingKeys.add(key);
-      classIdsWithSessions.add(cls.id);
-    }
-
-    if (toBackfill.length > 0) {
-      const saved = await sessionRepo.save(toBackfill);
-      const attendanceRepo = AppDataSource.getRepository(AttendanceRecord);
-      const classStudentRepo = AppDataSource.getRepository(ClassStudent);
-      const nowMs = Date.now();
-
-      for (const session of saved) {
-        const status = sessionStatus(session.startAt, session.endAt, nowMs);
-        // Only seed attendance for sessions that still matter operationally.
-        if (status !== "UPCOMING" && status !== "LIVE") continue;
-        if (!session.classId) continue;
-
-        const enrolments = await classStudentRepo.find({
-          where: { classId: session.classId },
-        });
-        for (const enrol of enrolments) {
-          if (!isStudentAccountableForSession(session, enrol.createdAt)) {
-            continue;
-          }
-          await attendanceRepo.save(
-            attendanceRepo.create({
-              sessionId: session.id,
-              studentId: enrol.studentId,
-              status: AttendanceStatus.PENDING,
-              scannedAt: null,
-            }),
-          );
-        }
-      }
-
-      // Re-load with relations so response matches normal calendar rows.
-      sessionRows = await qb.getMany();
-    }
+    // Read-only response: sessions are created only via calendar add (+) or
+    // classes bulk update — never here.
 
     return {
       sessions: applySequentialLessonLabels(

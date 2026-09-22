@@ -265,8 +265,8 @@ export class AdminClassesRepository {
   }
 
   /**
-   * Classes in a term (by id and/or name) — same match rules as
-   * assertTermScheduleAvailable, without loading every class.
+   * Classes in one concrete term (year-level scoped).
+   * Prefer termId — matching by term name alone would collide across Year 1/2/… .
    */
   async findForTermScheduleOccupancy(
     termId?: string | null,
@@ -285,12 +285,8 @@ export class AdminClassesRepository {
       .leftJoinAndSelect("term.yearLevel", "yearLevel")
       .leftJoinAndSelect("cls.classroom", "classroom");
 
-    if (termId && termNeedle) {
-      qb.andWhere(
-        "(term.id = :termId OR LOWER(COALESCE(term.name, cls.termName, '')) = :termNeedle)",
-        { termId, termNeedle },
-      );
-    } else if (termId) {
+    if (termId) {
+      // Exact term only — never widen by shared names like "Term 2".
       qb.andWhere("term.id = :termId", { termId });
     } else {
       qb.andWhere(
