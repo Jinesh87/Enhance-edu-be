@@ -7,7 +7,6 @@ import {
   type ObjectLiteral,
   type SelectQueryBuilder,
 } from "typeorm";
-import { parseDayTime } from "../../../common/utils/timezone.js";
 import {
   Session,
   Class,
@@ -147,71 +146,12 @@ export class AttendanceRepository {
     });
   }
 
-  async ensureSessionsExistForClassIds(classIds: string[]): Promise<void> {
-    if (classIds.length === 0) return;
-
-    const existingSessions = await this.sessions.find({
-      where: { classId: In(classIds), assessmentId: IsNull() },
-      select: { classId: true },
-    });
-    const classesWithSessions = new Set(
-      existingSessions.map((s) => s.classId).filter(Boolean),
-    );
-
-    const missingClassIds = classIds.filter(
-      (id) => !classesWithSessions.has(id),
-    );
-    if (missingClassIds.length === 0) return;
-
-    const missingClasses = await this.classes.find({
-      where: { id: In(missingClassIds) },
-    });
-
-    const sessionsToCreate: Session[] = [];
-    for (const c of missingClasses) {
-      if (!c.dayTime) continue;
-      try {
-        const times = parseDayTime(c.dayTime, c.timeZone);
-        if (!times) continue;
-        sessionsToCreate.push(
-          this.sessions.create({
-            classId: c.id,
-            assessmentId: null,
-            startAt: times.startAt,
-            endAt: times.endAt,
-            room: c.room || null,
-            classroomId: c.classroomId || null,
-            gracePeriodMinutes: 25,
-          }),
-        );
-      } catch (err) {
-        console.error(
-          "Failed to parse dayTime during self-healing:",
-          c.dayTime,
-          err,
-        );
-      }
-    }
-
-    if (sessionsToCreate.length > 0) {
-      const savedSessions = await this.sessions.save(sessionsToCreate);
-      for (const s of savedSessions) {
-        if (!s.classId) continue;
-        const enrolments = await this.findEnrolmentsByClassId(s.classId);
-        for (const enrol of enrolments) {
-          if (!isStudentAccountableForSession(s, enrol.createdAt)) continue;
-          const existing = await this.findAttendanceRecord(s.id, enrol.studentId);
-          if (!existing) {
-            await this.createAttendanceRecord({
-              sessionId: s.id,
-              studentId: enrol.studentId,
-              status: AttendanceStatus.PENDING,
-              scannedAt: null,
-            });
-          }
-        }
-      }
-    }
+  /**
+   * Intentionally a no-op. Class sessions are created only via admin calendar
+   * add or classes bulk update — never by opening student/tutor dashboards.
+   */
+  async ensureSessionsExistForClassIds(_classIds: string[]): Promise<void> {
+    return;
   }
 
   async findSessionsByClassIds(

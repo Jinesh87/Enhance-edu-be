@@ -9,6 +9,7 @@ import {
   parseDayTime,
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
+import { purgeClassSessionsOnDates } from "../../../common/utils/class-session-purge.js";
 import {
   Assessment,
   AssessmentSubmission,
@@ -1031,37 +1032,10 @@ export class AdminAssessmentsService {
     termId: string,
     assessmentDate: string,
   ) {
-    const dateStr = String(assessmentDate).slice(0, 10);
-    const startBuffer = new Date(
-      Date.parse(`${dateStr}T00:00:00.000Z`) - 24 * 60 * 60 * 1000,
-    );
-    const endBuffer = new Date(
-      Date.parse(`${dateStr}T23:59:59.999Z`) + 24 * 60 * 60 * 1000,
-    );
-
-    const qb = AppDataSource.getRepository(Session)
-      .createQueryBuilder("session")
-      .leftJoinAndSelect("session.class", "class")
-      .where(
-        "session.startAt >= :startBuffer AND session.startAt <= :endBuffer",
-        {
-          startBuffer,
-          endBuffer,
-        },
-      )
-      .andWhere("session.classId IS NOT NULL")
-      .andWhere("class.termId = :termId", { termId });
-
-    const sessions = await qb.getMany();
-    const toRemove = sessions.filter((s) => {
-      const tz = s.class?.timeZone || DEFAULT_CLASS_TIMEZONE;
-      const dateKey = calendarDateInTimeZone(s.startAt, tz);
-      return dateKey === dateStr;
+    await purgeClassSessionsOnDates({
+      dates: [String(assessmentDate).slice(0, 10)],
+      termId,
     });
-
-    if (toRemove.length > 0) {
-      await AppDataSource.getRepository(Session).remove(toRemove);
-    }
   }
 
   async update(id: string, input: Partial<AssessmentInput>) {
@@ -1251,6 +1225,12 @@ export class AdminAssessmentsService {
     if (!assessment) {
       throw new AppError(404, "Assessment not found", "ASSESSMENT_NOT_FOUND");
     }
+    if (assessment.scheduleType === "FULL_DAY") {
+      await purgeClassSessionsOnDates({
+        dates: [String(assessment.assessmentDate).slice(0, 10)],
+        termId: assessment.termId,
+      });
+    }
     assessment.status = "ARCHIVED";
     await this.repo.save(assessment);
     await assessmentSessionSyncService.syncFromAssessment(id);
@@ -1261,6 +1241,14 @@ export class AdminAssessmentsService {
     const assessment = await this.repo.findById(id);
     if (!assessment) {
       throw new AppError(404, "Assessment not found", "ASSESSMENT_NOT_FOUND");
+    }
+    // Keep the day empty after removing a full-day exam: never leave orphan
+    // class sessions (or one-shot dayTime) that would reappear on calendar load.
+    if (assessment.scheduleType === "FULL_DAY") {
+      await purgeClassSessionsOnDates({
+        dates: [String(assessment.assessmentDate).slice(0, 10)],
+        termId: assessment.termId,
+      });
     }
     // Session.assessmentId has ON DELETE CASCADE; delete assessment sitting+row.
     await this.repo.deleteById(id);

@@ -21,6 +21,10 @@ import {
   resolveIanaTimeZone,
 } from "../../../common/utils/timezone.js";
 import {
+  isClassOccurrenceBlocked,
+  loadClassOccurrenceBlockers,
+} from "../../../common/utils/class-occurrence-guards.js";
+import {
   buildHomeworkSubmissionKey,
   deleteObject,
   storeUploadedObject,
@@ -853,29 +857,44 @@ export class StudentClassesService {
       context,
     );
 
-    const fullDayExamDates = new Set(
-      assessmentLessons
-        .filter((lesson) => lesson.scheduleType === "FULL_DAY")
-        .map((lesson) =>
-          calendarDateInTimeZone(
-            new Date(lesson.startAt),
-            lesson.timeZone || DEFAULT_CLASS_TIMEZONE,
-          ),
+    const termIds = [
+      ...new Set(
+        classes
+          .map((cls) => cls.term?.id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const blockers = await loadClassOccurrenceBlockers(termIds);
+    const fullDayExamDates = new Set<string>();
+    for (const termId of termIds) {
+      const dates = blockers.fullDayDatesByTerm.get(termId);
+      if (dates) {
+        for (const date of dates) fullDayExamDates.add(date);
+      }
+    }
+    // Also include any FULL_DAY assessments already visible to this student
+    for (const lesson of assessmentLessons) {
+      if (lesson.scheduleType !== "FULL_DAY") continue;
+      fullDayExamDates.add(
+        calendarDateInTimeZone(
+          new Date(lesson.startAt),
+          lesson.timeZone || DEFAULT_CLASS_TIMEZONE,
         ),
-    );
+      );
+    }
+
     const classLessons = await this.buildClassLessons(
       userId,
       classes,
       fullDayExamDates,
     );
 
-    const holidays = await AppDataSource.getRepository(Holiday).find();
     const isHolidayDate = (date: Date, timeZone?: string) => {
       const dateStr = calendarDateInTimeZone(
         date,
         timeZone || DEFAULT_CLASS_TIMEZONE,
       );
-      return holidays.some(
+      return blockers.holidays.some(
         (h) => dateStr >= h.startDate && dateStr <= h.endDate,
       );
     };
@@ -885,6 +904,10 @@ export class StudentClassesService {
         new Date(lesson.startAt),
         lesson.timeZone || DEFAULT_CLASS_TIMEZONE,
       );
+      const termId = classes.find((c) => c.id === lesson.classId)?.term?.id;
+      if (termId) {
+        return !isClassOccurrenceBlocked(lessonDate, termId, blockers);
+      }
       return (
         !fullDayExamDates.has(lessonDate) &&
         !isHolidayDate(new Date(lesson.startAt), lesson.timeZone)
@@ -956,30 +979,8 @@ export class StudentClassesService {
       ]),
     );
 
-    const toCreate = nonHolidayTimed.filter(
-      (row) => !sessionByKey.has(`${row.cls.id}|${row.startAt.getTime()}`),
-    );
-    if (toCreate.length > 0) {
-      const created = await this.sessions.save(
-        toCreate.map((row) =>
-          this.sessions.create({
-            classId: row.cls.id,
-            assessmentId: null,
-            startAt: row.startAt,
-            endAt: row.endAt,
-            room: row.cls.room,
-            classroomId: row.cls.classroomId || null,
-            gracePeriodMinutes: 25,
-          }),
-        ),
-      );
-      for (const session of created) {
-        sessionByKey.set(
-          `${session.classId}|${new Date(session.startAt).getTime()}`,
-          session,
-        );
-      }
-    }
+    // Do not auto-create missing sessions from dayTime. Sessions exist only
+    // when created via admin calendar add or classes bulk update.
 
     const sessionIds = [...sessionByKey.values()].map((session) => session.id);
     const attendanceRows = sessionIds.length
