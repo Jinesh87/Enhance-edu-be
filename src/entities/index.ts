@@ -97,3 +97,4 @@ export * from "./LearningFlashcardProgress.js";
 export * from "./Announcement.js";
 export * from "./ChatConversation.js";
 export * from "./ChatMessage.js";
+export * from "./ChatUserPublicKey.js";
