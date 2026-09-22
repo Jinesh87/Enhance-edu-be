@@ -79,6 +79,7 @@ import {
   Announcement,
   ChatConversation,
   ChatMessage,
+  ChatUserPublicKey,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -1448,6 +1449,18 @@ export async function ensureChatSchema() {
       ON chat_messages ("conversationId");
     CREATE INDEX IF NOT EXISTS "IDX_chat_messages_senderUserId"
       ON chat_messages ("senderUserId");
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS "encryptionVersion" int NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS chat_user_public_keys (
+      "userId" uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      "publicKey" text NOT NULL,
+      "algorithm" varchar(16) NOT NULL DEFAULT 'P-256',
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_chat_user_public_keys_updatedAt"
+      ON chat_user_public_keys ("updatedAt");
   `);
 
   await bootstrap.destroy();
@@ -1537,6 +1550,7 @@ export const AppDataSource = new DataSource({
     Announcement,
     ChatConversation,
     ChatMessage,
+    ChatUserPublicKey,
   ],
   migrations: [],
   subscribers: [],

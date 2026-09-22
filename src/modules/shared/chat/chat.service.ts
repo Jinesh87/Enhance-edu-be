@@ -61,7 +61,8 @@ import { logger } from "../../../config/logger.js";
 import sharp from "sharp";
 
 const MESSAGE_PAGE_SIZE = 50;
-const MAX_BODY_LENGTH = 4000;
+const MAX_BODY_LENGTH = 16000;
+const MAX_PLAIN_BODY_LENGTH = 4000;
 const CHAT_THUMB_MAX_EDGE = 480;
 const CHAT_THUMB_WEBP_QUALITY = 70;
 
@@ -220,6 +221,7 @@ export type ChatMessageDto = {
   conversationId: string;
   senderUserId: string;
   body: string;
+  encryptionVersion: number;
   hasImage: boolean;
   hasThumbnail: boolean;
   image: {
@@ -247,6 +249,32 @@ function messageStatus(message: ChatMessage): ChatMessageDto["status"] {
 function messagePreview(message: ChatMessage | null | undefined): string | null {
   if (!message) return null;
   if (message.deletedAt) return "Message deleted";
+  if ((message.encryptionVersion ?? 0) >= 1) {
+    if (message.storageKey) {
+      const raw = (message.mimeType ?? "").toLowerCase();
+      let mime = raw;
+      const origMatch = raw.match(/;\s*orig=([^;]+)/);
+      if (origMatch?.[1]) {
+        try {
+          mime = decodeURIComponent(origMatch[1]).toLowerCase();
+        } catch {
+          mime = raw;
+        }
+      }
+      if (mime.startsWith("image/") || raw.includes("encrypted-image")) {
+        return "Photo";
+      }
+      if (
+        mime.startsWith("audio/") ||
+        mime.startsWith("video/") ||
+        raw.includes("encrypted-audio")
+      ) {
+        return "Voice message";
+      }
+      return "Attachment";
+    }
+    return "Encrypted message";
+  }
   const body = message.body?.trim() ?? "";
   if (body) return body.slice(0, 160);
   if (message.storageKey) {
@@ -261,18 +289,23 @@ function messagePreview(message: ChatMessage | null | undefined): string | null 
 
 function toReplyPreviewDto(message: ChatMessage): ChatReplyPreviewDto {
   const deleted = Boolean(message.deletedAt);
+  const encrypted = (message.encryptionVersion ?? 0) >= 1;
   const hasImage = !deleted && Boolean(message.storageKey);
   return {
     id: message.id,
     senderUserId: message.senderUserId,
-    body: deleted ? "" : (message.body ?? "").slice(0, 160),
+    body: deleted
+      ? ""
+      : encrypted
+        ? message.body
+        : (message.body ?? "").slice(0, 160),
     hasImage,
     image:
-      hasImage && message.originalName && message.mimeType
+      hasImage && message.originalName && message.mimeType && message.byteSize != null
         ? {
             originalName: message.originalName,
             mimeType: message.mimeType,
-            byteSize: message.byteSize ?? 0,
+            byteSize: message.byteSize,
           }
         : null,
     deletedAt: message.deletedAt?.toISOString() ?? null,
@@ -291,6 +324,7 @@ function toMessageDto(
     conversationId: message.conversationId,
     senderUserId: message.senderUserId,
     body: deleted ? "" : message.body,
+    encryptionVersion: message.encryptionVersion ?? 0,
     hasImage,
     hasThumbnail: hasImage && Boolean(message.thumbnailStorageKey),
     image:
@@ -1033,6 +1067,7 @@ export class ChatService {
         { userId },
       )
       .andWhere("message.deletedAt IS NULL")
+      .andWhere("(message.encryptionVersion IS NULL OR message.encryptionVersion = 0)")
       .andWhere("message.body ILIKE :needle", { needle: `%${query}%` })
       .andWhere(
         `(
@@ -1386,6 +1421,7 @@ export class ChatService {
       .createQueryBuilder("message")
       .where("message.conversationId = :conversationId", { conversationId })
       .andWhere("message.deletedAt IS NULL")
+      .andWhere("(message.encryptionVersion IS NULL OR message.encryptionVersion = 0)")
       .andWhere(
         "(message.body ILIKE :needle OR COALESCE(message.originalName, '') ILIKE :needle)",
         { needle: `%${query}%` },
@@ -1412,17 +1448,26 @@ export class ChatService {
     bodyRaw: string,
     fileUpload?: IncomingStoredFile | null,
     replyToMessageIdRaw?: string | null,
+    options?: {
+      encryptionVersion?: number;
+      encryptedAttachmentMime?: string | null;
+      encryptedAttachmentName?: string | null;
+    },
   ) {
     await assertChatRole(role);
 
+    const encryptionVersion =
+      options?.encryptionVersion === 1 ? 1 : 0;
     const body = bodyRaw.trim();
     if (!body && !fileUpload) {
       throw new AppError(400, "Message is required", "VALIDATION_ERROR");
     }
-    if (body.length > MAX_BODY_LENGTH) {
+    const maxLen =
+      encryptionVersion >= 1 ? MAX_BODY_LENGTH : MAX_PLAIN_BODY_LENGTH;
+    if (body.length > maxLen) {
       throw new AppError(
         400,
-        `Message must be at most ${MAX_BODY_LENGTH} characters`,
+        `Message must be at most ${maxLen} characters`,
         "VALIDATION_ERROR",
       );
     }
@@ -1446,7 +1491,7 @@ export class ChatService {
       }
     }
 
-    if (fileUpload?.buffer) {
+    if (fileUpload?.buffer && encryptionVersion < 1) {
       const mimeType = await assertValidChatAttachmentBuffer({
         buffer: fileUpload.buffer,
         originalName: fileUpload.originalName,
@@ -1454,7 +1499,7 @@ export class ChatService {
         size: fileUpload.size,
       });
       fileUpload.mimeType = mimeType;
-    } else if (fileUpload) {
+    } else if (fileUpload && encryptionVersion < 1) {
       const mime = fileUpload.mimeType.toLowerCase();
       if (!isChatAttachmentMime(mime)) {
         throw new AppError(
@@ -1466,13 +1511,23 @@ export class ChatService {
       if (!fileUpload.directStorageKey) {
         throw new AppError(400, "File data is required", "INVALID_UPLOAD");
       }
+    } else if (fileUpload && encryptionVersion >= 1) {
+      // Encrypted blob — accept as opaque octets (size already limited by multer).
+      const maxEncrypted = 22 * 1024 * 1024;
+      if (fileUpload.size > maxEncrypted) {
+        throw new AppError(400, "File is too large", "INVALID_UPLOAD");
+      }
+      fileUpload.mimeType = "application/octet-stream";
     }
 
     const peerOnline = isUserOnline(peerId);
+    const hintMime = options?.encryptedAttachmentMime?.trim() || null;
+    const hintName = options?.encryptedAttachmentName?.trim() || null;
     const message = this.messages.create({
       conversationId: conversation.id,
       senderUserId: userId,
       body,
+      encryptionVersion,
       storageKey: null,
       thumbnailStorageKey: null,
       originalName: null,
@@ -1490,22 +1545,39 @@ export class ChatService {
       const storageKey = buildChatImageKey({
         conversationId: conversation.id,
         messageId: message.id,
-        fileName: fileUpload.originalName,
+        fileName:
+          encryptionVersion >= 1
+            ? `${message.id}.enc`
+            : fileUpload.originalName,
       });
       try {
         const stored = await storeUploadedObject({
           finalKey: storageKey,
-          contentType: fileUpload.mimeType,
+          contentType:
+            encryptionVersion >= 1
+              ? "application/octet-stream"
+              : fileUpload.mimeType,
           buffer: fileUpload.buffer,
           directStorageKey: fileUpload.directStorageKey,
           byteSize: fileUpload.size,
         });
         message.storageKey = stored.key;
-        message.originalName = fileUpload.originalName;
-        message.mimeType = fileUpload.mimeType;
+        message.originalName =
+          encryptionVersion >= 1
+            ? hintName || fileUpload.originalName || `${message.id}.enc`
+            : fileUpload.originalName;
+        message.mimeType =
+          encryptionVersion >= 1
+            ? hintMime
+              ? `application/x-e2ee;orig=${encodeURIComponent(hintMime)}`
+              : "application/octet-stream"
+            : fileUpload.mimeType;
         message.byteSize = stored.byteSize || fileUpload.size;
 
-        if (isChatImageMime(fileUpload.mimeType)) {
+        if (
+          encryptionVersion < 1 &&
+          isChatImageMime(fileUpload.mimeType)
+        ) {
           const thumbKey = await createAndStoreChatThumbnail({
             conversationId: conversation.id,
             messageId: message.id,
@@ -1613,17 +1685,21 @@ export class ChatService {
     conversationId: string,
     messageId: string,
     bodyRaw: string,
+    encryptionVersionRaw?: number,
   ) {
     await assertChatRole(role);
 
+    const encryptionVersion = encryptionVersionRaw === 1 ? 1 : 0;
     const body = bodyRaw.trim();
     if (!body) {
       throw new AppError(400, "Message is required", "VALIDATION_ERROR");
     }
-    if (body.length > MAX_BODY_LENGTH) {
+    const maxLen =
+      encryptionVersion >= 1 ? MAX_BODY_LENGTH : MAX_PLAIN_BODY_LENGTH;
+    if (body.length > maxLen) {
       throw new AppError(
         400,
-        `Message must be at most ${MAX_BODY_LENGTH} characters`,
+        `Message must be at most ${maxLen} characters`,
         "VALIDATION_ERROR",
       );
     }
@@ -1654,6 +1730,7 @@ export class ChatService {
     }
 
     message.body = body;
+    message.encryptionVersion = encryptionVersion;
     message.editedAt = new Date();
     await this.messages.save(message);
 

@@ -22,7 +22,10 @@ import {
   searchChatQuerySchema,
   searchConversationMessagesQuerySchema,
   sendChatMessageSchema,
+  upsertChatPublicKeySchema,
+  chatUserIdParamsSchema,
 } from "./chat.validation.js";
+import { chatKeysService } from "./chat-keys.service.js";
 
 const router = Router();
 
@@ -36,6 +39,62 @@ router.use(
     UserRole.OFFICE_STAFF,
   ),
 );
+
+router.get("/keys/me", async (req, res, next) => {
+  try {
+    const data = await chatKeysService.getMyPublicKey(req.user!.id);
+    res.status(200).json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put(
+  "/keys/me",
+  validate(upsertChatPublicKeySchema),
+  async (req, res, next) => {
+    try {
+      const data = await chatKeysService.upsertMyPublicKey(
+        req.user!.id,
+        String(req.body.publicKey ?? ""),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  "/keys/users/:userId",
+  validate(chatUserIdParamsSchema, "params"),
+  async (req, res, next) => {
+    try {
+      const data = await chatKeysService.getUserPublicKey(
+        String(req.params.userId),
+      );
+      res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get("/keys/users", async (req, res, next) => {
+  try {
+    const raw = req.query.userIds;
+    const userIds = Array.isArray(raw)
+      ? raw.map(String)
+      : String(raw ?? "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean);
+    const data = await chatKeysService.getUsersPublicKeys(userIds);
+    res.status(200).json(data);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get("/contacts", chatController.listContacts);
 router.get("/conversations", chatController.listConversations);
