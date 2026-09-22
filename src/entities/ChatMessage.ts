@@ -38,6 +38,13 @@ export class ChatMessage {
   @Column({ type: "text" })
   body!: string;
 
+  /**
+   * 0 = plaintext (legacy). 1 = client-side E2EE (body is opaque ciphertext;
+   * attachment bytes are ciphertext when present).
+   */
+  @Column({ type: "int", default: 0 })
+  encryptionVersion!: number;
+
   @Column({ type: "varchar", length: 512, nullable: true })
   storageKey!: string | null;
 

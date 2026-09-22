@@ -49,7 +49,15 @@ export async function validateUploadedChatAttachments(
         "INVALID_UPLOAD",
       );
     }
+    const encryptionVersion = Number(req.body?.encryptionVersion ?? 0);
     for (const file of files) {
+      if (encryptionVersion >= 1) {
+        if (file.size > 22 * 1024 * 1024) {
+          throw new AppError(400, "File is too large", "INVALID_UPLOAD");
+        }
+        file.mimetype = "application/octet-stream";
+        continue;
+      }
       const result = await validateChatAttachmentBuffer({
         buffer: file.buffer,
         originalName: file.originalname,

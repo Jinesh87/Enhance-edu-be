@@ -117,6 +117,17 @@ class ChatController {
           req.body.replyToMessageId.trim()
           ? String(req.body.replyToMessageId).trim()
           : null,
+        {
+          encryptionVersion: Number(req.body.encryptionVersion ?? 0),
+          encryptedAttachmentMime:
+            typeof req.body.encryptedAttachmentMime === "string"
+              ? req.body.encryptedAttachmentMime
+              : null,
+          encryptedAttachmentName:
+            typeof req.body.encryptedAttachmentName === "string"
+              ? req.body.encryptedAttachmentName
+              : null,
+        },
       );
       res.status(201).json(data);
     } catch (error) {
@@ -189,6 +200,7 @@ class ChatController {
         String(req.params.conversationId),
         String(req.params.messageId),
         String(req.body.body ?? ""),
+        Number(req.body.encryptionVersion ?? 0),
       );
       res.status(200).json(data);
     } catch (error) {
