@@ -44,10 +44,50 @@ export type ChatPair =
       adminUserId: null;
     }
   | {
+      kind: "OFFICE_STAFF_OFFICE_STAFF";
+      studentUserId: null;
+      teacherUserId: string;
+      guardianUserId: null;
+      peerTeacherUserId: string;
+      adminUserId: null;
+    }
+  | {
       kind: "GUARDIAN_ADMIN";
       studentUserId: null;
       teacherUserId: null;
       guardianUserId: string;
+      peerTeacherUserId: null;
+      adminUserId: string;
+    }
+  | {
+      kind: "STUDENT_ADMIN";
+      studentUserId: string;
+      teacherUserId: null;
+      guardianUserId: null;
+      peerTeacherUserId: null;
+      adminUserId: string;
+    }
+  | {
+      kind: "OFFICE_TEACHER";
+      studentUserId: null;
+      teacherUserId: string;
+      guardianUserId: null;
+      peerTeacherUserId: null;
+      adminUserId: string;
+    }
+  | {
+      kind: "OFFICE_ADMIN";
+      studentUserId: null;
+      teacherUserId: string;
+      guardianUserId: null;
+      peerTeacherUserId: null;
+      adminUserId: string;
+    }
+  | {
+      kind: "TEACHER_ADMIN";
+      studentUserId: null;
+      teacherUserId: string;
+      guardianUserId: null;
       peerTeacherUserId: null;
       adminUserId: string;
     };
@@ -56,7 +96,7 @@ export function isAdminChatRole(role: UserRole) {
   return role === UserRole.SUPER_ADMIN;
 }
 
-/** Canonical order so teacher–teacher pairs are unique regardless of who opens. */
+/** Canonical order so peer pairs are unique regardless of who opens. */
 export function orderedTeacherPair(a: string, b: string): {
   teacherUserId: string;
   peerTeacherUserId: string;
@@ -602,6 +642,241 @@ export async function listAdminsForGuardian(
   }));
 }
 
+/** Other active office staff a given office staff member may message. */
+export async function listOfficeStaffForOfficeStaff(
+  officeStaffUserId: string,
+): Promise<ChatPeer[]> {
+  const rows = (await AppDataSource.query(
+    `
+    SELECT
+      u.id AS "userId",
+      u."fullName" AS "fullName",
+      u."preferredName" AS "preferredName",
+      u.role AS "role",
+      '[]'::json AS "sharedClasses"
+    FROM users u
+    WHERE u.role = $1
+      AND u.status = $2
+      AND u.id <> $3
+    ORDER BY COALESCE(NULLIF(u."preferredName", ''), u."fullName") ASC
+    `,
+    [UserRole.OFFICE_STAFF, UserStatus.ACTIVE, officeStaffUserId],
+  )) as Array<{
+    userId: string;
+    fullName: string;
+    preferredName: string | null;
+    role: UserRole;
+    sharedClasses: ChatPeer["sharedClasses"] | string;
+  }>;
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    fullName: row.fullName,
+    preferredName: row.preferredName,
+    role: row.role,
+    sharedClasses: parseSharedClasses(row.sharedClasses),
+    subtitle: "Office Staff",
+  }));
+}
+
+export async function assertOfficeStaffChatEnabled() {
+  if (!(await settingsService.isOfficeStaffChatEnabled())) {
+    throw new AppError(
+      403,
+      "Office staff chat is not enabled",
+      "CHAT_DISABLED",
+    );
+  }
+}
+
+export async function assertStudentAdminChatEnabled() {
+  if (!(await settingsService.isStudentAdminChatEnabled())) {
+    throw new AppError(
+      403,
+      "Student–admin chat is not enabled",
+      "CHAT_DISABLED",
+    );
+  }
+}
+
+export async function assertOfficeTeacherChatEnabled() {
+  if (!(await settingsService.isOfficeTeacherChatEnabled())) {
+    throw new AppError(
+      403,
+      "Office staff–teacher chat is not enabled",
+      "CHAT_DISABLED",
+    );
+  }
+}
+
+export async function assertOfficeAdminChatEnabled() {
+  if (!(await settingsService.isOfficeAdminChatEnabled())) {
+    throw new AppError(
+      403,
+      "Office staff–admin chat is not enabled",
+      "CHAT_DISABLED",
+    );
+  }
+}
+
+export async function assertTeacherAdminChatEnabled() {
+  if (!(await settingsService.isTeacherAdminChatEnabled())) {
+    throw new AppError(
+      403,
+      "Teacher–admin chat is not enabled",
+      "CHAT_DISABLED",
+    );
+  }
+}
+
+/** Active Super Admins (school-wide). */
+export async function listSuperAdmins(): Promise<ChatPeer[]> {
+  return listAdminsForGuardian("");
+}
+
+/** Active students a Super Admin may message. */
+export async function listStudentsForSuperAdmin(
+  _adminUserId: string,
+): Promise<ChatPeer[]> {
+  const rows = (await AppDataSource.query(
+    `
+    SELECT
+      u.id AS "userId",
+      u."fullName" AS "fullName",
+      u."preferredName" AS "preferredName",
+      u.role AS "role",
+      '[]'::json AS "sharedClasses"
+    FROM users u
+    WHERE u.role = $1
+      AND u.status = $2
+    ORDER BY COALESCE(NULLIF(u."preferredName", ''), u."fullName") ASC
+    `,
+    [UserRole.STUDENT, UserStatus.ACTIVE],
+  )) as Array<{
+    userId: string;
+    fullName: string;
+    preferredName: string | null;
+    role: UserRole;
+    sharedClasses: ChatPeer["sharedClasses"] | string;
+  }>;
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    fullName: row.fullName,
+    preferredName: row.preferredName,
+    role: row.role,
+    sharedClasses: parseSharedClasses(row.sharedClasses),
+    subtitle: "Student",
+  }));
+}
+
+/** Active teachers (STAFF) office staff may message school-wide. */
+export async function listTeachersForOfficeStaff(
+  _officeStaffUserId: string,
+): Promise<ChatPeer[]> {
+  const rows = (await AppDataSource.query(
+    `
+    SELECT
+      u.id AS "userId",
+      u."fullName" AS "fullName",
+      u."preferredName" AS "preferredName",
+      u.role AS "role",
+      '[]'::json AS "sharedClasses"
+    FROM users u
+    WHERE u.role = $1
+      AND u.status = $2
+    ORDER BY COALESCE(NULLIF(u."preferredName", ''), u."fullName") ASC
+    `,
+    [UserRole.STAFF, UserStatus.ACTIVE],
+  )) as Array<{
+    userId: string;
+    fullName: string;
+    preferredName: string | null;
+    role: UserRole;
+    sharedClasses: ChatPeer["sharedClasses"] | string;
+  }>;
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    fullName: row.fullName,
+    preferredName: row.preferredName,
+    role: row.role,
+    sharedClasses: parseSharedClasses(row.sharedClasses),
+    subtitle: "Teacher",
+  }));
+}
+
+/** Active office staff a teacher may message school-wide. */
+export async function listOfficeStaffForTeacher(
+  _teacherUserId: string,
+): Promise<ChatPeer[]> {
+  const rows = (await AppDataSource.query(
+    `
+    SELECT
+      u.id AS "userId",
+      u."fullName" AS "fullName",
+      u."preferredName" AS "preferredName",
+      u.role AS "role",
+      '[]'::json AS "sharedClasses"
+    FROM users u
+    WHERE u.role = $1
+      AND u.status = $2
+    ORDER BY COALESCE(NULLIF(u."preferredName", ''), u."fullName") ASC
+    `,
+    [UserRole.OFFICE_STAFF, UserStatus.ACTIVE],
+  )) as Array<{
+    userId: string;
+    fullName: string;
+    preferredName: string | null;
+    role: UserRole;
+    sharedClasses: ChatPeer["sharedClasses"] | string;
+  }>;
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    fullName: row.fullName,
+    preferredName: row.preferredName,
+    role: row.role,
+    sharedClasses: parseSharedClasses(row.sharedClasses),
+    subtitle: "Office Staff",
+  }));
+}
+
+/** Active office staff a Super Admin may message. */
+export async function listOfficeStaffForSuperAdmin(
+  _adminUserId: string,
+): Promise<ChatPeer[]> {
+  return listOfficeStaffForTeacher("");
+}
+
+/** Active Super Admins an office staff member may message. */
+export async function listSuperAdminsForOfficeStaff(
+  _officeStaffUserId: string,
+): Promise<ChatPeer[]> {
+  return listSuperAdmins();
+}
+
+/** Active teachers a Super Admin may message. */
+export async function listTeachersForSuperAdmin(
+  _adminUserId: string,
+): Promise<ChatPeer[]> {
+  return listTeachersForOfficeStaff("");
+}
+
+/** Active Super Admins a teacher may message. */
+export async function listSuperAdminsForTeacher(
+  _teacherUserId: string,
+): Promise<ChatPeer[]> {
+  return listSuperAdmins();
+}
+
+/** Active Super Admins a student may message. */
+export async function listSuperAdminsForStudent(
+  _studentUserId: string,
+): Promise<ChatPeer[]> {
+  return listSuperAdmins();
+}
+
 /** Active guardians an admin may message. */
 export async function listGuardiansForAdmin(
   _adminUserId: string,
@@ -669,21 +944,36 @@ export async function assertCanChat(
 
   if (actorRole === UserRole.STUDENT) {
     const teachers = await listTeachersForStudent(actorUserId);
-    if (!teachers.some((peer) => peer.userId === peerUserId)) {
-      throw new AppError(
-        403,
-        "You can only message teachers from your classes",
-        "CHAT_FORBIDDEN",
-      );
+    if (teachers.some((peer) => peer.userId === peerUserId)) {
+      return {
+        kind: "STUDENT_TEACHER",
+        studentUserId: actorUserId,
+        teacherUserId: peerUserId,
+        guardianUserId: null,
+        peerTeacherUserId: null,
+        adminUserId: null,
+      };
     }
-    return {
-      kind: "STUDENT_TEACHER",
-      studentUserId: actorUserId,
-      teacherUserId: peerUserId,
-      guardianUserId: null,
-      peerTeacherUserId: null,
-      adminUserId: null,
-    };
+
+    if (await settingsService.isStudentAdminChatEnabled()) {
+      const admins = await listSuperAdminsForStudent(actorUserId);
+      if (admins.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "STUDENT_ADMIN",
+          studentUserId: actorUserId,
+          teacherUserId: null,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: peerUserId,
+        };
+      }
+    }
+
+    throw new AppError(
+      403,
+      "You can only message teachers from your classes or Super Admins",
+      "CHAT_FORBIDDEN",
+    );
   }
 
   if (actorRole === UserRole.GUARDIAN) {
@@ -764,31 +1054,154 @@ export async function assertCanChat(
       }
     }
 
+    if (await settingsService.isOfficeTeacherChatEnabled()) {
+      const officeStaff = await listOfficeStaffForTeacher(actorUserId);
+      if (officeStaff.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "OFFICE_TEACHER",
+          studentUserId: null,
+          teacherUserId: actorUserId,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: peerUserId,
+        };
+      }
+    }
+
+    if (await settingsService.isTeacherAdminChatEnabled()) {
+      const admins = await listSuperAdminsForTeacher(actorUserId);
+      if (admins.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "TEACHER_ADMIN",
+          studentUserId: null,
+          teacherUserId: actorUserId,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: peerUserId,
+        };
+      }
+    }
+
     throw new AppError(
       403,
-      "You can only message students, guardians, or teachers linked to your classes",
+      "You can only message students, guardians, teachers, office staff, or Super Admins linked to your school",
       "CHAT_FORBIDDEN",
     );
   }
 
   if (isAdminChatRole(actorRole)) {
-    await assertGuardianAdminChatEnabled();
-    const guardians = await listGuardiansForAdmin(actorUserId);
-    if (!guardians.some((peer) => peer.userId === peerUserId)) {
-      throw new AppError(
-        403,
-        "You can only message guardians",
-        "CHAT_FORBIDDEN",
-      );
+    if (await settingsService.isGuardianAdminChatEnabled()) {
+      const guardians = await listGuardiansForAdmin(actorUserId);
+      if (guardians.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "GUARDIAN_ADMIN",
+          studentUserId: null,
+          teacherUserId: null,
+          guardianUserId: peerUserId,
+          peerTeacherUserId: null,
+          adminUserId: actorUserId,
+        };
+      }
     }
-    return {
-      kind: "GUARDIAN_ADMIN",
-      studentUserId: null,
-      teacherUserId: null,
-      guardianUserId: peerUserId,
-      peerTeacherUserId: null,
-      adminUserId: actorUserId,
-    };
+
+    if (await settingsService.isStudentAdminChatEnabled()) {
+      const students = await listStudentsForSuperAdmin(actorUserId);
+      if (students.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "STUDENT_ADMIN",
+          studentUserId: peerUserId,
+          teacherUserId: null,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: actorUserId,
+        };
+      }
+    }
+
+    if (await settingsService.isTeacherAdminChatEnabled()) {
+      const teachers = await listTeachersForSuperAdmin(actorUserId);
+      if (teachers.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "TEACHER_ADMIN",
+          studentUserId: null,
+          teacherUserId: peerUserId,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: actorUserId,
+        };
+      }
+    }
+
+    if (await settingsService.isOfficeAdminChatEnabled()) {
+      const officeStaff = await listOfficeStaffForSuperAdmin(actorUserId);
+      if (officeStaff.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "OFFICE_ADMIN",
+          studentUserId: null,
+          teacherUserId: peerUserId,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: actorUserId,
+        };
+      }
+    }
+
+    throw new AppError(
+      403,
+      "You can only message guardians, students, teachers, or office staff",
+      "CHAT_FORBIDDEN",
+    );
+  }
+
+  if (actorRole === UserRole.OFFICE_STAFF) {
+    if (await settingsService.isOfficeStaffChatEnabled()) {
+      const peers = await listOfficeStaffForOfficeStaff(actorUserId);
+      if (peers.some((peer) => peer.userId === peerUserId)) {
+        const ordered = orderedTeacherPair(actorUserId, peerUserId);
+        return {
+          kind: "OFFICE_STAFF_OFFICE_STAFF",
+          studentUserId: null,
+          teacherUserId: ordered.teacherUserId,
+          guardianUserId: null,
+          peerTeacherUserId: ordered.peerTeacherUserId,
+          adminUserId: null,
+        };
+      }
+    }
+
+    if (await settingsService.isOfficeTeacherChatEnabled()) {
+      const teachers = await listTeachersForOfficeStaff(actorUserId);
+      if (teachers.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "OFFICE_TEACHER",
+          studentUserId: null,
+          teacherUserId: peerUserId,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: actorUserId,
+        };
+      }
+    }
+
+    if (await settingsService.isOfficeAdminChatEnabled()) {
+      const admins = await listSuperAdminsForOfficeStaff(actorUserId);
+      if (admins.some((peer) => peer.userId === peerUserId)) {
+        return {
+          kind: "OFFICE_ADMIN",
+          studentUserId: null,
+          teacherUserId: actorUserId,
+          guardianUserId: null,
+          peerTeacherUserId: null,
+          adminUserId: peerUserId,
+        };
+      }
+    }
+
+    throw new AppError(
+      403,
+      "You can only message other office staff, teachers, or Super Admins",
+      "CHAT_FORBIDDEN",
+    );
   }
 
   throw new AppError(403, "Chat is not available for this role", "CHAT_FORBIDDEN");
@@ -801,7 +1214,15 @@ export function isGuardianTeacherConversation(conversation: {
   adminUserId?: string | null;
 }) {
   if (conversation.kind === "GUARDIAN_TEACHER") return true;
-  if (conversation.kind === "GUARDIAN_ADMIN") return false;
+  if (
+    conversation.kind === "GUARDIAN_ADMIN" ||
+    conversation.kind === "STUDENT_ADMIN" ||
+    conversation.kind === "OFFICE_TEACHER" ||
+    conversation.kind === "OFFICE_ADMIN" ||
+    conversation.kind === "TEACHER_ADMIN"
+  ) {
+    return false;
+  }
   return (
     Boolean(conversation.guardianUserId) &&
     Boolean(conversation.teacherUserId) &&
@@ -813,20 +1234,67 @@ export function isTeacherTeacherConversation(conversation: {
   kind?: ChatConversationKind | string | null;
   peerTeacherUserId?: string | null;
 }) {
+  if (conversation.kind === "OFFICE_STAFF_OFFICE_STAFF") return false;
   return (
     conversation.kind === "TEACHER_TEACHER" ||
     Boolean(conversation.peerTeacherUserId)
   );
 }
 
+export function isOfficeStaffPeerConversation(conversation: {
+  kind?: ChatConversationKind | string | null;
+}) {
+  return conversation.kind === "OFFICE_STAFF_OFFICE_STAFF";
+}
+
 export function isGuardianAdminConversation(conversation: {
   kind?: ChatConversationKind | string | null;
   adminUserId?: string | null;
+  guardianUserId?: string | null;
+  teacherUserId?: string | null;
+  studentUserId?: string | null;
 }) {
   return (
     conversation.kind === "GUARDIAN_ADMIN" ||
-    Boolean(conversation.adminUserId)
+    (Boolean(conversation.adminUserId) &&
+      Boolean(conversation.guardianUserId) &&
+      !conversation.teacherUserId &&
+      !conversation.studentUserId)
   );
+}
+
+export function isStudentAdminConversation(conversation: {
+  kind?: ChatConversationKind | string | null;
+  adminUserId?: string | null;
+  studentUserId?: string | null;
+  guardianUserId?: string | null;
+  teacherUserId?: string | null;
+}) {
+  return (
+    conversation.kind === "STUDENT_ADMIN" ||
+    (Boolean(conversation.adminUserId) &&
+      Boolean(conversation.studentUserId) &&
+      !conversation.guardianUserId &&
+      !conversation.teacherUserId)
+  );
+}
+
+export function isOfficeTeacherConversation(conversation: {
+  kind?: ChatConversationKind | string | null;
+}) {
+  return conversation.kind === "OFFICE_TEACHER";
+}
+
+export function isOfficeAdminConversation(conversation: {
+  kind?: ChatConversationKind | string | null;
+}) {
+  return conversation.kind === "OFFICE_ADMIN";
+}
+
+export function isTeacherAdminConversation(conversation: {
+  kind?: ChatConversationKind | string | null;
+}) {
+  return conversation.kind === "TEACHER_ADMIN";
 }
 
 export function peerDisplayName(peer: {

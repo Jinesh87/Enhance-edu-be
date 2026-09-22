@@ -36,6 +36,11 @@ export async function getInstitutionSettingsSummary(
         teacherChatEnabled: guardian.teacherChatEnabled,
         teacherPeerChatEnabled: guardian.teacherPeerChatEnabled,
         adminChatEnabled: guardian.adminChatEnabled,
+        officeStaffChatEnabled: guardian.officeStaffChatEnabled,
+        studentAdminChatEnabled: guardian.studentAdminChatEnabled,
+        officeTeacherChatEnabled: guardian.officeTeacherChatEnabled,
+        officeAdminChatEnabled: guardian.officeAdminChatEnabled,
+        teacherAdminChatEnabled: guardian.teacherAdminChatEnabled,
       },
       responseHint:
         "Summarise settings briefly in plain language. Never mention API keys or secrets.",

@@ -28,7 +28,13 @@ const router = Router();
 
 router.use(
   authenticate,
-  authorize(UserRole.STUDENT, UserRole.STAFF, UserRole.GUARDIAN, UserRole.SUPER_ADMIN),
+  authorize(
+    UserRole.STUDENT,
+    UserRole.STAFF,
+    UserRole.GUARDIAN,
+    UserRole.SUPER_ADMIN,
+    UserRole.OFFICE_STAFF,
+  ),
 );
 
 router.get("/contacts", chatController.listContacts);
