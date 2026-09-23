@@ -32,6 +32,7 @@ import { startSessionResourceIngestWorker } from "./common/queues/session-resour
 import { startBulkActionsWorker } from "./common/queues/bulk-actions-queue.js";
 import { startBriefingsWorker } from "./common/queues/briefings-queue.js";
 import { startNotificationsFanoutWorker } from "./common/queues/notifications-fanout-queue.js";
+import { startClassRemindersWorker } from "./common/queues/class-reminders-queue.js";
 import { attachChatSocket } from "./modules/shared/chat/chat-socket.js";
 import { repairChatMessageMediaLinks } from "./modules/shared/chat/repair-chat-media.js";
 
@@ -70,6 +71,7 @@ async function bootstrap() {
   startBulkActionsWorker();
   startBriefingsWorker();
   startNotificationsFanoutWorker();
+  startClassRemindersWorker();
 
   const server = http.createServer(app);
   attachChatSocket(server);

@@ -13,7 +13,9 @@ import { User } from "./User.js";
 import type { CommunicationAudience } from "./AdminAiCommunicationDraft.js";
 
 export type AnnouncementStatus = "DRAFT" | "PUBLISHED";
-export type AnnouncementDeliveryChannel = "IN_APP";
+export type AnnouncementSeverity = "GENERAL" | "EMERGENCY";
+/** Snapshot of channels used at publish time, e.g. "IN_APP,EMAIL" or "IN_APP,PUSH,EMAIL,SMS". */
+export type AnnouncementDeliveryChannel = string;
 
 @Entity("announcements")
 export class Announcement {
@@ -49,13 +51,16 @@ export class Announcement {
   @Column({ type: "varchar", length: 24, default: "PUBLISHED" })
   status!: AnnouncementStatus;
 
+  @Column({ type: "varchar", length: 24, default: "GENERAL" })
+  severity!: AnnouncementSeverity;
+
   @Column({ type: "jsonb" })
   audienceSnapshot!: CommunicationAudience;
 
   @Column({ type: "int", default: 0 })
   recipientCount!: number;
 
-  @Column({ type: "varchar", length: 24, default: "IN_APP" })
+  @Column({ type: "varchar", length: 64, default: "IN_APP" })
   deliveryChannel!: AnnouncementDeliveryChannel;
 
   @CreateDateColumn({ type: "timestamptz" })

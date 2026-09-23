@@ -341,18 +341,25 @@ export class AdminAiService {
   }
 
   private formatActionCommandPromptBlock(
-    actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message",
+    actionCommand?:
+      | "email"
+      | "announcement"
+      | "bulk-email"
+      | "bulk-message"
+      | "emergency",
   ): string {
     if (!actionCommand) return "";
     switch (actionCommand) {
       case "email":
         return `### EXPLICIT ACTION COMMAND DIRECTIVE: /email\nThe user initiated this message with action "/email".\nSTRICT INSTRUCTION:\n1. Call createCommunicationDraft to generate an interactive Email Preview for the user.\n2. Do NOT send email directly. The UI will render the email draft card for review and send confirmation.`;
       case "announcement":
-        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /announcement\nThe user initiated this message with action "/announcement".\nSTRICT INSTRUCTION:\n1. Call createAnnouncementDraft to generate an interactive Platform Notice Preview for the user.\n2. Delivery channel is IN_APP.\n3. Do NOT publish notice directly. The UI will render the announcement draft card for review and publish confirmation.`;
+        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /announcement\nThe user initiated this message with action "/announcement".\nSTRICT INSTRUCTION:\n1. Call createAnnouncementDraft with severity GENERAL to generate an interactive Platform Notice Preview.\n2. Default audience is roles:["ALL"] unless filters, year/class/subject, or @mentions are given.\n3. Delivery: in-app + email (settings-gated). Do NOT publish notice directly.`;
+      case "emergency":
+        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /emergency\nThe user initiated this message with action "/emergency".\nSTRICT INSTRUCTION:\n1. Call createAnnouncementDraft with severity EMERGENCY for an urgent centre closure / weather / safety alert.\n2. Default audience is roles:["ALL"] unless filters or @mentions are given.\n3. Delivery: in-app + push + email + SMS (settings-gated). Do NOT publish directly. The UI Approve & Publish confirms.`;
       case "bulk-email":
         return `### EXPLICIT ACTION COMMAND DIRECTIVE: /bulk-email\nThe user initiated this message with action "/bulk-email".\nSTRICT INSTRUCTION:\n1. Target the requested group or audience and create an email draft preview (via createCommunicationDraft or bulk action tools).\n2. Do NOT send immediately; present the interactive draft card for review.`;
       case "bulk-message":
-        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /bulk-message\nThe user initiated this message with action "/bulk-message".\nSTRICT INSTRUCTION:\n1. Target the requested audience and create an in-app notice/announcement preview (via createAnnouncementDraft).\n2. Present the interactive draft card for review and publish confirmation.`;
+        return `### EXPLICIT ACTION COMMAND DIRECTIVE: /bulk-message\nThe user initiated this message with action "/bulk-message".\nSTRICT INSTRUCTION:\n1. Target the requested audience and create an in-app notice/announcement preview (via createAnnouncementDraft with severity GENERAL).\n2. Present the interactive draft card for review and publish confirmation.`;
     }
   }
 
@@ -366,7 +373,7 @@ export class AdminAiService {
       label: string;
       fullName: string;
     }>,
-    actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message",
+    actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message" | "emergency",
   ): Promise<string> {
     const memories = await adminAiMemoryService.listForPrompt(actor);
     const memoryBlock = formatAdminAiMemoryPromptBlock(memories);
@@ -768,7 +775,7 @@ export class AdminAiService {
         role?: string;
         label: string;
       }>;
-      actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message";
+      actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message" | "emergency";
     },
   ) {
     const requestId = crypto.randomUUID();
@@ -927,6 +934,7 @@ export class AdminAiService {
             sources,
             settings: capabilitySettings,
             replyText,
+            actionCommand: input.actionCommand ?? null,
           });
           sources = filterSourcesByCapabilities(
             mergeSources(ensured.sources),
@@ -997,7 +1005,10 @@ export class AdminAiService {
               actor,
               name,
               call.function.arguments,
-              { userMessage: input.content },
+              {
+                userMessage: input.content,
+                actionCommand: input.actionCommand ?? null,
+              },
               capabilitySettings,
             );
             if (!isFailedCommunicationDraftToolResult(name, result.data)) {
@@ -1104,7 +1115,7 @@ export class AdminAiService {
         role?: string;
         label: string;
       }>;
-      actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message";
+      actionCommand?: "email" | "announcement" | "bulk-email" | "bulk-message" | "emergency";
     },
     emit: (event: string, data: unknown) => void,
     signal?: AbortSignal,
@@ -1293,6 +1304,7 @@ export class AdminAiService {
             sources,
             settings: capabilitySettings,
             replyText,
+            actionCommand: input.actionCommand ?? null,
           });
           sources = filterSourcesByCapabilities(
             mergeSources(ensured.sources),
@@ -1375,7 +1387,10 @@ export class AdminAiService {
               actor,
               name,
               call.function.arguments,
-              { userMessage: input.content },
+              {
+                userMessage: input.content,
+                actionCommand: input.actionCommand ?? null,
+              },
               capabilitySettings,
             );
             if (!isFailedCommunicationDraftToolResult(name, result.data)) {

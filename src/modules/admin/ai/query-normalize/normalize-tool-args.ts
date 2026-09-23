@@ -14,6 +14,11 @@ import { normalizeQueryText, stripQueryNoise } from "./text.js";
 export type NormalizeToolArgsContext = {
   /** Latest user message — used to recover intent when tool args are noisy. */
   userMessage?: string | null;
+  /**
+   * Explicit slash action from the composer (/emergency, /announcement, …).
+   * Authoritative for announcement severity — not left to the model.
+   */
+  actionCommand?: string | null;
 };
 
 function asTrimmedString(value: unknown): string | null {

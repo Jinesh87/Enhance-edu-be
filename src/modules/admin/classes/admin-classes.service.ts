@@ -37,6 +37,7 @@ import {
   sessionChangeNotificationService,
   sessionNotifyContextFromSession,
 } from "../../notifications/session-change-notifications.service.js";
+import { termScheduleNotificationService } from "../../notifications/term-schedule-notifications.service.js";
 
 function parseDayTimeStart(dayTime: string | null, timeZone?: string | null): Date | null {
   return parseDayTime(dayTime, timeZone)?.startAt ?? null;
@@ -850,6 +851,7 @@ export class AdminClassesService {
       resolved,
       gracePeriodMinutes,
     );
+    void termScheduleNotificationService.notifyTermSchedulePublished(termId);
     return {
       sessionCount: savedEntities.length,
       termId,

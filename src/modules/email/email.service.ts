@@ -68,6 +68,56 @@ export interface SendAbsenceAlertEmailParams {
   message: string;
 }
 
+export interface SendHomeworkOverdueEmailParams {
+  to: string;
+  guardianName: string;
+  studentFullName: string;
+  homeworkTitle: string;
+  subjectName: string;
+  dueDate: string;
+}
+
+export interface SendEnquiryCapturedEmailParams {
+  to: string;
+  staffName: string;
+  studentName: string;
+  guardianName: string;
+  subjectOfInterest: string;
+  enquiryLink: string;
+}
+
+export interface SendTrialConfirmedEmailParams {
+  to: string;
+  fullName: string;
+  studentName: string;
+  classLabel: string;
+  portalLink: string;
+}
+
+export interface SendEnrollmentAcceptedEmailParams {
+  to: string;
+  fullName: string;
+  studentName: string;
+  portalLink: string;
+  isStudent: boolean;
+}
+
+export interface SendHolidayReminderEmailParams {
+  to: string;
+  fullName: string;
+  holidayName: string;
+  dateLabel: string;
+  leadDays: 7 | 2;
+}
+
+export interface SendAnnouncementEmailParams {
+  to: string;
+  fullName: string;
+  title: string;
+  message: string;
+  emergency?: boolean;
+}
+
 export interface SendSessionChangeEmailParams {
   to: string;
   fullName: string;
@@ -76,6 +126,36 @@ export interface SendSessionChangeEmailParams {
   sessionWhen: string;
   classLabel: string;
 }
+
+export interface SendClassDigestEmailParams {
+  to: string;
+  fullName: string;
+  digestDateLabel: string;
+  sessions: Array<{
+    label: string;
+    when: string;
+    room: string;
+  }>;
+}
+
+export interface SendTermScheduleEmailParams {
+  to: string;
+  fullName: string;
+  termLabel: string;
+  termDateRange: string;
+  sessions: Array<{
+    label: string;
+    when: string;
+    room: string;
+  }>;
+  truncatedCount?: number;
+}
+
+export interface SendSessionChangeSmsParams {
+  to: string;
+  body: string;
+}
+
 export interface SendNewEnrollmentEmailParams {
   to: string;
   fullName: string;
@@ -440,6 +520,330 @@ export class EmailService {
     }
   }
 
+  async sendHomeworkOverdueEmail(
+    params: SendHomeworkOverdueEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+
+    if (!config) {
+      logger.warn(
+        { to: params.to },
+        "Email configuration not found, skipping homework overdue email",
+      );
+      return;
+    }
+
+    if (!config.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email sending is disabled, skipping homework overdue email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `Homework overdue — ${params.studentFullName}`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">Homework overdue</h1>
+    <p>Hi ${escapeHtml(params.guardianName)},</p>
+    <p>${escapeHtml(params.studentFullName)}&apos;s homework <strong>${escapeHtml(params.homeworkTitle)}</strong> is overdue.</p>
+    <p style="color: #7f8c8d; font-size: 14px; margin-top: 24px;">${escapeHtml(params.subjectName)} · was due ${escapeHtml(params.dueDate)}</p>
+    <p>Please open the app to follow up with your child or contact their tutor if needed.</p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send homework overdue email",
+        );
+        throw new AppError(
+          500,
+          "Failed to send homework overdue email",
+          "EMAIL_SEND_FAILED",
+          { error },
+        );
+      }
+
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Homework overdue email sent",
+      );
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      logger.error(
+        { err, to: params.to },
+        "Error sending homework overdue email",
+      );
+      throw new AppError(
+        500,
+        "Error sending homework overdue email",
+        "EMAIL_SEND_ERROR",
+        { error: err },
+      );
+    }
+  }
+
+  async sendEnquiryCapturedEmail(
+    params: SendEnquiryCapturedEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled/missing, skipping enquiry captured email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `New enquiry — ${params.studentName}`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">New enquiry</h1>
+    <p>Hi ${escapeHtml(params.staffName)},</p>
+    <p>A new enquiry was captured for <strong>${escapeHtml(params.studentName)}</strong>.</p>
+    <p style="color: #7f8c8d; font-size: 14px;">Guardian: ${escapeHtml(params.guardianName)} · Interest: ${escapeHtml(params.subjectOfInterest)}</p>
+    <p><a href="${escapeHtml(params.enquiryLink)}" style="color: #1F5C50;">Open enquiry</a></p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+      if (error) {
+        logger.error({ error, to: params.to }, "Failed to send enquiry email");
+        return;
+      }
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Enquiry captured email sent",
+      );
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending enquiry email");
+    }
+  }
+
+  async sendTrialConfirmedEmail(
+    params: SendTrialConfirmedEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled/missing, skipping trial confirmed email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `Trial confirmed — ${params.studentName}`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">Trial booking confirmed</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p>The trial for <strong>${escapeHtml(params.studentName)}</strong> (${escapeHtml(params.classLabel)}) is confirmed.</p>
+    <p><a href="${escapeHtml(params.portalLink)}" style="color: #1F5C50;">Open the portal</a></p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send trial confirmed email",
+        );
+        return;
+      }
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Trial confirmed email sent",
+      );
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending trial confirmed email");
+    }
+  }
+
+  async sendEnrollmentAcceptedEmail(
+    params: SendEnrollmentAcceptedEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled/missing, skipping enrolment accepted email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    const heading = params.isStudent
+      ? "You're enrolled"
+      : "Enrolment confirmed";
+    const body = params.isStudent
+      ? `Your enrolment for <strong>${escapeHtml(params.studentName)}</strong> is confirmed. Sign in to the student portal to get started.`
+      : `Enrolment for <strong>${escapeHtml(params.studentName)}</strong> is confirmed. Open the guardian portal to view classes and details.`;
+
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: params.isStudent
+          ? "You're enrolled — Enhance Education"
+          : `Enrolment confirmed — ${params.studentName}`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">${heading}</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p>${body}</p>
+    <p><a href="${escapeHtml(params.portalLink)}" style="color: #1F5C50;">Open the portal</a></p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send enrolment accepted email",
+        );
+        return;
+      }
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Enrolment accepted email sent",
+      );
+    } catch (err) {
+      logger.error(
+        { err, to: params.to },
+        "Error sending enrolment accepted email",
+      );
+    }
+  }
+
+  async sendHolidayReminderEmail(
+    params: SendHolidayReminderEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled/missing, skipping holiday reminder email",
+      );
+      return;
+    }
+
+    const when =
+      params.leadDays === 7 ? "in one week" : "in two days";
+    const resend = new Resend(config.resendApiKey);
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `${params.holidayName} — ${when}`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">Centre closed / holiday</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p><strong>${escapeHtml(params.holidayName)}</strong> is ${escapeHtml(when)} (${escapeHtml(params.dateLabel)}).</p>
+    <p>Classes that fall on this day will not run. Check the app for your updated schedule.</p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send holiday reminder email",
+        );
+        return;
+      }
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Holiday reminder email sent",
+      );
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending holiday reminder email");
+    }
+  }
+
+  async sendAnnouncementEmail(
+    params: SendAnnouncementEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled/missing, skipping announcement email",
+      );
+      return;
+    }
+
+    const heading = params.emergency ? "Emergency alert" : "Announcement";
+    const subjectPrefix = params.emergency ? "EMERGENCY: " : "";
+    const resend = new Resend(config.resendApiKey);
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `${subjectPrefix}${params.title}`.slice(0, 200),
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: ${params.emergency ? "#9a3412" : "#002c23"}; margin-bottom: 16px;">${escapeHtml(heading)}</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p><strong>${escapeHtml(params.title)}</strong></p>
+    <p style="white-space: pre-wrap;">${escapeHtml(params.message)}</p>
+  </div>
+</body>
+</html>`.trim(),
+      });
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send announcement email",
+        );
+        return;
+      }
+      logger.info(
+        { to: params.to, emailId: data?.id, emergency: Boolean(params.emergency) },
+        "Announcement email sent",
+      );
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending announcement email");
+    }
+  }
+
   async sendSessionChangeEmail(
     params: SendSessionChangeEmailParams,
   ): Promise<void> {
@@ -496,6 +900,155 @@ export class EmailService {
       );
     } catch (err) {
       logger.error({ err, to: params.to }, "Error sending session change email");
+    }
+  }
+
+  async sendClassDigestEmail(params: SendClassDigestEmailParams): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled or missing, skipping class digest email",
+      );
+      return;
+    }
+
+    const rows = params.sessions
+      .map(
+        (session) =>
+          `<li style="margin-bottom: 8px;"><strong>${escapeHtml(session.label)}</strong><br/><span style="color:#555;">${escapeHtml(session.when)} · Room ${escapeHtml(session.room)}</span></li>`,
+      )
+      .join("");
+
+    const resend = new Resend(config.resendApiKey);
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `Tomorrow's classes · ${params.digestDateLabel}`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">Tomorrow's classes</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p>Here are your sessions for <strong>${escapeHtml(params.digestDateLabel)}</strong>:</p>
+    <ul style="padding-left: 20px; margin: 16px 0;">${rows}</ul>
+  </div>
+</body>
+</html>`.trim(),
+      });
+
+      if (error) {
+        logger.error({ error, to: params.to }, "Failed to send class digest email");
+        return;
+      }
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Class digest email sent",
+      );
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending class digest email");
+    }
+  }
+
+  async sendTermScheduleEmail(
+    params: SendTermScheduleEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled or missing, skipping term schedule email",
+      );
+      return;
+    }
+
+    const rows = params.sessions
+      .map(
+        (session) =>
+          `<li style="margin-bottom: 8px;"><strong>${escapeHtml(session.label)}</strong><br/><span style="color:#555;">${escapeHtml(session.when)} · Room ${escapeHtml(session.room)}</span></li>`,
+      )
+      .join("");
+    const truncatedNote =
+      params.truncatedCount && params.truncatedCount > 0
+        ? `<p style="color:#7f8c8d;font-size:14px;">…and ${params.truncatedCount} more session${params.truncatedCount === 1 ? "" : "s"}.</p>`
+        : "";
+
+    const resend = new Resend(config.resendApiKey);
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `${params.termLabel} timetable`,
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f7f7f7; padding: 30px; border-radius: 8px;">
+    <h1 style="color: #002c23; margin-bottom: 16px;">Your term timetable</h1>
+    <p>Hi ${escapeHtml(params.fullName)},</p>
+    <p>Here is your schedule for <strong>${escapeHtml(params.termLabel)}</strong> (${escapeHtml(params.termDateRange)}):</p>
+    <ul style="padding-left: 20px; margin: 16px 0;">${rows}</ul>
+    ${truncatedNote}
+  </div>
+</body>
+</html>`.trim(),
+      });
+
+      if (error) {
+        logger.error(
+          { error, to: params.to },
+          "Failed to send term schedule email",
+        );
+        return;
+      }
+      logger.info(
+        { to: params.to, emailId: data?.id },
+        "Term schedule email sent",
+      );
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending term schedule email");
+    }
+  }
+
+  /**
+   * Best-effort SMS for urgent session cancel/reschedule.
+   * Never throws — callers must keep batch delivery resilient.
+   */
+  async sendSessionChangeSms(
+    params: SendSessionChangeSmsParams,
+  ): Promise<boolean> {
+    const config = await this.getConfig();
+    if (
+      !config?.smsEnabled ||
+      !config.twilioAccountSid ||
+      !config.twilioAuthToken ||
+      !config.twilioFromNumber
+    ) {
+      logger.warn(
+        { to: params.to },
+        "SMS not configured, skipping session change SMS",
+      );
+      return false;
+    }
+
+    try {
+      const client = twilio(config.twilioAccountSid, config.twilioAuthToken);
+      const message = await client.messages.create({
+        body: params.body.slice(0, 320),
+        from: config.twilioFromNumber,
+        to: params.to,
+      });
+      logger.info(
+        { to: params.to, sid: message.sid },
+        "Session change SMS sent",
+      );
+      return true;
+    } catch (error) {
+      logger.error({ error, to: params.to }, "Failed to send session change SMS");
+      return false;
     }
   }
 

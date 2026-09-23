@@ -62,6 +62,20 @@ export async function syncClassRosterFromEnrollments(
       await classStudentRepo.save(
         classStudentRepo.create({ classId, studentId: userId }),
       );
+      const studentName =
+        enrolment.student?.fullName?.trim() || "Student";
+      try {
+        const { notifyTutorOfRosterStudentAdded } = await import(
+          "../../notifications/enrolment-notifications.service.js"
+        );
+        await notifyTutorOfRosterStudentAdded({
+          classEntity,
+          studentUserId: userId,
+          studentName,
+        });
+      } catch {
+        /* non-blocking */
+      }
     }
   }
 

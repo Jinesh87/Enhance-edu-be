@@ -28,6 +28,35 @@ export async function getInstitutionSettingsSummary(
       openAiConfigured: openAi.configured,
       sessionChangeEmailNotificationsEnabled:
         notifications.sessionChangeEmailNotificationsEnabled,
+      classReminderDigestEnabled: notifications.classReminderDigestEnabled,
+      classReminder1hPushEnabled: notifications.classReminder1hPushEnabled,
+      classReminderDigestHour: notifications.classReminderDigestHour,
+      urgentCancelSmsEnabled: notifications.urgentCancelSmsEnabled,
+      termScheduleEmailNotificationsEnabled:
+        notifications.termScheduleEmailNotificationsEnabled,
+      absenceAlertInAppEnabled: notifications.absenceAlertInAppEnabled,
+      absenceAlertEmailEnabled: notifications.absenceAlertEmailEnabled,
+      absenceAlertSmsEnabled: notifications.absenceAlertSmsEnabled,
+      homeworkCreatedInAppEnabled: notifications.homeworkCreatedInAppEnabled,
+      homeworkDueSoonEnabled: notifications.homeworkDueSoonEnabled,
+      homeworkOverdueInAppEnabled: notifications.homeworkOverdueInAppEnabled,
+      homeworkOverdueEmailEnabled: notifications.homeworkOverdueEmailEnabled,
+      homeworkGradedEnabled: notifications.homeworkGradedEnabled,
+      homeworkSubmittedEnabled: notifications.homeworkSubmittedEnabled,
+      enquiryCreatedNotifyEnabled: notifications.enquiryCreatedNotifyEnabled,
+      trialBookingConfirmedNotifyEnabled:
+        notifications.trialBookingConfirmedNotifyEnabled,
+      enrollmentAcceptedNotifyEnabled:
+        notifications.enrollmentAcceptedNotifyEnabled,
+      classRosterStudentAddedNotifyEnabled:
+        notifications.classRosterStudentAddedNotifyEnabled,
+      holidayReminderInAppEnabled: notifications.holidayReminderInAppEnabled,
+      holidayReminderEmailEnabled: notifications.holidayReminderEmailEnabled,
+      announcementEmailEnabled: notifications.announcementEmailEnabled,
+      emergencyAlertInAppEnabled: notifications.emergencyAlertInAppEnabled,
+      emergencyAlertEmailEnabled: notifications.emergencyAlertEmailEnabled,
+      emergencyAlertSmsEnabled: notifications.emergencyAlertSmsEnabled,
+      smsConfigured: notifications.smsConfigured,
       guardianPortal: {
         classDetailsEnabled: guardian.classDetailsEnabled,
         assessmentsEnabled: guardian.assessmentsEnabled,

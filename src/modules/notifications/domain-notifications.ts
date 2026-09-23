@@ -91,6 +91,49 @@ export function homeworkNotificationPayload(input: {
   };
 }
 
+export function homeworkDueSoonNotificationPayload(input: {
+  homeworkId: string;
+  title: string;
+  subjectName: string;
+  dueDate: string;
+}): Omit<CreateNotificationInput, "userId"> {
+  return {
+    type: "HOMEWORK_DUE_SOON" as NotificationType,
+    title: "Homework due today",
+    body: `${input.title} · ${input.subjectName} · due ${input.dueDate}`,
+    data: {
+      homeworkId: input.homeworkId,
+      href: `/student/work/homework/${input.homeworkId}`,
+    },
+  };
+}
+
+export function homeworkOverdueNotificationPayload(input: {
+  homeworkId: string;
+  title: string;
+  subjectName: string;
+  dueDate: string;
+  studentName?: string;
+  forGuardian?: boolean;
+}): Omit<CreateNotificationInput, "userId"> {
+  const who = input.studentName?.trim();
+  const body =
+    input.forGuardian && who
+      ? `${who}'s homework “${input.title}” is overdue · ${input.subjectName} · was due ${input.dueDate}`
+      : `${input.title} · ${input.subjectName} · was due ${input.dueDate}`;
+  return {
+    type: "HOMEWORK_OVERDUE" as NotificationType,
+    title: "Homework overdue",
+    body,
+    data: {
+      homeworkId: input.homeworkId,
+      href: input.forGuardian
+        ? "/guardian/students"
+        : `/student/work/homework/${input.homeworkId}`,
+    },
+  };
+}
+
 export function homeworkGradedNotificationPayload(input: {
   homeworkId: string;
   title: string;
@@ -187,14 +230,43 @@ export function attendanceMarkedNotificationPayload(input: {
   sessionLabel: string;
   sessionId: string;
 }): Omit<CreateNotificationInput, "userId"> {
-  const statusLabel = input.status === "LATE" ? "late" : "absent";
+  if (input.status === "LATE") {
+    return {
+      type: "ATTENDANCE_MARKED" as NotificationType,
+      title: "Marked late",
+      body: `${input.studentName} was marked late for ${input.sessionLabel}.`,
+      data: {
+        sessionId: input.sessionId,
+        status: input.status,
+        href: "/guardian/students",
+      },
+    };
+  }
+
   return {
     type: "ATTENDANCE_MARKED" as NotificationType,
-    title: `Marked ${statusLabel}`,
-    body: `${input.studentName} was marked ${statusLabel} for ${input.sessionLabel}.`,
+    title: "Marked absent",
+    body: `${input.studentName} was marked absent for ${input.sessionLabel}. If this is an error or they are unwell, reply or open the app.`,
     data: {
       sessionId: input.sessionId,
       status: input.status,
+      href: "/guardian/students",
+    },
+  };
+}
+
+export function attendanceCorrectedNotificationPayload(input: {
+  studentName: string;
+  sessionLabel: string;
+  sessionId: string;
+}): Omit<CreateNotificationInput, "userId"> {
+  return {
+    type: "ATTENDANCE_CORRECTED" as NotificationType,
+    title: "Attendance updated",
+    body: `${input.studentName}'s attendance for ${input.sessionLabel} was updated to Present.`,
+    data: {
+      sessionId: input.sessionId,
+      status: "PRESENT",
       href: "/guardian/students",
     },
   };
@@ -231,6 +303,76 @@ export function enrollmentPendingNotificationPayload(input: {
     data: {
       pendingEnrollmentId: input.pendingEnrollmentId,
       href: "/guardian/students",
+    },
+  };
+}
+
+export function enquiryCreatedNotificationPayload(input: {
+  enquiryId: string;
+  studentName: string;
+  guardianName: string;
+  subjectOfInterest: string;
+}): Omit<CreateNotificationInput, "userId"> {
+  return {
+    type: "ENQUIRY_CREATED" as NotificationType,
+    title: "New enquiry",
+    body: `${input.studentName} · ${input.subjectOfInterest} · ${input.guardianName}`,
+    data: {
+      enquiryId: input.enquiryId,
+      href: `/admin/enquiries/${input.enquiryId}`,
+    },
+  };
+}
+
+export function trialBookingConfirmedNotificationPayload(input: {
+  studentName: string;
+  classLabel: string;
+  forGuardian: boolean;
+}): Omit<CreateNotificationInput, "userId"> {
+  return {
+    type: "TRIAL_BOOKING_CONFIRMED" as NotificationType,
+    title: "Trial booking confirmed",
+    body: input.forGuardian
+      ? `${input.studentName}'s trial for ${input.classLabel} is confirmed.`
+      : `Your trial for ${input.classLabel} is confirmed.`,
+    data: {
+      href: input.forGuardian ? "/guardian/students" : "/student",
+    },
+  };
+}
+
+export function classRosterStudentAddedNotificationPayload(input: {
+  studentName: string;
+  className: string;
+  classId: string;
+}): Omit<CreateNotificationInput, "userId"> {
+  return {
+    type: "CLASS_ROSTER_STUDENT_ADDED" as NotificationType,
+    title: "New student on your class",
+    body: `${input.studentName} was added to ${input.className}.`,
+    data: {
+      classId: input.classId,
+      href: "/tutor/classes",
+    },
+  };
+}
+
+export function holidayReminderNotificationPayload(input: {
+  holidayId: string;
+  holidayName: string;
+  dateLabel: string;
+  leadDays: 7 | 2;
+  href: string;
+}): Omit<CreateNotificationInput, "userId"> {
+  const when =
+    input.leadDays === 7 ? "in one week" : "in two days";
+  return {
+    type: "HOLIDAY_REMINDER" as NotificationType,
+    title: input.leadDays === 7 ? "Holiday in one week" : "Holiday in two days",
+    body: `${input.holidayName} · ${input.dateLabel} · no classes ${when}`,
+    data: {
+      holidayId: input.holidayId,
+      href: input.href,
     },
   };
 }

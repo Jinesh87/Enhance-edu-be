@@ -31,6 +31,30 @@ export const updateOpenAiSettingSchema = Joi.object({
 
 export const updateNotificationSettingSchema = Joi.object({
   sessionChangeEmailNotificationsEnabled: Joi.boolean().required(),
+  classReminderDigestEnabled: Joi.boolean().required(),
+  classReminder1hPushEnabled: Joi.boolean().required(),
+  classReminderDigestHour: Joi.number().integer().min(0).max(23).required(),
+  urgentCancelSmsEnabled: Joi.boolean().required(),
+  termScheduleEmailNotificationsEnabled: Joi.boolean().required(),
+  absenceAlertInAppEnabled: Joi.boolean().required(),
+  absenceAlertEmailEnabled: Joi.boolean().required(),
+  absenceAlertSmsEnabled: Joi.boolean().required(),
+  homeworkCreatedInAppEnabled: Joi.boolean().required(),
+  homeworkDueSoonEnabled: Joi.boolean().required(),
+  homeworkOverdueInAppEnabled: Joi.boolean().required(),
+  homeworkOverdueEmailEnabled: Joi.boolean().required(),
+  homeworkGradedEnabled: Joi.boolean().required(),
+  homeworkSubmittedEnabled: Joi.boolean().required(),
+  enquiryCreatedNotifyEnabled: Joi.boolean().required(),
+  trialBookingConfirmedNotifyEnabled: Joi.boolean().required(),
+  enrollmentAcceptedNotifyEnabled: Joi.boolean().required(),
+  classRosterStudentAddedNotifyEnabled: Joi.boolean().required(),
+  holidayReminderInAppEnabled: Joi.boolean().required(),
+  holidayReminderEmailEnabled: Joi.boolean().required(),
+  announcementEmailEnabled: Joi.boolean().required(),
+  emergencyAlertInAppEnabled: Joi.boolean().required(),
+  emergencyAlertEmailEnabled: Joi.boolean().required(),
+  emergencyAlertSmsEnabled: Joi.boolean().required(),
 });
 
 export const updateAdminAiCapabilitySettingSchema = Joi.object({

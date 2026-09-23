@@ -1,8 +1,12 @@
 import { AppDataSource } from "../../../../config/data-source.js";
 import { AppError } from "../../../../common/errors/AppError.js";
 import { UserRole } from "../../../../common/constants/roles.js";
-import { Announcement } from "../../../../entities/Announcement.js";
+import {
+  Announcement,
+  type AnnouncementSeverity,
+} from "../../../../entities/Announcement.js";
 import { Notification } from "../../../../entities/Notification.js";
+import { User } from "../../../../entities/User.js";
 import type { CommunicationAudience } from "../../../../entities/AdminAiCommunicationDraft.js";
 import { logger } from "../../../../config/logger.js";
 import { writeAdminAiAudit } from "../audit.js";
@@ -17,6 +21,37 @@ import {
 } from "../communications/audience.normalize.js";
 import { userNotificationManager } from "../../../notifications/notification-updates.js";
 import { notificationsService } from "../../../notifications/notifications.service.js";
+import { settingsService } from "../../../settings/settings.service.js";
+import { emailService } from "../../../email/email.service.js";
+
+const CHANNEL_CONCURRENCY = 5;
+
+async function mapPool<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  if (!items.length) return;
+  let index = 0;
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (index < items.length) {
+        const current = items[index++];
+        await worker(current);
+      }
+    },
+  );
+  await Promise.all(runners);
+}
+
+function parseSeverity(raw: unknown): AnnouncementSeverity {
+  return String(raw ?? "")
+    .trim()
+    .toUpperCase() === "EMERGENCY"
+    ? "EMERGENCY"
+    : "GENERAL";
+}
 
 function asTrimmedString(value: unknown, max = 80): string | null {
   return typeof value === "string" && value.trim()
@@ -145,6 +180,16 @@ export function sanitizeAudience(
     audience.confirmed = true;
   }
 
+  // Default audience: everyone when no roles/groups/userIds given.
+  if (
+    !audience.roles?.length &&
+    !audience.groups?.length &&
+    !audience.userIds?.length &&
+    !(audience.ambiguous && !audience.confirmed)
+  ) {
+    audience.roles = ["ALL"];
+  }
+
   if (!audience.label) {
     audience.label = describeAudience({ ...audience, label: null });
   }
@@ -209,12 +254,14 @@ export class AnnouncementService {
       message?: string;
       audience?: Record<string, unknown> | CommunicationAudience;
       threadId?: string | null;
+      severity?: AnnouncementSeverity | string;
     },
   ) {
     this.assertCanManageAnnouncements(actor);
 
     const title = input.title?.trim() || "";
     const message = input.message?.trim() || "";
+    const severity = parseSeverity(input.severity);
     const audience = sanitizeAudience(
       input.audience as Record<string, unknown>,
     );
@@ -226,12 +273,15 @@ export class AnnouncementService {
 
     const audienceLabel = audience.label ?? describeAudience(audience);
     const recipientCount = recipients.length;
+    const deliveryChannel =
+      severity === "EMERGENCY" ? "IN_APP,PUSH,EMAIL,SMS" : "IN_APP,EMAIL";
 
     logger.info(
       {
         userId: actor.id,
         audienceLabel,
         recipientCount,
+        severity,
       },
       "announcement.preview.created",
     );
@@ -239,6 +289,7 @@ export class AnnouncementService {
     return {
       title,
       message,
+      severity,
       audience: publicAudience(audience),
       audienceLabel,
       recipientCount,
@@ -252,7 +303,7 @@ export class AnnouncementService {
         selected: true,
         status: r.status,
       })),
-      deliveryChannel: "IN_APP" as const,
+      deliveryChannel,
       requiresAudienceConfirm: Boolean(
         audience.ambiguous && !audience.confirmed,
       ),
@@ -263,13 +314,17 @@ export class AnnouncementService {
         recipientOf: opt.recipientOf ?? "SELF",
       })),
       responseHint: [
-        "Announcement DRAFT prepared — nothing has been published.",
+        severity === "EMERGENCY"
+          ? "Emergency alert DRAFT prepared — nothing has been published."
+          : "Announcement DRAFT prepared — nothing has been published.",
         "Audience resolved to: " +
           audienceLabel +
           " (" +
           recipientCount +
           " recipients).",
-        "Delivery channel: IN_APP only.",
+        severity === "EMERGENCY"
+          ? "Delivery channels: in-app, push, email, and SMS (gated by settings)."
+          : "Delivery channels: in-app and email (email gated by settings).",
         "Review and click Approve & Publish in the UI to publish.",
       ].join(" "),
     };
@@ -283,6 +338,7 @@ export class AnnouncementService {
       audience: Record<string, unknown> | CommunicationAudience;
       excludedUserIds?: string[];
       idempotencyKey?: string;
+      severity?: AnnouncementSeverity | string;
     },
   ) {
     const started = Date.now();
@@ -320,6 +376,7 @@ export class AnnouncementService {
       );
     }
 
+    const severity = parseSeverity(input.severity);
     const audience = sanitizeAudience(
       input.audience as Record<string, unknown>,
     );
@@ -334,7 +391,7 @@ export class AnnouncementService {
     cleanupIdempotency();
     const idempotencyKey =
       input.idempotencyKey?.trim() ||
-      `${actor.id}:${title}:${message.slice(0, 50)}`;
+      `${severity}:${actor.id}:${title}:${message.slice(0, 50)}`;
     if (recentPublishes.has(idempotencyKey)) {
       throw new AppError(
         409,
@@ -344,10 +401,12 @@ export class AnnouncementService {
     }
     recentPublishes.set(idempotencyKey, Date.now());
 
-    logger.info({ userId: actor.id, title }, "announcement.publish.started");
+    logger.info(
+      { userId: actor.id, title, severity },
+      "announcement.publish.started",
+    );
 
     try {
-      // 1. Re-resolve audience from database (source of truth)
       const recipients = await audienceResolverService.resolve(audience);
       if (!recipients.length) {
         throw new AppError(
@@ -359,7 +418,9 @@ export class AnnouncementService {
 
       const allResolvedIds = [...new Set(recipients.map((r) => r.userId))];
       const excludedSet = new Set(input.excludedUserIds ?? []);
-      const recipientUserIds = allResolvedIds.filter((id) => !excludedSet.has(id));
+      const recipientUserIds = allResolvedIds.filter(
+        (id) => !excludedSet.has(id),
+      );
       if (!recipientUserIds.length) {
         throw new AppError(
           400,
@@ -367,15 +428,47 @@ export class AnnouncementService {
           "ANNOUNCEMENT_NO_RECIPIENTS",
         );
       }
-      const audienceLabel = audience.label ?? describeAudience(audience);
 
-      // 2. Perform atomic transaction: Save Announcement + In-App Notifications
+      const audienceLabel = audience.label ?? describeAudience(audience);
+      const notificationBody =
+        message.length > 200 ? `${message.slice(0, 197)}…` : message;
+      const notificationType =
+        severity === "EMERGENCY" ? ("EMERGENCY_ALERT" as const) : ("ANNOUNCEMENT" as const);
+
+      const [
+        announcementEmailEnabled,
+        emergencyInAppEnabled,
+        emergencyEmailEnabled,
+        emergencySmsEnabled,
+      ] = await Promise.all([
+        settingsService.isAnnouncementEmailEnabled(),
+        settingsService.isEmergencyAlertInAppEnabled(),
+        settingsService.isEmergencyAlertEmailEnabled(),
+        settingsService.isEmergencyAlertSmsEnabled(),
+      ]);
+
+      const channelsUsed: string[] = [];
+      const wantInApp =
+        severity === "GENERAL" ||
+        (severity === "EMERGENCY" && emergencyInAppEnabled);
+      const wantEmail =
+        severity === "GENERAL"
+          ? announcementEmailEnabled
+          : emergencyEmailEnabled;
+      const wantSms = severity === "EMERGENCY" && emergencySmsEnabled;
+
+      if (wantInApp) channelsUsed.push("IN_APP");
+      if (severity === "EMERGENCY" && wantInApp) channelsUsed.push("PUSH");
+      if (wantEmail) channelsUsed.push("EMAIL");
+      if (wantSms) channelsUsed.push("SMS");
+
+      const deliveryChannel =
+        channelsUsed.length > 0 ? channelsUsed.join(",") : "NONE";
+
       let savedAnnouncement: Announcement;
       try {
         savedAnnouncement = await AppDataSource.transaction(async (manager) => {
           const announcementRepo = manager.getRepository(Announcement);
-          const notificationRepo = manager.getRepository(Notification);
-
           const announcement = announcementRepo.create({
             title,
             message,
@@ -383,34 +476,12 @@ export class AnnouncementService {
             approvedBy: actor.id,
             publishedAt: new Date(),
             status: "PUBLISHED",
+            severity,
             audienceSnapshot: audience,
             recipientCount: recipientUserIds.length,
-            deliveryChannel: "IN_APP",
+            deliveryChannel,
           });
-
-          const createdAnnouncement = await announcementRepo.save(announcement);
-
-          // Concise notification body (avoid huge dumps)
-          const notificationBody =
-            message.length > 200 ? `${message.slice(0, 197)}…` : message;
-
-          const notifications = recipientUserIds.map((userId) =>
-            notificationRepo.create({
-              userId,
-              type: "ANNOUNCEMENT",
-              title,
-              body: notificationBody,
-              data: {
-                announcementId: createdAnnouncement.id,
-                audienceLabel,
-                publishedAt: createdAnnouncement.publishedAt.toISOString(),
-              },
-              readAt: null,
-            }),
-          );
-
-          await notificationRepo.save(notifications);
-          return createdAnnouncement;
+          return announcementRepo.save(announcement);
         });
       } catch (dbError) {
         logger.error(
@@ -424,41 +495,130 @@ export class AnnouncementService {
         );
       }
 
-      // 3. Broadcast real-time SSE updates to all recipients
-      try {
-        const notificationBody =
-          message.length > 200 ? `${message.slice(0, 197)}…` : message;
-        for (const userId of recipientUserIds) {
-          const unreadCount = await notificationsService
-            .countUnread(userId)
-            .catch(() => 1);
-          userNotificationManager.publish({
-            userId,
-            type: "NOTIFICATION_CREATED",
-            unreadCount,
-            notification: {
-              id: savedAnnouncement.id,
-              type: "ANNOUNCEMENT",
+      const notifData = {
+        announcementId: savedAnnouncement.id,
+        audienceLabel,
+        severity,
+        publishedAt: savedAnnouncement.publishedAt.toISOString(),
+      };
+
+      if (wantInApp) {
+        if (severity === "EMERGENCY") {
+          await notificationsService.createMany(
+            recipientUserIds.map((userId) => ({
+              userId,
+              type: notificationType,
               title,
               body: notificationBody,
-              data: {
-                announcementId: savedAnnouncement.id,
-                audienceLabel,
-                publishedAt: savedAnnouncement.publishedAt.toISOString(),
-              },
-              readAt: null,
-              createdAt: savedAnnouncement.createdAt.toISOString(),
-            },
-          });
+              data: notifData,
+            })),
+          );
+        } else {
+          try {
+            await AppDataSource.transaction(async (manager) => {
+              const notificationRepo = manager.getRepository(Notification);
+              const notifications = recipientUserIds.map((userId) =>
+                notificationRepo.create({
+                  userId,
+                  type: notificationType,
+                  title,
+                  body: notificationBody,
+                  data: notifData,
+                  readAt: null,
+                }),
+              );
+              await notificationRepo.save(notifications);
+            });
+          } catch (dbError) {
+            logger.error(
+              { err: dbError, userId: actor.id },
+              "announcement.notifications.failed",
+            );
+            throw new AppError(
+              500,
+              "Failed to publish announcement notifications.",
+              "ANNOUNCEMENT_PUBLISH_FAILED",
+            );
+          }
+
+          try {
+            for (const userId of recipientUserIds) {
+              const unreadCount = await notificationsService
+                .countUnread(userId)
+                .catch(() => 1);
+              userNotificationManager.publish({
+                userId,
+                type: "NOTIFICATION_CREATED",
+                unreadCount,
+                notification: {
+                  id: savedAnnouncement.id,
+                  type: notificationType,
+                  title,
+                  body: notificationBody,
+                  data: notifData,
+                  readAt: null,
+                  createdAt: savedAnnouncement.createdAt.toISOString(),
+                },
+              });
+            }
+          } catch (sseError) {
+            logger.warn(
+              { err: sseError },
+              "Failed to broadcast SSE notifications for announcement",
+            );
+          }
         }
-      } catch (sseError) {
-        logger.warn(
-          { err: sseError },
-          "Failed to broadcast SSE notifications for announcement",
-        );
       }
 
-      // 4. Save Audit Log
+      if (wantEmail || wantSms) {
+        const users = await AppDataSource.getRepository(User)
+          .createQueryBuilder("u")
+          .select(["u.id", "u.email", "u.mobile", "u.fullName"])
+          .where("u.id IN (:...ids)", { ids: recipientUserIds })
+          .getMany();
+
+        if (wantEmail) {
+          const emailTargets = users.filter((u) => Boolean(u.email?.trim()));
+          await mapPool(emailTargets, CHANNEL_CONCURRENCY, async (user) => {
+            try {
+              await emailService.sendAnnouncementEmail({
+                to: user.email!.trim(),
+                fullName: user.fullName?.trim() || "there",
+                title,
+                message,
+                emergency: severity === "EMERGENCY",
+              });
+            } catch (error) {
+              logger.warn(
+                { err: error, userId: user.id },
+                "Announcement email failed",
+              );
+            }
+          });
+        }
+
+        if (wantSms) {
+          const smsBody = `EMERGENCY: ${title}. ${notificationBody}`.slice(
+            0,
+            320,
+          );
+          const smsTargets = users.filter((u) => Boolean(u.mobile?.trim()));
+          await mapPool(smsTargets, CHANNEL_CONCURRENCY, async (user) => {
+            try {
+              await emailService.sendSessionChangeSms({
+                to: user.mobile!.trim(),
+                body: smsBody,
+              });
+            } catch (error) {
+              logger.warn(
+                { err: error, userId: user.id },
+                "Emergency alert SMS failed",
+              );
+            }
+          });
+        }
+      }
+
       await writeAdminAiAudit({
         requestId: `pub-announcement-${savedAnnouncement.id}`,
         actor,
@@ -469,7 +629,8 @@ export class AnnouncementService {
           approvedBy: actor.id,
           audienceSummary: audienceLabel,
           recipientCount: recipientUserIds.length,
-          deliveryChannel: "IN_APP",
+          deliveryChannel,
+          severity,
         },
         resultStatus: "SUCCESS",
       });
@@ -481,6 +642,8 @@ export class AnnouncementService {
           announcementId: savedAnnouncement.id,
           recipientCount: recipientUserIds.length,
           durationMs: duration,
+          severity,
+          deliveryChannel,
         },
         "announcement.published",
       );
@@ -489,6 +652,7 @@ export class AnnouncementService {
         announcementId: savedAnnouncement.id,
         title: savedAnnouncement.title,
         message: savedAnnouncement.message,
+        severity,
         audienceLabel,
         recipientCount: recipientUserIds.length,
         deliveryChannel: savedAnnouncement.deliveryChannel,

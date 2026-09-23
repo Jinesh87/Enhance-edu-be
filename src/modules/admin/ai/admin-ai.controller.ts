@@ -472,6 +472,7 @@ class AdminAiController {
         message: req.body?.message,
         audience: req.body?.audience,
         threadId: req.body?.threadId,
+        severity: req.body?.severity,
       });
       res.status(200).json(data);
     } catch (error) {
@@ -492,6 +493,7 @@ class AdminAiController {
         audience: req.body?.audience,
         excludedUserIds: req.body?.excludedUserIds,
         idempotencyKey: req.body?.idempotencyKey,
+        severity: req.body?.severity,
       });
       res.status(200).json(data);
     } catch (error) {

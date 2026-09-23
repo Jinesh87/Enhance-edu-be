@@ -65,6 +65,7 @@ import {
   AdminAiCommunicationDraft,
   AdminAiBriefing,
   Notification,
+  ReminderDispatch,
   PushSubscription,
   OpenAiUsageLog,
   LearningSourceDocument,
@@ -291,6 +292,54 @@ export async function ensureInstitutionSettingSchema() {
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "sessionChangeEmailNotificationsEnabled" boolean NOT NULL DEFAULT false;
     ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "classReminderDigestEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "classReminder1hPushEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "classReminderDigestHour" smallint NOT NULL DEFAULT 19;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "urgentCancelSmsEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "termScheduleEmailNotificationsEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "absenceAlertInAppEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "absenceAlertEmailEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "absenceAlertSmsEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "homeworkCreatedInAppEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "homeworkDueSoonEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "homeworkOverdueInAppEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "homeworkOverdueEmailEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "homeworkGradedEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "homeworkSubmittedEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "enquiryCreatedNotifyEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "trialBookingConfirmedNotifyEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "enrollmentAcceptedNotifyEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "classRosterStudentAddedNotifyEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "holidayReminderInAppEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "holidayReminderEmailEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "announcementEmailEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "emergencyAlertInAppEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "emergencyAlertEmailEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "emergencyAlertSmsEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "adminAiAssistantEnabled" boolean NOT NULL DEFAULT true;
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "adminAiDataInsightsEnabled" boolean NOT NULL DEFAULT true;
@@ -351,6 +400,15 @@ export async function ensureNotificationSchema() {
       ON notifications ("readAt");
     CREATE INDEX IF NOT EXISTS "IDX_notifications_userId_createdAt"
       ON notifications ("userId", "createdAt" DESC);
+
+    CREATE TABLE IF NOT EXISTS reminder_dispatches (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "dispatchKey" varchar(160) NOT NULL,
+      "kind" varchar(40) NOT NULL,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS "IDX_reminder_dispatches_dispatchKey"
+      ON reminder_dispatches ("dispatchKey");
   `);
   await bootstrap.destroy();
 }
@@ -1086,9 +1144,10 @@ export async function ensureAdminAiSchema() {
       "approvedBy" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       "publishedAt" timestamptz NOT NULL,
       "status" varchar(24) NOT NULL DEFAULT 'PUBLISHED',
+      "severity" varchar(24) NOT NULL DEFAULT 'GENERAL',
       "audienceSnapshot" jsonb NOT NULL,
       "recipientCount" int NOT NULL DEFAULT 0,
-      "deliveryChannel" varchar(24) NOT NULL DEFAULT 'IN_APP',
+      "deliveryChannel" varchar(64) NOT NULL DEFAULT 'IN_APP',
       "createdAt" timestamptz NOT NULL DEFAULT now(),
       "updatedAt" timestamptz NOT NULL DEFAULT now()
     );
@@ -1098,6 +1157,10 @@ export async function ensureAdminAiSchema() {
       ON announcements ("createdBy");
     CREATE INDEX IF NOT EXISTS "IDX_announcements_approvedBy"
       ON announcements ("approvedBy");
+    ALTER TABLE announcements
+      ADD COLUMN IF NOT EXISTS "severity" varchar(24) NOT NULL DEFAULT 'GENERAL';
+    ALTER TABLE announcements
+      ALTER COLUMN "deliveryChannel" TYPE varchar(64);
   `);
 
   await bootstrap.query(`
@@ -1536,6 +1599,7 @@ export const AppDataSource = new DataSource({
     AdminAiCommunicationDraft,
     AdminAiBriefing,
     Notification,
+    ReminderDispatch,
     PushSubscription,
     OpenAiUsageLog,
     LearningSourceDocument,

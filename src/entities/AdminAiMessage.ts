@@ -56,10 +56,11 @@ export type AdminAiSource = {
     draft: {
       title: string;
       message: string;
+      severity?: "GENERAL" | "EMERGENCY";
       audience: Record<string, unknown>;
       audienceLabel: string;
       recipientCount: number;
-      deliveryChannel: "IN_APP";
+      deliveryChannel: string;
       requiresAudienceConfirm?: boolean;
       audienceOptions?: Array<{
         label: string;

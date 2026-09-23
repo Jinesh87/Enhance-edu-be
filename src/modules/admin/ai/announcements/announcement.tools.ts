@@ -1,3 +1,4 @@
+import type { AnnouncementSeverity } from "../../../../entities/Announcement.js";
 import type { AdminAiActor } from "../authorization.js";
 import { sanitizeToolPayload } from "../sanitize.js";
 import {
@@ -34,12 +35,39 @@ function parseStringList(raw: unknown): string[] | undefined {
     .slice(0, 8);
 }
 
-/** Create announcement/notice draft + resolve audience count. Does NOT publish. */
+function parseSeverity(raw: unknown): AnnouncementSeverity {
+  return String(raw ?? "")
+    .trim()
+    .toUpperCase() === "EMERGENCY"
+    ? "EMERGENCY"
+    : "GENERAL";
+}
+
+/**
+ * Slash-command wins over model args. /emergency must never silently become GENERAL
+ * (SMS/push depend on severity).
+ */
+export function resolveAnnouncementSeverity(
+  raw: unknown,
+  actionCommand?: string | null,
+): AnnouncementSeverity {
+  const cmd = String(actionCommand ?? "")
+    .trim()
+    .toLowerCase();
+  if (cmd === "emergency") return "EMERGENCY";
+  if (cmd === "announcement" || cmd === "bulk-message") return "GENERAL";
+  return parseSeverity(raw);
+}
+
+/** Create announcement/notice/emergency draft + resolve audience count. Does NOT publish. */
 export async function createAnnouncementDraft(
   actor: AdminAiActor,
   args: {
     title?: string;
     message?: string;
+    severity?: string;
+    /** Explicit slash command — overrides model severity when set. */
+    actionCommand?: string | null;
     /** @deprecated Prefer roles/groups filters. */
     audienceType?: string;
     roles?: unknown;
@@ -61,15 +89,18 @@ export async function createAnnouncementDraft(
     threadId?: string;
   },
 ): Promise<ToolResult> {
-  const suggested =
-    args.ambiguous ||
-    (!args.roles && !args.groups && !args.audienceType && !args.userIds)
-      ? suggestAmbiguityOptions(args.userMessage)
-      : null;
+  const severity = resolveAnnouncementSeverity(
+    args.severity,
+    args.actionCommand,
+  );
+  const suggested = args.ambiguous
+    ? suggestAmbiguityOptions(args.userMessage)
+    : null;
 
   const draft = await announcementService.previewDraft(actor, {
     title: args.title,
     message: args.message,
+    severity,
     audience: {
       type: args.audienceType,
       roles: parseStringList(args.roles) ?? suggested?.[0]?.roles,
@@ -94,11 +125,13 @@ export async function createAnnouncementDraft(
   });
 
   const needsAudience = Boolean(draft.requiresAudienceConfirm);
+  const isEmergency = severity === "EMERGENCY";
 
   return {
     data: sanitizeToolPayload({
       title: draft.title,
       message: draft.message,
+      severity: draft.severity,
       audience: draft.audience,
       audienceLabel: draft.audienceLabel,
       recipientCount: draft.recipientCount,
@@ -107,8 +140,10 @@ export async function createAnnouncementDraft(
       requiresAudienceConfirm: needsAudience,
       audienceOptions: draft.audienceOptions,
       responseHint: [
-        "Announcement / Notice DRAFT prepared — nothing has been published.",
-        "Reply briefly: I've prepared the announcement draft. The preview UI allows the Admin to edit and Approve & Publish.",
+        isEmergency
+          ? "Emergency alert DRAFT prepared — nothing has been published."
+          : "Announcement / Notice DRAFT prepared — nothing has been published.",
+        "Reply briefly: I've prepared the draft. The preview UI allows the Admin to edit and Approve & Publish.",
         "Do NOT ask the admin to confirm in chat. The UI Approve & Publish button publishes.",
         needsAudience
           ? "Audience is ambiguous — ask them to select an audience option in the preview."
@@ -119,8 +154,9 @@ export async function createAnnouncementDraft(
         draft.message?.trim()
           ? "Message content is pre-filled and editable in the preview."
           : "Message may be empty — admin can fill it in the preview.",
-        "Delivery channel is IN_APP only.",
-        "Never claim the announcement was published.",
+        isEmergency
+          ? "Delivery: in-app, push, email, and SMS (settings-gated). Never claim it was published."
+          : "Delivery: in-app and email (email settings-gated). Never claim the announcement was published.",
       ]
         .filter(Boolean)
         .join(" "),
@@ -128,7 +164,7 @@ export async function createAnnouncementDraft(
     sources: [
       {
         kind: "draft",
-        label: "Announcement draft",
+        label: isEmergency ? "Emergency alert draft" : "Announcement draft",
         detail: `${draft.audienceLabel} (${draft.recipientCount} recipients)`,
       },
     ],
@@ -137,10 +173,11 @@ export async function createAnnouncementDraft(
         {
           title: draft.title,
           message: draft.message,
+          severity: draft.severity,
           audience: draft.audience,
           audienceLabel: draft.audienceLabel,
           recipientCount: draft.recipientCount,
-          deliveryChannel: "IN_APP",
+          deliveryChannel: draft.deliveryChannel,
           requiresAudienceConfirm: draft.requiresAudienceConfirm,
           audienceOptions: draft.audienceOptions,
         },
