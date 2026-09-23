@@ -645,7 +645,8 @@ export class AdminEnrollmentsService {
         pending,
         student: result.student,
         enrollmentId: result.enrollment.id,
-        guardianName: guardian.fullName,
+        guardian,
+        subjectNames: subjectRows.map((s) => s.name),
       });
 
       return result;
@@ -699,7 +700,8 @@ export class AdminEnrollmentsService {
       pending,
       student: result.student,
       enrollmentId: result.enrollment.id,
-      guardianName: guardian.fullName,
+      guardian,
+      subjectNames: subjectRows.map((s) => s.name),
     });
 
     try {
@@ -1165,6 +1167,14 @@ export class AdminEnrollmentsService {
       if (pending.term?.isTrial) {
         trialTermIds.push(pending.termId);
       }
+
+      void this.notifyEnrollmentAccepted({
+        pending,
+        student: result.student,
+        enrollmentId: result.enrollment.id,
+        guardian,
+        subjectNames: subjectRows.map((s) => s.name),
+      });
     }
 
     if (trialTermIds.length > 0 && guardian.email) {
@@ -1662,7 +1672,12 @@ export class AdminEnrollmentsService {
       pending,
       student: enrollment.student,
       enrollmentId: enrollment.id,
-      guardianName: pending.guardian?.fullName ?? "Guardian",
+      guardian: {
+        id: pending.guardian?.id ?? pending.guardianId,
+        email: pending.guardian?.email ?? null,
+        fullName: pending.guardian?.fullName ?? "Guardian",
+      },
+      subjectNames: subjectRows.map((s) => s.name),
     });
 
     return { enrollment, student: enrollment.student };
@@ -1903,22 +1918,24 @@ export class AdminEnrollmentsService {
   private async notifyEnrollmentAccepted(input: {
     pending: PendingEnrollment;
     student:
-      | Pick<Student, "id" | "fullName">
+      | Pick<Student, "id" | "fullName" | "userId">
       | { id: string; fullName: string; userId?: string | null }
       | null
       | undefined;
     enrollmentId: string;
-    guardianName: string;
+    guardian: Pick<User, "id" | "fullName"> & { email?: string | null };
+    subjectNames?: string[];
   }) {
     const studentName =
       input.student?.fullName?.trim() ||
       input.pending.studentFullName.trim() ||
       "Student";
     const isModification = Boolean(input.pending.replacesEnrollmentId);
+    const isTrial = Boolean(input.pending.term?.isTrial);
     const adminTitle = isModification
       ? "Enrolment change accepted"
       : "Enrolment accepted";
-    const adminBody = `${input.guardianName} accepted ${
+    const adminBody = `${input.guardian.fullName} accepted ${
       isModification ? "an enrolment change" : "enrolment"
     } for ${studentName}.`;
 
@@ -1945,14 +1962,35 @@ export class AdminEnrollmentsService {
         type: "ENROLLMENT_ACCEPTED",
         title: isModification ? "Your enrolment was updated" : "You're enrolled",
         body: isModification
-          ? `${input.guardianName} accepted your enrolment update.`
-          : `${input.guardianName} accepted your enrolment.`,
+          ? `${input.guardian.fullName} accepted your enrolment update.`
+          : `${input.guardian.fullName} accepted your enrolment.`,
         data: {
           enrollmentId: input.enrollmentId,
           href: "/student",
         },
       }));
     }
+
+    void import("../../notifications/enrolment-notifications.service.js").then(
+      async ({ notifyEnrollmentAcceptedExtras, syncRosterForEnrollment }) => {
+        await notifyEnrollmentAcceptedExtras({
+          pending: input.pending,
+          enrollmentId: input.enrollmentId,
+          guardian: input.guardian,
+          student: input.student,
+          isTrial,
+        });
+        const subjectNames =
+          input.subjectNames ??
+          (input.pending.subjects ?? [])
+            .map((row) => row.subject?.name)
+            .filter((name): name is string => Boolean(name));
+        await syncRosterForEnrollment({
+          termId: input.pending.termId,
+          subjectNames,
+        });
+      },
+    );
   }
 }
 

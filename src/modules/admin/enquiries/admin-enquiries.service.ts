@@ -388,6 +388,11 @@ export class AdminEnquiriesService {
       actorId,
     );
 
+    void import("../../notifications/enrolment-notifications.service.js").then(
+      ({ notifyStaffOfEnquiryCreated }) =>
+        notifyStaffOfEnquiryCreated({ enquiry, actorId }),
+    );
+
     return this.getById(enquiry.id);
   }
 
@@ -706,6 +711,10 @@ export class AdminEnquiriesService {
         "TRIAL_BOOKED",
         `Trial booked — guardian created account for ${enquiry.trialClassName ?? "trial"}`,
         null,
+      );
+      void import("../../notifications/enrolment-notifications.service.js").then(
+        ({ notifyTrialBookingConfirmed }) =>
+          notifyTrialBookingConfirmed({ enquiry }),
       );
     }
   }

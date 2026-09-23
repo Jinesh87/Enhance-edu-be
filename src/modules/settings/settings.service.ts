@@ -9,6 +9,13 @@ import {
 } from "../admin/ai/admin-ai-capabilities.js";
 import { computeNextBriefingRunAt } from "../admin/ai/briefings/briefing-schedule.js";
 import { resolveIanaTimeZone } from "../../common/utils/timezone.js";
+import { emailService } from "../email/email.service.js";
+
+function clampDigestHour(value: number | null | undefined): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 19;
+  return Math.min(23, Math.max(0, Math.trunc(n)));
+}
 
 export interface UpdateInstitutionSettingInput {
   latitude: number;
@@ -158,6 +165,30 @@ export class SettingsService {
         teacherAdminChatEnabled: false,
         openaiApiKey: null,
         sessionChangeEmailNotificationsEnabled: false,
+        classReminderDigestEnabled: true,
+        classReminder1hPushEnabled: true,
+        classReminderDigestHour: 19,
+        urgentCancelSmsEnabled: true,
+        termScheduleEmailNotificationsEnabled: true,
+        absenceAlertInAppEnabled: true,
+        absenceAlertEmailEnabled: true,
+        absenceAlertSmsEnabled: true,
+        homeworkCreatedInAppEnabled: true,
+        homeworkDueSoonEnabled: true,
+        homeworkOverdueInAppEnabled: true,
+        homeworkOverdueEmailEnabled: true,
+        homeworkGradedEnabled: true,
+        homeworkSubmittedEnabled: true,
+        enquiryCreatedNotifyEnabled: true,
+        trialBookingConfirmedNotifyEnabled: true,
+        enrollmentAcceptedNotifyEnabled: true,
+        classRosterStudentAddedNotifyEnabled: true,
+        holidayReminderInAppEnabled: true,
+        holidayReminderEmailEnabled: true,
+        announcementEmailEnabled: true,
+        emergencyAlertInAppEnabled: true,
+        emergencyAlertEmailEnabled: true,
+        emergencyAlertSmsEnabled: true,
         adminAiAssistantEnabled: true,
         adminAiDataInsightsEnabled: true,
         adminAiEmailDraftingEnabled: true,
@@ -465,30 +496,289 @@ export class SettingsService {
 
   async getNotificationSettings(): Promise<{
     sessionChangeEmailNotificationsEnabled: boolean;
+    classReminderDigestEnabled: boolean;
+    classReminder1hPushEnabled: boolean;
+    classReminderDigestHour: number;
+    urgentCancelSmsEnabled: boolean;
+    termScheduleEmailNotificationsEnabled: boolean;
+    absenceAlertInAppEnabled: boolean;
+    absenceAlertEmailEnabled: boolean;
+    absenceAlertSmsEnabled: boolean;
+    homeworkCreatedInAppEnabled: boolean;
+    homeworkDueSoonEnabled: boolean;
+    homeworkOverdueInAppEnabled: boolean;
+    homeworkOverdueEmailEnabled: boolean;
+    homeworkGradedEnabled: boolean;
+    homeworkSubmittedEnabled: boolean;
+    enquiryCreatedNotifyEnabled: boolean;
+    trialBookingConfirmedNotifyEnabled: boolean;
+    enrollmentAcceptedNotifyEnabled: boolean;
+    classRosterStudentAddedNotifyEnabled: boolean;
+    holidayReminderInAppEnabled: boolean;
+    holidayReminderEmailEnabled: boolean;
+    announcementEmailEnabled: boolean;
+    emergencyAlertInAppEnabled: boolean;
+    emergencyAlertEmailEnabled: boolean;
+    emergencyAlertSmsEnabled: boolean;
+    smsConfigured: boolean;
   }> {
     const setting = await this.getOrCreateDefault();
+    const messaging = await emailService.getConfig();
+    const smsConfigured = Boolean(
+      messaging?.smsEnabled &&
+        messaging.twilioAccountSid &&
+        messaging.twilioAuthToken &&
+        messaging.twilioFromNumber,
+    );
     return {
       sessionChangeEmailNotificationsEnabled:
         setting.sessionChangeEmailNotificationsEnabled ?? false,
+      classReminderDigestEnabled: setting.classReminderDigestEnabled ?? true,
+      classReminder1hPushEnabled: setting.classReminder1hPushEnabled ?? true,
+      classReminderDigestHour: clampDigestHour(setting.classReminderDigestHour),
+      urgentCancelSmsEnabled: setting.urgentCancelSmsEnabled ?? true,
+      termScheduleEmailNotificationsEnabled:
+        setting.termScheduleEmailNotificationsEnabled ?? true,
+      absenceAlertInAppEnabled: setting.absenceAlertInAppEnabled ?? true,
+      absenceAlertEmailEnabled: setting.absenceAlertEmailEnabled ?? true,
+      absenceAlertSmsEnabled: setting.absenceAlertSmsEnabled ?? true,
+      homeworkCreatedInAppEnabled: setting.homeworkCreatedInAppEnabled ?? true,
+      homeworkDueSoonEnabled: setting.homeworkDueSoonEnabled ?? true,
+      homeworkOverdueInAppEnabled: setting.homeworkOverdueInAppEnabled ?? true,
+      homeworkOverdueEmailEnabled: setting.homeworkOverdueEmailEnabled ?? true,
+      homeworkGradedEnabled: setting.homeworkGradedEnabled ?? true,
+      homeworkSubmittedEnabled: setting.homeworkSubmittedEnabled ?? true,
+      enquiryCreatedNotifyEnabled: setting.enquiryCreatedNotifyEnabled ?? true,
+      trialBookingConfirmedNotifyEnabled:
+        setting.trialBookingConfirmedNotifyEnabled ?? true,
+      enrollmentAcceptedNotifyEnabled:
+        setting.enrollmentAcceptedNotifyEnabled ?? true,
+      classRosterStudentAddedNotifyEnabled:
+        setting.classRosterStudentAddedNotifyEnabled ?? true,
+      holidayReminderInAppEnabled: setting.holidayReminderInAppEnabled ?? true,
+      holidayReminderEmailEnabled: setting.holidayReminderEmailEnabled ?? true,
+      announcementEmailEnabled: setting.announcementEmailEnabled ?? true,
+      emergencyAlertInAppEnabled: setting.emergencyAlertInAppEnabled ?? true,
+      emergencyAlertEmailEnabled: setting.emergencyAlertEmailEnabled ?? true,
+      emergencyAlertSmsEnabled: setting.emergencyAlertSmsEnabled ?? true,
+      smsConfigured,
     };
   }
 
   async updateNotificationSettings(input: {
     sessionChangeEmailNotificationsEnabled: boolean;
-  }): Promise<{ sessionChangeEmailNotificationsEnabled: boolean }> {
+    classReminderDigestEnabled: boolean;
+    classReminder1hPushEnabled: boolean;
+    classReminderDigestHour: number;
+    urgentCancelSmsEnabled: boolean;
+    termScheduleEmailNotificationsEnabled: boolean;
+    absenceAlertInAppEnabled: boolean;
+    absenceAlertEmailEnabled: boolean;
+    absenceAlertSmsEnabled: boolean;
+    homeworkCreatedInAppEnabled: boolean;
+    homeworkDueSoonEnabled: boolean;
+    homeworkOverdueInAppEnabled: boolean;
+    homeworkOverdueEmailEnabled: boolean;
+    homeworkGradedEnabled: boolean;
+    homeworkSubmittedEnabled: boolean;
+    enquiryCreatedNotifyEnabled: boolean;
+    trialBookingConfirmedNotifyEnabled: boolean;
+    enrollmentAcceptedNotifyEnabled: boolean;
+    classRosterStudentAddedNotifyEnabled: boolean;
+    holidayReminderInAppEnabled: boolean;
+    holidayReminderEmailEnabled: boolean;
+    announcementEmailEnabled: boolean;
+    emergencyAlertInAppEnabled: boolean;
+    emergencyAlertEmailEnabled: boolean;
+    emergencyAlertSmsEnabled: boolean;
+  }): Promise<{
+    sessionChangeEmailNotificationsEnabled: boolean;
+    classReminderDigestEnabled: boolean;
+    classReminder1hPushEnabled: boolean;
+    classReminderDigestHour: number;
+    urgentCancelSmsEnabled: boolean;
+    termScheduleEmailNotificationsEnabled: boolean;
+    absenceAlertInAppEnabled: boolean;
+    absenceAlertEmailEnabled: boolean;
+    absenceAlertSmsEnabled: boolean;
+    homeworkCreatedInAppEnabled: boolean;
+    homeworkDueSoonEnabled: boolean;
+    homeworkOverdueInAppEnabled: boolean;
+    homeworkOverdueEmailEnabled: boolean;
+    homeworkGradedEnabled: boolean;
+    homeworkSubmittedEnabled: boolean;
+    enquiryCreatedNotifyEnabled: boolean;
+    trialBookingConfirmedNotifyEnabled: boolean;
+    enrollmentAcceptedNotifyEnabled: boolean;
+    classRosterStudentAddedNotifyEnabled: boolean;
+    holidayReminderInAppEnabled: boolean;
+    holidayReminderEmailEnabled: boolean;
+    announcementEmailEnabled: boolean;
+    emergencyAlertInAppEnabled: boolean;
+    emergencyAlertEmailEnabled: boolean;
+    emergencyAlertSmsEnabled: boolean;
+    smsConfigured: boolean;
+  }> {
     const setting = await this.getOrCreateDefault();
     setting.sessionChangeEmailNotificationsEnabled =
       input.sessionChangeEmailNotificationsEnabled;
+    setting.classReminderDigestEnabled = input.classReminderDigestEnabled;
+    setting.classReminder1hPushEnabled = input.classReminder1hPushEnabled;
+    setting.classReminderDigestHour = clampDigestHour(
+      input.classReminderDigestHour,
+    );
+    setting.urgentCancelSmsEnabled = input.urgentCancelSmsEnabled;
+    setting.termScheduleEmailNotificationsEnabled =
+      input.termScheduleEmailNotificationsEnabled;
+    setting.absenceAlertInAppEnabled = input.absenceAlertInAppEnabled;
+    setting.absenceAlertEmailEnabled = input.absenceAlertEmailEnabled;
+    setting.absenceAlertSmsEnabled = input.absenceAlertSmsEnabled;
+    setting.homeworkCreatedInAppEnabled = input.homeworkCreatedInAppEnabled;
+    setting.homeworkDueSoonEnabled = input.homeworkDueSoonEnabled;
+    setting.homeworkOverdueInAppEnabled = input.homeworkOverdueInAppEnabled;
+    setting.homeworkOverdueEmailEnabled = input.homeworkOverdueEmailEnabled;
+    setting.homeworkGradedEnabled = input.homeworkGradedEnabled;
+    setting.homeworkSubmittedEnabled = input.homeworkSubmittedEnabled;
+    setting.enquiryCreatedNotifyEnabled = input.enquiryCreatedNotifyEnabled;
+    setting.trialBookingConfirmedNotifyEnabled =
+      input.trialBookingConfirmedNotifyEnabled;
+    setting.enrollmentAcceptedNotifyEnabled =
+      input.enrollmentAcceptedNotifyEnabled;
+    setting.classRosterStudentAddedNotifyEnabled =
+      input.classRosterStudentAddedNotifyEnabled;
+    setting.holidayReminderInAppEnabled = input.holidayReminderInAppEnabled;
+    setting.holidayReminderEmailEnabled = input.holidayReminderEmailEnabled;
+    setting.announcementEmailEnabled = input.announcementEmailEnabled;
+    setting.emergencyAlertInAppEnabled = input.emergencyAlertInAppEnabled;
+    setting.emergencyAlertEmailEnabled = input.emergencyAlertEmailEnabled;
+    setting.emergencyAlertSmsEnabled = input.emergencyAlertSmsEnabled;
     await this.settingRepo.save(setting);
-    return {
-      sessionChangeEmailNotificationsEnabled:
-        setting.sessionChangeEmailNotificationsEnabled,
-    };
+    return this.getNotificationSettings();
   }
 
   async isSessionChangeEmailNotificationsEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.sessionChangeEmailNotificationsEnabled ?? false;
+  }
+
+  async isClassReminderDigestEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.classReminderDigestEnabled ?? true;
+  }
+
+  async isClassReminder1hPushEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.classReminder1hPushEnabled ?? true;
+  }
+
+  async isUrgentCancelSmsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.urgentCancelSmsEnabled ?? true;
+  }
+
+  async isTermScheduleEmailNotificationsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.termScheduleEmailNotificationsEnabled ?? true;
+  }
+
+  async isAbsenceAlertInAppEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.absenceAlertInAppEnabled ?? true;
+  }
+
+  async isAbsenceAlertEmailEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.absenceAlertEmailEnabled ?? true;
+  }
+
+  async isAbsenceAlertSmsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.absenceAlertSmsEnabled ?? true;
+  }
+
+  async isHomeworkCreatedInAppEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.homeworkCreatedInAppEnabled ?? true;
+  }
+
+  async isHomeworkDueSoonEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.homeworkDueSoonEnabled ?? true;
+  }
+
+  async isHomeworkOverdueInAppEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.homeworkOverdueInAppEnabled ?? true;
+  }
+
+  async isHomeworkOverdueEmailEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.homeworkOverdueEmailEnabled ?? true;
+  }
+
+  async isHomeworkGradedEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.homeworkGradedEnabled ?? true;
+  }
+
+  async isHomeworkSubmittedEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.homeworkSubmittedEnabled ?? true;
+  }
+
+  async isEnquiryCreatedNotifyEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.enquiryCreatedNotifyEnabled ?? true;
+  }
+
+  async isTrialBookingConfirmedNotifyEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.trialBookingConfirmedNotifyEnabled ?? true;
+  }
+
+  async isEnrollmentAcceptedNotifyEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.enrollmentAcceptedNotifyEnabled ?? true;
+  }
+
+  async isClassRosterStudentAddedNotifyEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.classRosterStudentAddedNotifyEnabled ?? true;
+  }
+
+  async isHolidayReminderInAppEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.holidayReminderInAppEnabled ?? true;
+  }
+
+  async isHolidayReminderEmailEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.holidayReminderEmailEnabled ?? true;
+  }
+
+  async isAnnouncementEmailEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.announcementEmailEnabled ?? true;
+  }
+
+  async isEmergencyAlertInAppEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.emergencyAlertInAppEnabled ?? true;
+  }
+
+  async isEmergencyAlertEmailEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.emergencyAlertEmailEnabled ?? true;
+  }
+
+  async isEmergencyAlertSmsEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.emergencyAlertSmsEnabled ?? true;
+  }
+
+  async getClassReminderDigestHour(): Promise<number> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return clampDigestHour(setting?.classReminderDigestHour);
   }
 }
 

@@ -847,7 +847,7 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
       function: {
         name: "createAnnouncementDraft",
         description:
-          "Create an in-app school ANNOUNCEMENT or NOTICE draft for a target audience and open the Announcement Preview UI immediately (never publishes directly). Delivery channel is IN_APP only. Use this whenever the admin asks to create an announcement, notice, or broadcast for students, parents, teachers, or a specific year/class/subject (e.g. class cancelled, holiday, reminder). Do NOT ask separate chat questions for title or message — the preview UI displays them for editing and approval. Filter examples: Year 10 Biology students -> roles:[STUDENT], yearLevel:'10', subjectFilter:'Biology'.",
+          "Create an in-app school ANNOUNCEMENT/NOTICE or EMERGENCY alert draft for a target audience and open the Announcement Preview UI immediately (never publishes directly). Pass severity GENERAL (default) or EMERGENCY. General delivers in-app + email; emergency delivers in-app + push + email + SMS (settings-gated). Use whenever the admin asks to create an announcement, notice, broadcast, or emergency/urgent centre alert (closure, weather, safety). Default audience is roles:['ALL'] when no filters/mentions are given. Do NOT ask separate chat questions for title or message — the preview UI displays them for editing and approval.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -855,17 +855,22 @@ export const ADMIN_AI_TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTo
             title: {
               type: "string",
               description:
-                "Short clear title for the announcement (e.g. 'Biology Class Cancelled').",
+                "Short clear title for the announcement (e.g. 'Biology Class Cancelled' or 'Centre Closed Today').",
             },
             message: {
               type: "string",
               description:
                 "Professional concise announcement message body.",
             },
+            severity: {
+              type: "string",
+              description:
+                "GENERAL (default) for routine notices; EMERGENCY for urgent centre closure / weather / safety alerts.",
+            },
             roles: {
               type: "array",
               items: { type: "string" },
-              description: "ALL | STUDENT | STAFF | OFFICE_STAFF | GUARDIAN. Use ['ALL'] when targeting everyone or all users.",
+              description: "ALL | STUDENT | STAFF | OFFICE_STAFF | GUARDIAN. Use ['ALL'] when targeting everyone or when no specific audience is given.",
             },
             groups: {
               type: "array",
@@ -1409,6 +1414,8 @@ async function runAdminAiTool(
         groups: args.groups,
         title: asString(args.title),
         message: asString(args.message),
+        severity: asString(args.severity),
+        actionCommand: context.actionCommand,
         yearLevel: asString(args.yearLevel),
         term: asString(args.term),
         subjectFilter: asString(args.subjectFilter),

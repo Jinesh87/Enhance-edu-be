@@ -12,6 +12,11 @@ import {
 import { emailService } from "../email/email.service.js";
 import { settingsService } from "../settings/settings.service.js";
 import {
+  resolveClassNotifyChannels,
+  resolveClassScheduleHref,
+  resolveSessionChangeUrgency,
+} from "./class-notification-policy.js";
+import {
   notificationsService,
   type CreateNotificationInput,
 } from "./notifications.service.js";
@@ -29,6 +34,28 @@ type SessionNotifyContext = {
 };
 
 type SessionChangeKind = "SESSION_UPDATED" | "SESSION_DELETED";
+
+const CHANNEL_CONCURRENCY = 5;
+
+async function mapPool<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+) {
+  if (items.length === 0) return;
+  let index = 0;
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (index < items.length) {
+        const current = index;
+        index += 1;
+        await worker(items[current]!);
+      }
+    },
+  );
+  await Promise.all(runners);
+}
 
 function formatWhen(startAt: Date, endAt: Date) {
   const date = startAt.toLocaleDateString("en-AU", {
@@ -48,6 +75,12 @@ function formatWhen(startAt: Date, endAt: Date) {
   return `${date} · ${start} – ${end}`;
 }
 
+function formatRoomDisplay(room?: string | null): string {
+  if (!room || room.trim() === "" || room === "—") return "TBC";
+  const trimmed = room.trim();
+  return /^room\s+/i.test(trimmed) ? trimmed : `Room ${trimmed}`;
+}
+
 function buildMessages(
   kind: SessionChangeKind,
   ctx: SessionNotifyContext,
@@ -55,29 +88,32 @@ function buildMessages(
 ) {
   const label = ctx.subject?.trim() || ctx.className;
   const when = formatWhen(ctx.startAt, ctx.endAt);
-  const room = ctx.room?.trim() || "TBC";
+  const roomLabel = formatRoomDisplay(ctx.room);
 
   if (kind === "SESSION_DELETED") {
     return {
       title: "Class session cancelled",
       body: `${label} on ${when} has been cancelled.`,
+      smsBody: `[ENHANCE EDU] CANCELLED: ${label} on ${when} (${roomLabel}) is cancelled. Please do not attend the centre.`,
     };
   }
 
   if (previous) {
     const prevWhen = formatWhen(previous.startAt, previous.endAt);
-    const prevRoom = previous.room?.trim() || "TBC";
-    if (prevWhen !== when || prevRoom !== room) {
+    const prevRoomLabel = formatRoomDisplay(previous.room);
+    if (prevWhen !== when || prevRoomLabel !== roomLabel) {
       return {
         title: "Class session updated",
-        body: `${label} changed from ${prevWhen} (${prevRoom}) to ${when} (${room}).`,
+        body: `${label} changed from ${prevWhen} (${prevRoomLabel}) to ${when} (${roomLabel}).`,
+        smsBody: `[ENHANCE EDU] RESCHEDULED: ${label} moved to ${when} (${roomLabel}). Please check your portal timetable.`,
       };
     }
   }
 
   return {
     title: "Class session updated",
-    body: `${label} is now ${when} · Room ${room}.`,
+    body: `${label} is now ${when} · ${roomLabel}.`,
+    smsBody: `[ENHANCE EDU] UPDATE: ${label} is scheduled for ${when} (${roomLabel}).`,
   };
 }
 
@@ -127,8 +163,7 @@ export function sessionNotifyContextFromSession(
   session: Session,
 ): SessionNotifyContext | null {
   if (!session.classId) return null;
-  const teacher =
-    session.teacher ?? session.class?.teacher ?? null;
+  const teacher = session.teacher ?? session.class?.teacher ?? null;
   return {
     sessionId: session.id,
     classId: session.classId,
@@ -173,7 +208,7 @@ export class SessionChangeNotificationService {
     previous?: { startAt: Date; endAt: Date; room: string | null } | null;
   }) {
     const { kind, context, previous } = params;
-    const { title, body } = buildMessages(kind, context, previous);
+    const { title, body, smsBody } = buildMessages(kind, context, previous);
 
     const roster = await AppDataSource.getRepository(ClassStudent).find({
       where: { classId: context.classId },
@@ -187,17 +222,12 @@ export class SessionChangeNotificationService {
     if (context.teacherId) recipientIds.add(context.teacherId);
     for (const studentId of studentUserIds) recipientIds.add(studentId);
 
-    const classDetailsEnabled =
-      await settingsService.isGuardianPortalClassDetailsEnabled();
-    const attendanceEnabled =
-      await settingsService.isGuardianPortalAttendanceEnabled();
-    if (classDetailsEnabled || attendanceEnabled) {
-      const guardiansByStudent =
-        await resolveGuardianUserIdsForStudentUsers(studentUserIds);
-      for (const guardianIds of guardiansByStudent.values()) {
-        for (const guardianId of guardianIds) {
-          recipientIds.add(guardianId);
-        }
+    // Cancel/reschedule always includes parents (product requirement).
+    const guardiansByStudent =
+      await resolveGuardianUserIdsForStudentUsers(studentUserIds);
+    for (const guardianIds of guardiansByStudent.values()) {
+      for (const guardianId of guardianIds) {
+        recipientIds.add(guardianId);
       }
     }
 
@@ -206,54 +236,88 @@ export class SessionChangeNotificationService {
 
     const users = await AppDataSource.getRepository(User).find({
       where: { id: In(recipientList) },
-      select: { id: true, email: true, fullName: true, role: true },
+      select: {
+        id: true,
+        email: true,
+        mobile: true,
+        fullName: true,
+        role: true,
+      },
     });
 
-    const inputs: CreateNotificationInput[] = users.map((user) => {
-      const href =
-        user.role === UserRole.GUARDIAN
-          ? "/guardian/students"
-          : user.role === UserRole.STUDENT
-            ? "/student"
-            : "/tutor";
-      return {
-        userId: user.id,
-        type: kind,
-        title,
-        body,
-        data: {
-          sessionId: context.sessionId,
-          classId: context.classId,
-          className: context.className,
-          subject: context.subject,
-          startAt: context.startAt.toISOString(),
-          endAt: context.endAt.toISOString(),
-          room: context.room,
-          href,
-        },
-      };
+    const urgency = resolveSessionChangeUrgency(context.startAt);
+    const channels = resolveClassNotifyChannels({
+      scenario: kind === "SESSION_DELETED" ? "session_deleted" : "session_updated",
+      urgency,
+      sessionChangeEmailEnabled:
+        await settingsService.isSessionChangeEmailNotificationsEnabled(),
+      urgentCancelSmsEnabled: await settingsService.isUrgentCancelSmsEnabled(),
     });
 
-    await notificationsService.createMany(inputs);
+    if (channels.inApp) {
+      const inputs: CreateNotificationInput[] = users.map((user) => {
+        const href = resolveClassScheduleHref(
+          user.role,
+          kind === "SESSION_DELETED" ? null : context.sessionId,
+        );
+        return {
+          userId: user.id,
+          type: kind,
+          title,
+          body,
+          data: {
+            sessionId: context.sessionId,
+            classId: context.classId,
+            className: context.className,
+            subject: context.subject,
+            startAt: context.startAt.toISOString(),
+            endAt: context.endAt.toISOString(),
+            room: context.room,
+            urgency,
+            href,
+          },
+        };
+      });
+      await notificationsService.createMany(inputs);
+    }
 
-    const emailEnabled =
-      await settingsService.isSessionChangeEmailNotificationsEnabled();
-    if (!emailEnabled || inputs.length === 0) return;
-
-    await Promise.allSettled(
-      users
-        .filter((user) => Boolean(user.email?.trim()))
-        .map((user) =>
-          emailService.sendSessionChangeEmail({
+    if (channels.email) {
+      const emailTargets = users.filter((user) => Boolean(user.email?.trim()));
+      await mapPool(emailTargets, CHANNEL_CONCURRENCY, async (user) => {
+        try {
+          await emailService.sendSessionChangeEmail({
             to: user.email!.trim(),
             fullName: user.fullName,
             title,
             body,
             sessionWhen: formatWhen(context.startAt, context.endAt),
             classLabel: context.subject?.trim() || context.className,
-          }),
-        ),
-    );
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, userId: user.id },
+            "Session change email failed",
+          );
+        }
+      });
+    }
+
+    if (channels.sms) {
+      const smsTargets = users.filter((user) => Boolean(user.mobile?.trim()));
+      await mapPool(smsTargets, CHANNEL_CONCURRENCY, async (user) => {
+        try {
+          await emailService.sendSessionChangeSms({
+            to: user.mobile!.trim(),
+            body: smsBody,
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, userId: user.id },
+            "Session change SMS failed",
+          );
+        }
+      });
+    }
   }
 }
 

@@ -30,7 +30,7 @@ export function getBrowserTimeZone(): string {
   );
 }
 
-function zonedParts(date: Date, timeZone: string): WallClock {
+export function zonedParts(date: Date, timeZone: string): WallClock {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",

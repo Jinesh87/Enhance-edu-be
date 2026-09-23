@@ -17,7 +17,7 @@ export const sendAdminAiMessageSchema = Joi.object({
   threadId: Joi.string().uuid().allow(null).optional(),
   mentions: Joi.array().items(adminAiMentionItemSchema).max(10).optional(),
   actionCommand: Joi.string()
-    .valid("email", "announcement", "bulk-email", "bulk-message")
+    .valid("email", "announcement", "bulk-email", "bulk-message", "emergency")
     .optional(),
 });
 
@@ -124,6 +124,7 @@ export const listAdminAiThreadsQuerySchema = Joi.object({
 export const previewAnnouncementSchema = Joi.object({
   title: Joi.string().trim().max(200).allow("").optional(),
   message: Joi.string().trim().max(4000).allow("").optional(),
+  severity: Joi.string().valid("GENERAL", "EMERGENCY", "general", "emergency").optional(),
   audience: Joi.object({
     roles: Joi.array().items(Joi.string().trim()).max(8).optional(),
     groups: Joi.array().items(Joi.string().trim()).max(8).optional(),
@@ -151,7 +152,8 @@ export const previewAnnouncementSchema = Joi.object({
 export const publishAnnouncementSchema = Joi.object({
   title: Joi.string().trim().min(1).max(200).required(),
   message: Joi.string().trim().min(1).max(4000).required(),
-  deliveryChannel: Joi.string().valid("IN_APP").default("IN_APP"),
+  severity: Joi.string().valid("GENERAL", "EMERGENCY", "general", "emergency").optional(),
+  deliveryChannel: Joi.string().trim().max(64).optional(),
   idempotencyKey: Joi.string().trim().max(100).optional(),
   excludedUserIds: Joi.array().items(Joi.string().uuid()).max(2000).optional(),
   audience: Joi.object({

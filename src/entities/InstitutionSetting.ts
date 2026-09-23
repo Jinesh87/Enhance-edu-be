@@ -89,9 +89,128 @@ export class InstitutionSetting {
   /**
    * When true, session edit/delete also sends email to teacher, students,
    * and eligible guardians (in addition to in-app SSE notifications).
+   * Urgent (<4h) cancel/reschedule always emails regardless of this flag.
    */
   @Column({ type: "boolean", default: false })
   sessionChangeEmailNotificationsEnabled!: boolean;
+
+  /** When true, send one evening email digest listing tomorrow's classes. */
+  @Column({ type: "boolean", default: true })
+  classReminderDigestEnabled!: boolean;
+
+  /** When true, send web-push ~1 hour before each class session. */
+  @Column({ type: "boolean", default: true })
+  classReminder1hPushEnabled!: boolean;
+
+  /** Local hour (0–23) to send the evening class digest. Default 19. */
+  @Column({ type: "smallint", default: 19 })
+  classReminderDigestHour!: number;
+
+  /**
+   * When true, cancel/reschedule within 4 hours of start also sends SMS
+   * (requires Twilio SMS enabled).
+   */
+  @Column({ type: "boolean", default: true })
+  urgentCancelSmsEnabled!: boolean;
+
+  /**
+   * When true, bulk term schedule publish (bulk-replace) sends one consolidated
+   * in-app + email per student/tutor/parent with their term timetable.
+   */
+  @Column({ type: "boolean", default: true })
+  termScheduleEmailNotificationsEnabled!: boolean;
+
+  /**
+   * When true, tutor ABSENT/LATE marks send in-app + push to guardians.
+   * Default on.
+   */
+  @Column({ type: "boolean", default: true })
+  absenceAlertInAppEnabled!: boolean;
+
+  /** When true, tutor ABSENT marks also email guardians. */
+  @Column({ type: "boolean", default: true })
+  absenceAlertEmailEnabled!: boolean;
+
+  /**
+   * When true, tutor ABSENT marks also SMS guardians
+   * (requires Twilio SMS enabled).
+   */
+  @Column({ type: "boolean", default: true })
+  absenceAlertSmsEnabled!: boolean;
+
+  /** When true, new homework assigned notifies students in-app (+ push fanout). */
+  @Column({ type: "boolean", default: true })
+  homeworkCreatedInAppEnabled!: boolean;
+
+  /** When true, due-soon reminder notifies pending students (in-app + push). */
+  @Column({ type: "boolean", default: true })
+  homeworkDueSoonEnabled!: boolean;
+
+  /**
+   * When true, overdue homework notifies student and parents in-app (+ push).
+   */
+  @Column({ type: "boolean", default: true })
+  homeworkOverdueInAppEnabled!: boolean;
+
+  /** When true, overdue homework also emails parents. */
+  @Column({ type: "boolean", default: true })
+  homeworkOverdueEmailEnabled!: boolean;
+
+  /** When true, graded/feedback notifies the student (in-app + push). */
+  @Column({ type: "boolean", default: true })
+  homeworkGradedEnabled!: boolean;
+
+  /** When true, successful submission notifies the tutor in-app. */
+  @Column({ type: "boolean", default: true })
+  homeworkSubmittedEnabled!: boolean;
+
+  /** When true, new enquiry capture notifies admins/office (in-app + email). */
+  @Column({ type: "boolean", default: true })
+  enquiryCreatedNotifyEnabled!: boolean;
+
+  /**
+   * When true, trial booking confirmation notifies parent + student
+   * (in-app + email + SMS).
+   */
+  @Column({ type: "boolean", default: true })
+  trialBookingConfirmedNotifyEnabled!: boolean;
+
+  /**
+   * When true, enrolment accept notifies parent + student (in-app + email).
+   */
+  @Column({ type: "boolean", default: true })
+  enrollmentAcceptedNotifyEnabled!: boolean;
+
+  /** When true, new class roster add notifies the tutor in-app. */
+  @Column({ type: "boolean", default: true })
+  classRosterStudentAddedNotifyEnabled!: boolean;
+
+  /**
+   * When true, holiday/closure reminders send in-app (+ push) to affected users
+   * 7 days and 2 days before start.
+   */
+  @Column({ type: "boolean", default: true })
+  holidayReminderInAppEnabled!: boolean;
+
+  /** When true, holiday/closure reminders also email affected users. */
+  @Column({ type: "boolean", default: true })
+  holidayReminderEmailEnabled!: boolean;
+
+  /** When true, general Admin AI announcements also email recipients. */
+  @Column({ type: "boolean", default: true })
+  announcementEmailEnabled!: boolean;
+
+  /** When true, emergency alerts create in-app notifications (and push fan-out). */
+  @Column({ type: "boolean", default: true })
+  emergencyAlertInAppEnabled!: boolean;
+
+  /** When true, emergency alerts also email recipients. */
+  @Column({ type: "boolean", default: true })
+  emergencyAlertEmailEnabled!: boolean;
+
+  /** When true, emergency alerts also SMS recipients (requires Twilio). */
+  @Column({ type: "boolean", default: true })
+  emergencyAlertSmsEnabled!: boolean;
 
   // ── Admin AI capability controls (institution-wide; does not affect other AIs) ──
 

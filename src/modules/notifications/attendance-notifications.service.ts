@@ -7,12 +7,37 @@ import {
   Session,
   User,
 } from "../../entities/index.js";
+import { emailService } from "../email/email.service.js";
+import { settingsService } from "../settings/settings.service.js";
 import {
+  attendanceCorrectedNotificationPayload,
   attendanceExceptionNotificationPayload,
   attendanceMarkedNotificationPayload,
   notifyUsers,
 } from "./domain-notifications.js";
 import { resolveGuardianUserIdsForStudentUsers } from "./session-change-notifications.service.js";
+
+const CHANNEL_CONCURRENCY = 5;
+
+async function mapPool<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+) {
+  if (items.length === 0) return;
+  let index = 0;
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (index < items.length) {
+        const current = index;
+        index += 1;
+        await worker(items[current]!);
+      }
+    },
+  );
+  await Promise.all(runners);
+}
 
 function sessionLabel(session: Session): string {
   const subject =
@@ -27,6 +52,24 @@ function sessionLabel(session: Session): string {
     minute: "2-digit",
   });
   return `${subject} · ${when}`;
+}
+
+function sessionWhenOnly(session: Session): string {
+  return session.startAt.toLocaleString("en-AU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function sessionNameOnly(session: Session): string {
+  return (
+    session.assessment?.name?.trim() ||
+    session.class?.name?.trim() ||
+    "Class"
+  );
 }
 
 async function resolveStudentDisplayName(studentUserId: string): Promise<string> {
@@ -59,9 +102,112 @@ export async function notifyGuardiansOfAttendanceMark(input: {
     if (guardianIds.length === 0) return;
 
     const studentName = await resolveStudentDisplayName(input.studentUserId);
+    const label = sessionLabel(input.session);
     const payload = attendanceMarkedNotificationPayload({
       studentName,
       status: input.status,
+      sessionLabel: label,
+      sessionId: input.session.id,
+    });
+
+    const inAppEnabled = await settingsService.isAbsenceAlertInAppEnabled();
+    if (inAppEnabled) {
+      await notifyUsers(
+        guardianIds.map((userId) => ({
+          userId,
+          ...payload,
+        })),
+      );
+    }
+
+    if (input.status !== AttendanceStatus.ABSENT) return;
+
+    const emailEnabled = await settingsService.isAbsenceAlertEmailEnabled();
+    const smsEnabled = await settingsService.isAbsenceAlertSmsEnabled();
+    if (!emailEnabled && !smsEnabled) return;
+
+    const guardians = await AppDataSource.getRepository(User).find({
+      where: { id: In(guardianIds) },
+      select: { id: true, email: true, mobile: true, fullName: true },
+    });
+
+    const message = `${studentName} was marked absent for ${label}. If this is an error or ${studentName} is unwell, reply or open the app.`;
+
+    if (emailEnabled) {
+      const emailTargets = guardians.filter((g) => Boolean(g.email?.trim()));
+      await mapPool(emailTargets, CHANNEL_CONCURRENCY, async (guardian) => {
+        try {
+          await emailService.sendAbsenceAlertEmail({
+            to: guardian.email!.trim(),
+            guardianName: guardian.fullName,
+            studentFullName: studentName,
+            sessionName: sessionNameOnly(input.session),
+            sessionWhen: sessionWhenOnly(input.session),
+            message,
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, guardianId: guardian.id },
+            "Absence alert email failed",
+          );
+        }
+      });
+    }
+
+    if (smsEnabled) {
+      const smsTargets = guardians.filter((g) => Boolean(g.mobile?.trim()));
+      const smsBody = `[ENHANCE EDU] ATTENDANCE: ${studentName} was marked absent for ${label}. Please sign in to the portal if this is an error.`;
+      await mapPool(smsTargets, CHANNEL_CONCURRENCY, async (guardian) => {
+        try {
+          await emailService.sendSessionChangeSms({
+            to: guardian.mobile!.trim(),
+            body: smsBody,
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, guardianId: guardian.id },
+            "Absence alert SMS failed",
+          );
+        }
+      });
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        sessionId: input.session.id,
+        studentUserId: input.studentUserId,
+      },
+      "Failed to notify guardians of attendance mark",
+    );
+  }
+}
+
+export async function notifyGuardiansOfAttendanceCorrection(input: {
+  session: Session;
+  studentUserId: string;
+  previousStatus: AttendanceStatus;
+  newStatus: AttendanceStatus;
+}): Promise<void> {
+  if (
+    input.previousStatus !== AttendanceStatus.ABSENT ||
+    input.newStatus !== AttendanceStatus.PRESENT
+  ) {
+    return;
+  }
+
+  try {
+    const guardiansByStudent = await resolveGuardianUserIdsForStudentUsers([
+      input.studentUserId,
+    ]);
+    const guardianIds = [
+      ...(guardiansByStudent.get(input.studentUserId) ?? []),
+    ];
+    if (guardianIds.length === 0) return;
+
+    const studentName = await resolveStudentDisplayName(input.studentUserId);
+    const payload = attendanceCorrectedNotificationPayload({
+      studentName,
       sessionLabel: sessionLabel(input.session),
       sessionId: input.session.id,
     });
@@ -74,8 +220,12 @@ export async function notifyGuardiansOfAttendanceMark(input: {
     );
   } catch (error) {
     logger.warn(
-      { err: error, sessionId: input.session.id, studentUserId: input.studentUserId },
-      "Failed to notify guardians of attendance mark",
+      {
+        err: error,
+        sessionId: input.session.id,
+        studentUserId: input.studentUserId,
+      },
+      "Failed to notify guardians of attendance correction",
     );
   }
 }

@@ -9,7 +9,10 @@ import {
 } from "../admin-ai-capabilities.js";
 import { actionSource } from "../tool-helpers.js";
 import { createCommunicationDraft } from "./communication.tools.js";
-import { createAnnouncementDraft } from "../announcements/announcement.tools.js";
+import {
+  createAnnouncementDraft,
+  resolveAnnouncementSeverity,
+} from "../announcements/announcement.tools.js";
 
 const FALLBACK_REPLY =
   "I've prepared the email. Review and finalize it in the preview below.";
@@ -172,37 +175,62 @@ export async function ensureCommunicationPreviewIfNeeded(input: {
   sources: AdminAiSource[];
   settings: AdminAiCapabilitySettings;
   replyText: string;
+  actionCommand?: string | null;
 }): Promise<{
   sources: AdminAiSource[];
   replyText: string;
   ensured: boolean;
 }> {
-  const { actor, userMessage, threadId, settings } = input;
+  const { actor, userMessage, threadId, settings, actionCommand } = input;
   let { sources, replyText } = input;
 
   if (hasConfirmSendAction(sources) || hasConfirmAnnouncementAction(sources)) {
     return { sources, replyText, ensured: false };
   }
-  if (!looksLikeCommunicationIntent(userMessage)) {
+
+  const cmd = String(actionCommand ?? "")
+    .trim()
+    .toLowerCase();
+  const forceEmergency = cmd === "emergency";
+  const forceAnnouncement =
+    cmd === "announcement" || cmd === "bulk-message" || forceEmergency;
+  const forceEmail = cmd === "email" || cmd === "bulk-email";
+
+  // Slash commands are authoritative — do not depend on fuzzy intent heuristics.
+  if (
+    !forceAnnouncement &&
+    !forceEmail &&
+    !looksLikeCommunicationIntent(userMessage)
+  ) {
     return { sources, replyText, ensured: false };
   }
   if (!isCapabilityEnabled(settings, "confirmedActions")) {
     return { sources, replyText, ensured: false };
   }
 
-  const isAnnouncement = looksLikeAnnouncementIntent(userMessage);
+  const isAnnouncement =
+    forceAnnouncement ||
+    (!forceEmail && looksLikeAnnouncementIntent(userMessage));
 
   if (isAnnouncement) {
+    if (!isCapabilityEnabled(settings, "messageDrafting")) {
+      return { sources, replyText, ensured: false };
+    }
     try {
       const audience = inferFallbackAudience(userMessage);
       const { subject, body } = inferSubjectAndBody(userMessage);
+      const severity = resolveAnnouncementSeverity(undefined, actionCommand);
       const result = await createAnnouncementDraft(actor, {
-        title: subject || "Platform Announcement",
+        title:
+          subject ||
+          (forceEmergency ? "Emergency Alert" : "Platform Announcement"),
         message: body || userMessage,
-        roles: audience.roles,
+        roles: audience.roles ?? (forceAnnouncement ? ["ALL"] : undefined),
         recipientOf: audience.recipientOf,
         label: audience.label,
         ambiguous: audience.ambiguous,
+        severity,
+        actionCommand,
         userMessage,
         threadId: threadId ?? undefined,
       });
@@ -215,7 +243,9 @@ export async function ensureCommunicationPreviewIfNeeded(input: {
 
       return {
         sources: nextSources,
-        replyText: FALLBACK_ANNOUNCEMENT_REPLY,
+        replyText: forceEmergency
+          ? "I've prepared the emergency alert draft. Review and approve it in the preview below."
+          : FALLBACK_ANNOUNCEMENT_REPLY,
         ensured: true,
       };
     } catch {

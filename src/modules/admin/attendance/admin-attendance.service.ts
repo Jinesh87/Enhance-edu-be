@@ -22,6 +22,7 @@ import { UserRole } from "../../../common/constants/roles.js";
 import { emailService } from "../../email/email.service.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
+import { notifyGuardiansOfAttendanceCorrection } from "../../notifications/attendance-notifications.service.js";
 
 export const ABSENCE_POLICIES = [
   "TASK_AND_ALERT",
@@ -742,6 +743,15 @@ export class AdminAttendanceService {
       before: { status: previousStatus },
       after: { status, reason: reason.trim() },
     });
+
+    if (record.session) {
+      void notifyGuardiansOfAttendanceCorrection({
+        session: record.session,
+        studentUserId: record.studentId,
+        previousStatus,
+        newStatus: status,
+      });
+    }
 
     const saved = await this.repo.findAttendanceRecordById(id);
     if (!saved) {
