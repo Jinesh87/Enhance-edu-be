@@ -156,7 +156,7 @@ export async function notifyGuardiansOfAttendanceMark(input: {
 
     if (smsEnabled) {
       const smsTargets = guardians.filter((g) => Boolean(g.mobile?.trim()));
-      const smsBody = `URGENT: ${studentName} marked absent for ${label}. Open the app if this is an error.`;
+      const smsBody = `[ENHANCE EDU] ATTENDANCE: ${studentName} was marked absent for ${label}. Please sign in to the portal if this is an error.`;
       await mapPool(smsTargets, CHANNEL_CONCURRENCY, async (guardian) => {
         try {
           await emailService.sendSessionChangeSms({

@@ -28,7 +28,7 @@ export type TimetableSessionRow = {
   startAt: string;
   endAt: string;
   room: string | null;
-  isWeeklySlot: boolean;
+  isWeeklySlot?: boolean;
   teacher?: { fullName: string } | null;
   class?: {
     lesson?: string | null;
@@ -337,20 +337,19 @@ export function renderEnrollmentTimetablePdf(options: {
         : sessions.map((session) => [
             formatSessionDay(session),
             formatSessionTime(session),
-            session.class?.lesson || session.class?.code || "—",
             session.room || session.class?.room || "—",
             session.teacher?.fullName || session.class?.teacher?.fullName || "—",
           ]);
 
     autoTable(doc, {
       startY: y,
-      head: [["Day / date", "Time", "Lesson", "Room", "Teacher"]],
+      head: [["DAY & DATE", "TIME", "ROOM", "TUTOR"]],
       body,
       margin: { left: margin, right: margin, top: 22, bottom: 16 },
       styles: {
         font: "helvetica",
         fontSize: 8.5,
-        cellPadding: { top: 3, right: 3, bottom: 3, left: 3 },
+        cellPadding: { top: 3.5, right: 4, bottom: 3.5, left: 4 },
         lineColor: BRAND.line,
         lineWidth: 0.15,
         textColor: BRAND.ink,
@@ -361,17 +360,116 @@ export function renderEnrollmentTimetablePdf(options: {
         fillColor: BRAND.ink,
         textColor: BRAND.white,
         fontStyle: "bold",
-        fontSize: 7.5,
+        fontSize: 8,
       },
       alternateRowStyles: {
         fillColor: BRAND.cream,
       },
       columnStyles: {
-        0: { cellWidth: 48 },
-        1: { cellWidth: 40 },
-        2: { cellWidth: "auto" },
-        3: { cellWidth: 30 },
-        4: { cellWidth: 44 },
+        0: { cellWidth: 60 },
+        1: { cellWidth: 55 },
+        2: { cellWidth: 45 },
+        3: { cellWidth: "auto" },
+      },
+      theme: "plain",
+      didDrawPage: (data: HookData) => {
+        if (data.pageNumber > 1) {
+          drawPageChrome(doc, data.pageNumber, doc.getNumberOfPages(), true);
+        }
+      },
+    });
+
+    y = (doc.lastAutoTable?.finalY ?? y) + 6;
+  }
+
+  const pageCount = doc.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page);
+    drawPageChrome(doc, page, pageCount, page > 1);
+  }
+
+  return Buffer.from(doc.output("arraybuffer"));
+}
+
+export function renderTermScheduleTimetablePdf(options: {
+  recipientName: string;
+  recipientRoleLabel?: string;
+  termLabel: string;
+  termStartDate: string;
+  termEndDate: string;
+  timetables: TimetableSubjectBlock[];
+}): Buffer {
+  const {
+    recipientName,
+    recipientRoleLabel = "Student / Member",
+    termLabel,
+    termStartDate,
+    termEndDate,
+    timetables,
+  } = options;
+  const doc = new jsPDF({
+    orientation: "landscape",
+    unit: "mm",
+    format: "a4",
+  }) as PdfDoc;
+  const margin = 12;
+  const sessionCount = timetables.reduce(
+    (sum, entry) => sum + entry.sessions.length,
+    0,
+  );
+
+  let y = drawCoverHeader(doc, {
+    studentName: recipientName,
+    yearLevelName: recipientRoleLabel,
+    termLabel,
+    termStartDate,
+    termEndDate,
+    subjectCount: timetables.length,
+    sessionCount,
+  });
+
+  for (const [index, entry] of timetables.entries()) {
+    if (index > 0) y += 4;
+
+    y = ensureSpace(doc, y, 24);
+    y = drawSubjectHeading(doc, entry.subjectName, entry.sessions.length, y);
+
+    const rows = entry.sessions.map((session) => [
+      formatSessionDay(session),
+      formatSessionTime(session),
+      session.room || session.class?.room || "—",
+      session.teacher?.fullName || session.class?.teacher?.fullName || "—",
+    ]);
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [["DAY & DATE", "TIME", "ROOM", "TUTOR"]],
+      body: rows,
+      styles: {
+        font: "helvetica",
+        fontSize: 8.5,
+        cellPadding: { top: 3.5, right: 4, bottom: 3.5, left: 4 },
+        lineColor: BRAND.line,
+        lineWidth: 0.15,
+        textColor: BRAND.ink,
+        overflow: "linebreak",
+        valign: "middle",
+      },
+      headStyles: {
+        fillColor: BRAND.ink,
+        textColor: BRAND.white,
+        fontStyle: "bold",
+        fontSize: 8,
+      },
+      alternateRowStyles: {
+        fillColor: BRAND.cream,
+      },
+      columnStyles: {
+        0: { cellWidth: 60 },
+        1: { cellWidth: 55 },
+        2: { cellWidth: 45 },
+        3: { cellWidth: "auto" },
       },
       theme: "plain",
       didDrawPage: (data: HookData) => {
@@ -400,3 +498,4 @@ export function slugifyTimetableFilename(value: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
+

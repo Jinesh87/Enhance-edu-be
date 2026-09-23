@@ -261,7 +261,7 @@ export async function notifyTrialBookingConfirmed(input: {
     const smsTargets: string[] = [];
     if (guardian?.mobile?.trim()) smsTargets.push(guardian.mobile.trim());
     if (smsTargets.length > 0) {
-      const body = `Trial confirmed: ${studentName} · ${classLabel}. Open the app for details.`;
+      const body = `[ENHANCE EDU] CONFIRMED: Trial booked for ${studentName} (${classLabel}). Sign in to the portal for session details.`;
       await mapPool(smsTargets, CHANNEL_CONCURRENCY, async (to) => {
         try {
           await emailService.sendSessionChangeSms({ to, body });

@@ -75,6 +75,12 @@ function formatWhen(startAt: Date, endAt: Date) {
   return `${date} · ${start} – ${end}`;
 }
 
+function formatRoomDisplay(room?: string | null): string {
+  if (!room || room.trim() === "" || room === "—") return "TBC";
+  const trimmed = room.trim();
+  return /^room\s+/i.test(trimmed) ? trimmed : `Room ${trimmed}`;
+}
+
 function buildMessages(
   kind: SessionChangeKind,
   ctx: SessionNotifyContext,
@@ -82,32 +88,32 @@ function buildMessages(
 ) {
   const label = ctx.subject?.trim() || ctx.className;
   const when = formatWhen(ctx.startAt, ctx.endAt);
-  const room = ctx.room?.trim() || "TBC";
+  const roomLabel = formatRoomDisplay(ctx.room);
 
   if (kind === "SESSION_DELETED") {
     return {
       title: "Class session cancelled",
       body: `${label} on ${when} has been cancelled.`,
-      smsBody: `URGENT: ${label} on ${when} (Room ${room}) has been cancelled. Do not travel to the centre.`,
+      smsBody: `[ENHANCE EDU] CANCELLED: ${label} on ${when} (${roomLabel}) is cancelled. Please do not attend the centre.`,
     };
   }
 
   if (previous) {
     const prevWhen = formatWhen(previous.startAt, previous.endAt);
-    const prevRoom = previous.room?.trim() || "TBC";
-    if (prevWhen !== when || prevRoom !== room) {
+    const prevRoomLabel = formatRoomDisplay(previous.room);
+    if (prevWhen !== when || prevRoomLabel !== roomLabel) {
       return {
         title: "Class session updated",
-        body: `${label} changed from ${prevWhen} (${prevRoom}) to ${when} (${room}).`,
-        smsBody: `URGENT: ${label} rescheduled to ${when}, Room ${room}.`,
+        body: `${label} changed from ${prevWhen} (${prevRoomLabel}) to ${when} (${roomLabel}).`,
+        smsBody: `[ENHANCE EDU] RESCHEDULED: ${label} moved to ${when} (${roomLabel}). Please check your portal timetable.`,
       };
     }
   }
 
   return {
     title: "Class session updated",
-    body: `${label} is now ${when} · Room ${room}.`,
-    smsBody: `URGENT: ${label} is now ${when}, Room ${room}.`,
+    body: `${label} is now ${when} · ${roomLabel}.`,
+    smsBody: `[ENHANCE EDU] UPDATE: ${label} is scheduled for ${when} (${roomLabel}).`,
   };
 }
 

@@ -25,6 +25,11 @@ import {
   type CreateNotificationInput,
 } from "./notifications.service.js";
 import { resolveGuardianUserIdsForStudentUsers } from "./session-change-notifications.service.js";
+import {
+  renderTermScheduleTimetablePdf,
+  slugifyTimetableFilename,
+  type TimetableSubjectBlock,
+} from "../shared/timetable/enrollment-timetable-pdf.js";
 
 const CHANNEL_CONCURRENCY = 5;
 const MAX_EMAIL_SESSIONS = 80;
@@ -181,17 +186,28 @@ export class TermScheduleNotificationService {
     );
 
     const linesByUser = new Map<string, TimetableLine[]>();
+    const sessionsByUser = new Map<string, Session[]>();
     const seenByUser = new Map<string, Set<string>>();
-    const pushLine = (userId: string | null | undefined, line: TimetableLine) => {
+
+    const pushLine = (
+      userId: string | null | undefined,
+      line: TimetableLine,
+      session: Session,
+    ) => {
       if (!userId) return;
       const key = `${line.label}|${line.when}|${line.room}`;
       const seen = seenByUser.get(userId) ?? new Set<string>();
       if (seen.has(key)) return;
       seen.add(key);
       seenByUser.set(userId, seen);
+
       const list = linesByUser.get(userId) ?? [];
       list.push(line);
       linesByUser.set(userId, list);
+
+      const sessList = sessionsByUser.get(userId) ?? [];
+      sessList.push(session);
+      sessionsByUser.set(userId, sessList);
     };
 
     for (const session of sessions) {
@@ -212,13 +228,13 @@ export class TermScheduleNotificationService {
 
       const teacherId =
         session.teacher?.id ?? session.teacherId ?? cls.teacher?.id ?? null;
-      pushLine(teacherId, line);
+      pushLine(teacherId, line, session);
 
       const studentIds = studentsByClass.get(cls.id) ?? [];
       for (const studentId of studentIds) {
-        pushLine(studentId, line);
+        pushLine(studentId, line, session);
         for (const guardianId of guardiansByStudent.get(studentId) ?? []) {
-          pushLine(guardianId, line);
+          pushLine(guardianId, line, session);
         }
       }
     }
@@ -276,6 +292,68 @@ export class TermScheduleNotificationService {
         const sessionsForEmail = allLines.slice(0, MAX_EMAIL_SESSIONS);
         const truncatedCount = Math.max(0, allLines.length - sessionsForEmail.length);
 
+        const userSessions = sessionsByUser.get(user.id) ?? [];
+        const subjectMap = new Map<string, TimetableSubjectBlock["sessions"]>();
+        for (const s of userSessions) {
+          const subj = s.class?.subject?.trim() || s.class?.name || "General";
+          const list = subjectMap.get(subj) ?? [];
+          list.push({
+            startAt: s.startAt instanceof Date ? s.startAt.toISOString() : String(s.startAt),
+            endAt: s.endAt instanceof Date ? s.endAt.toISOString() : String(s.endAt),
+            room: s.room || s.classroom?.name || s.class?.room || null,
+            teacher: s.teacher ? { fullName: s.teacher.fullName } : null,
+            class: s.class
+              ? {
+                  lesson: s.class.name || null,
+                  room: s.class.room,
+                  timeZone: s.class.timeZone,
+                  teacher: s.class.teacher ? { fullName: s.class.teacher.fullName } : null,
+                }
+              : null,
+          });
+          subjectMap.set(subj, list);
+        }
+
+        const timetables: TimetableSubjectBlock[] = Array.from(
+          subjectMap.entries(),
+        ).map(([subjectName, list]) => ({
+          subjectName,
+          sessions: list,
+        }));
+
+        let attachments: Array<{ filename: string; content: Buffer }> | undefined;
+        if (timetables.length > 0) {
+          try {
+            const roleLabel =
+              user.role === UserRole.STAFF
+                ? "Tutor"
+                : user.role === UserRole.GUARDIAN
+                  ? "Guardian"
+                  : "Student";
+
+            const pdfBuffer = renderTermScheduleTimetablePdf({
+              recipientName: user.fullName,
+              recipientRoleLabel: roleLabel,
+              termLabel: label,
+              termStartDate: term.startDate ? String(term.startDate) : "",
+              termEndDate: term.endDate ? String(term.endDate) : "",
+              timetables,
+            });
+
+            attachments = [
+              {
+                filename: `${slugifyTimetableFilename(label)}-${slugifyTimetableFilename(user.fullName)}-timetable.pdf`,
+                content: pdfBuffer,
+              },
+            ];
+          } catch (pdfErr) {
+            logger.warn(
+              { pdfErr, userId: user.id, termId },
+              "Failed to render term schedule timetable PDF",
+            );
+          }
+        }
+
         try {
           await emailService.sendTermScheduleEmail({
             to: user.email!.trim(),
@@ -284,6 +362,7 @@ export class TermScheduleNotificationService {
             termDateRange,
             sessions: sessionsForEmail,
             truncatedCount,
+            attachments,
           });
         } catch (error) {
           logger.warn(
