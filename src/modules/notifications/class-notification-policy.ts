@@ -1,3 +1,5 @@
+import { UserRole } from "../../common/constants/roles.js";
+
 export type ClassNotifyUrgency = "urgent" | "advance";
 
 export type ClassNotifyChannels = {
@@ -14,6 +16,22 @@ export type ClassNotifyScenario =
   | "session_updated"
   | "session_deleted";
 
+export function resolveClassScheduleHref(
+  role: string | null | undefined,
+  _sessionId?: string | null,
+): string {
+  if (role === UserRole.GUARDIAN) {
+    return "/guardian/students";
+  }
+  if (role === UserRole.STUDENT) {
+    return "/student/classes?tab=timetable";
+  }
+  if (role === UserRole.STAFF) {
+    return "/tutor/classes?tab=timetable";
+  }
+  return "/admin/classes/calendar";
+}
+
 const URGENT_HOURS = 4;
 
 export function hoursUntilStart(startAt: Date, now: Date = new Date()): number {
@@ -27,10 +45,6 @@ export function resolveSessionChangeUrgency(
   return hoursUntilStart(startAt, now) < URGENT_HOURS ? "urgent" : "advance";
 }
 
-/**
- * Channel matrix for class reminder / cancel-reschedule / term schedule scenarios.
- * Push is delivered via the in-app createMany fan-out when inApp is true.
- */
 export function resolveClassNotifyChannels(params: {
   scenario: ClassNotifyScenario;
   urgency?: ClassNotifyUrgency;

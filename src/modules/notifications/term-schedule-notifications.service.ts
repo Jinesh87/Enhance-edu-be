@@ -16,7 +16,10 @@ import {
 } from "../../entities/index.js";
 import { emailService } from "../email/email.service.js";
 import { settingsService } from "../settings/settings.service.js";
-import { resolveClassNotifyChannels } from "./class-notification-policy.js";
+import {
+  resolveClassNotifyChannels,
+  resolveClassScheduleHref,
+} from "./class-notification-policy.js";
 import {
   notificationsService,
   type CreateNotificationInput,
@@ -92,12 +95,6 @@ function formatSessionWhen(startAt: Date, endAt: Date, timeZone: string) {
     minute: "2-digit",
   });
   return `${date} · ${start} – ${end}`;
-}
-
-function hrefForRole(role: string | null | undefined): string {
-  if (role === UserRole.GUARDIAN) return "/guardian/students";
-  if (role === UserRole.STUDENT) return "/student";
-  return "/tutor";
 }
 
 function termLabel(term: Term): string {
@@ -253,7 +250,7 @@ export class TermScheduleNotificationService {
             termId,
             termLabel: label,
             sessionCount: lines.length,
-            href: hrefForRole(user.role),
+            href: resolveClassScheduleHref(user.role),
           },
         });
       }

@@ -20,6 +20,7 @@ import {
   holidayReminderNotificationPayload,
   notifyUsers,
 } from "./domain-notifications.js";
+import { resolveClassScheduleHref } from "./class-notification-policy.js";
 import { resolveGuardianUserIdsForStudentUsers } from "./session-change-notifications.service.js";
 
 const CHANNEL_CONCURRENCY = 5;
@@ -120,12 +121,6 @@ function formatHolidayDateLabel(startDate: string, endDate: string): string {
   const end = String(endDate).slice(0, 10);
   if (start === end) return start;
   return `${start} – ${end}`;
-}
-
-function hrefForRole(role: string | null | undefined): string {
-  if (role === UserRole.GUARDIAN) return "/guardian/students";
-  if (role === UserRole.STUDENT) return "/student";
-  return "/tutor";
 }
 
 async function resolveAffectedUserIds(holiday: Holiday): Promise<string[]> {
@@ -252,7 +247,7 @@ export class HolidayRemindersService {
               holidayName: holiday.name,
               dateLabel,
               leadDays,
-              href: hrefForRole(user.role),
+              href: resolveClassScheduleHref(user.role),
             });
             notifyBatch.push({
               userId: user.id,

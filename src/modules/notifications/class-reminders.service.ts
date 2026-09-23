@@ -21,6 +21,7 @@ import {
   notificationsService,
   type CreateNotificationInput,
 } from "./notifications.service.js";
+import { resolveClassScheduleHref } from "./class-notification-policy.js";
 import { sessionNotifyContextFromSession } from "./session-change-notifications.service.js";
 
 const CHANNEL_CONCURRENCY = 5;
@@ -95,12 +96,6 @@ function tomorrowDateKey(now: Date, timeZone: string): string {
   const noonUtc = Date.UTC(parts.year, parts.month - 1, parts.day, 12);
   const tomorrow = new Date(noonUtc + 24 * 60 * 60 * 1000);
   return calendarDateInTimeZone(tomorrow, timeZone);
-}
-
-function hrefForRole(role: string | null | undefined): string {
-  if (role === UserRole.GUARDIAN) return "/guardian/students";
-  if (role === UserRole.STUDENT) return "/student";
-  return "/tutor";
 }
 
 export class ClassRemindersService {
@@ -190,7 +185,7 @@ export class ClassRemindersService {
         startAt: ctx.startAt.toISOString(),
         endAt: ctx.endAt.toISOString(),
         room: ctx.room,
-        href: hrefForRole(user.role),
+        href: resolveClassScheduleHref(user.role, ctx.sessionId),
       },
     }));
 

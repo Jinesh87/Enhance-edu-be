@@ -13,6 +13,7 @@ import { emailService } from "../email/email.service.js";
 import { settingsService } from "../settings/settings.service.js";
 import {
   resolveClassNotifyChannels,
+  resolveClassScheduleHref,
   resolveSessionChangeUrgency,
 } from "./class-notification-policy.js";
 import {
@@ -249,12 +250,10 @@ export class SessionChangeNotificationService {
 
     if (channels.inApp) {
       const inputs: CreateNotificationInput[] = users.map((user) => {
-        const href =
-          user.role === UserRole.GUARDIAN
-            ? "/guardian/students"
-            : user.role === UserRole.STUDENT
-              ? "/student"
-              : "/tutor";
+        const href = resolveClassScheduleHref(
+          user.role,
+          kind === "SESSION_DELETED" ? null : context.sessionId,
+        );
         return {
           userId: user.id,
           type: kind,
