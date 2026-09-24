@@ -82,6 +82,10 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   teacherAdminChatEnabled!: boolean;
 
+  /** When true, teacher payroll module is available in the admin console. */
+  @Column({ type: "boolean", default: false })
+  teacherPayrollEnabled!: boolean;
+
   /** OpenAI API key for institution AI features. */
   @Column({ type: "varchar", length: 255, nullable: true })
   openaiApiKey!: string | null;

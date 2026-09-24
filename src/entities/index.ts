@@ -99,3 +99,6 @@ export * from "./Announcement.js";
 export * from "./ChatConversation.js";
 export * from "./ChatMessage.js";
 export * from "./ChatUserPublicKey.js";
+export * from "./TeacherPayrollConfig.js";
+export * from "./TeacherPayrollRateHistory.js";
+
