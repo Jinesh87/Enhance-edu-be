@@ -19,6 +19,7 @@ import {
   ensureEnquiryConstraints,
   ensureLearningSchema,
   ensureChatSchema,
+  ensureTeacherPayrollSchema,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
 import { connectRedis } from "./config/redis.js";
@@ -57,6 +58,7 @@ async function bootstrap() {
   await ensureAdminAiSchema();
   await ensureLearningSchema();
   await ensureChatSchema();
+  await ensureTeacherPayrollSchema();
   await repairChatMessageMediaLinks().catch((error) => {
     logger.warn({ err: error }, "Chat media repair skipped");
   });

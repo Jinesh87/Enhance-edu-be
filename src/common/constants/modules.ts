@@ -12,6 +12,7 @@ export const ADMIN_MODULE_IDS = [
   "tasks",
   "people",
   "settings",
+  "payroll",
   "change-history",
 ] as const;
 
@@ -35,6 +36,7 @@ export const ADMIN_MODULES: {
   { id: "tasks", label: "Tasks", path: "/admin/tasks" },
   { id: "people", label: "People", path: "/admin/people" },
   { id: "settings", label: "Settings", path: "/admin/messaging-settings" },
+  { id: "payroll", label: "Payroll", path: "/admin/payroll" },
   { id: "change-history", label: "Change history", path: "/admin/change-history" },
 ];
 

@@ -8,6 +8,7 @@ export const updateInstitutionSettingSchema = Joi.object({
 export const updateSecuritySettingSchema = Joi.object({
   login2faEnabled: Joi.boolean().required(),
   sandboxModeEnabled: Joi.boolean().required(),
+  teacherPayrollEnabled: Joi.boolean().required(),
 });
 
 export const updateGuardianPortalSettingSchema = Joi.object({

@@ -13,6 +13,7 @@ import {
   clampRange,
   dayBoundsInClassTz,
 } from "../ai/tool-helpers.js";
+import { adminPayrollService } from "../payroll/admin-payroll.service.js";
 
 export type DashboardNeed = {
   id: string;
@@ -30,6 +31,9 @@ export type DashboardMetric = {
   tone: "up" | "neutral" | "danger";
   info: string;
   href: string;
+  /** How to render value; defaults to plain number. */
+  format?: "number" | "currency" | "hours";
+  currency?: string;
 };
 
 export type DashboardFunnelStage = {
@@ -97,6 +101,7 @@ class AdminDashboardService {
       attendanceWeek,
       attendanceDays,
       openTaskRows,
+      payrollTotals,
     ] = await Promise.all([
       // Spec: students with ≥1 active enrolment agreement (not merely ACTIVE user accounts).
       this.enrollments
@@ -139,6 +144,7 @@ class AdminDashboardService {
         order: { dueAt: "ASC" },
         take: 8,
       }),
+      adminPayrollService.getMonthToDateTotals(),
     ]);
 
     let attendanceTotal = 0;
@@ -201,6 +207,50 @@ class AdminDashboardService {
         href: "/admin/tasks",
       },
     ];
+
+    if (payrollTotals) {
+      metrics.push(
+        {
+          id: "payroll-sessions",
+          label: "Sessions taken",
+          value: payrollTotals.sessions,
+          hint: "Payable this month (present or late)",
+          tone: "neutral",
+          info: "Ended sessions this month taught by a teacher with at least one present or late attendee. Used for teacher payroll.",
+          href: "/admin/payroll",
+        },
+        {
+          id: "payroll-hours",
+          label: "Class hours",
+          value: payrollTotals.hours,
+          hint: "Hours across payable sessions",
+          tone: "neutral",
+          info: "Total duration of payable teacher sessions from the 1st of this month through today.",
+          href: "/admin/payroll",
+          format: "hours",
+        },
+        {
+          id: "payroll-attendees",
+          label: "Payroll attendees",
+          value: payrollTotals.attendees,
+          hint: "Present or late check-ins this month",
+          tone: "neutral",
+          info: "Count of present or late attendance marks on payable sessions this month.",
+          href: "/admin/payroll",
+        },
+        {
+          id: "payroll-pay",
+          label: "Estimated pay",
+          value: payrollTotals.amount,
+          hint: "Month-to-date teacher payroll",
+          tone: "up",
+          info: "Estimated pay for teachers with an active rate, using the rate effective on each session day. Open Teacher payroll for the full breakdown.",
+          href: "/admin/payroll",
+          format: "currency",
+          currency: payrollTotals.currency,
+        },
+      );
+    }
 
     const needs: DashboardNeed[] = [];
     if (overdueTasks > 0) {

@@ -81,6 +81,8 @@ import {
   ChatConversation,
   ChatMessage,
   ChatUserPublicKey,
+  TeacherPayrollConfig,
+  TeacherPayrollRateHistory,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -361,6 +363,8 @@ export async function ensureInstitutionSettingSchema() {
       ADD COLUMN IF NOT EXISTS "adminAiConfirmedActionsEnabled" boolean NOT NULL DEFAULT true;
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "adminAiBriefingConfig" jsonb;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "teacherPayrollEnabled" boolean NOT NULL DEFAULT false;
   `);
   await bootstrap.destroy();
 }
@@ -1529,6 +1533,71 @@ export async function ensureChatSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureTeacherPayrollSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  await bootstrap.query(`
+    DO $$ BEGIN
+      CREATE TYPE teacher_payroll_configs_paybasis_enum AS ENUM (
+        'HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY'
+      );
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$;
+
+    CREATE TABLE IF NOT EXISTS teacher_payroll_configs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "teacherUserId" uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      "payBasis" teacher_payroll_configs_paybasis_enum NOT NULL DEFAULT 'HOURLY',
+      rate numeric(12, 2) NOT NULL,
+      currency varchar(8) NOT NULL DEFAULT 'AUD',
+      "isActive" boolean NOT NULL DEFAULT true,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_teacher_payroll_configs_teacherUserId"
+      ON teacher_payroll_configs ("teacherUserId");
+
+    CREATE TABLE IF NOT EXISTS teacher_payroll_rate_history (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "teacherUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "payBasis" teacher_payroll_configs_paybasis_enum NOT NULL DEFAULT 'HOURLY',
+      rate numeric(12, 2) NOT NULL,
+      currency varchar(8) NOT NULL DEFAULT 'AUD',
+      "effectiveFrom" date NOT NULL,
+      "effectiveTo" date,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_teacher_payroll_rate_history_teacher"
+      ON teacher_payroll_rate_history ("teacherUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_teacher_payroll_rate_history_from"
+      ON teacher_payroll_rate_history ("effectiveFrom");
+
+    -- Backfill history from existing configs (first rate covers all past sessions).
+    INSERT INTO teacher_payroll_rate_history (
+      id, "teacherUserId", "payBasis", rate, currency, "effectiveFrom", "effectiveTo", "createdAt"
+    )
+    SELECT
+      gen_random_uuid(),
+      c."teacherUserId",
+      c."payBasis",
+      c.rate,
+      c.currency,
+      DATE '1970-01-01',
+      NULL,
+      now()
+    FROM teacher_payroll_configs c
+    WHERE NOT EXISTS (
+      SELECT 1 FROM teacher_payroll_rate_history h
+      WHERE h."teacherUserId" = c."teacherUserId"
+    );
+  `);
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -1615,6 +1684,8 @@ export const AppDataSource = new DataSource({
     ChatConversation,
     ChatMessage,
     ChatUserPublicKey,
+    TeacherPayrollConfig,
+    TeacherPayrollRateHistory,
   ],
   migrations: [],
   subscribers: [],
