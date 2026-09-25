@@ -86,6 +86,10 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   teacherPayrollEnabled!: boolean;
 
+  /** When true, the expenses module is available in the admin console. */
+  @Column({ type: "boolean", default: false })
+  expensesEnabled!: boolean;
+
   /** OpenAI API key for institution AI features. */
   @Column({ type: "varchar", length: 255, nullable: true })
   openaiApiKey!: string | null;

@@ -13,6 +13,7 @@ export const ADMIN_MODULE_IDS = [
   "people",
   "settings",
   "payroll",
+  "expenses",
   "change-history",
 ] as const;
 
@@ -37,6 +38,7 @@ export const ADMIN_MODULES: {
   { id: "people", label: "People", path: "/admin/people" },
   { id: "settings", label: "Settings", path: "/admin/messaging-settings" },
   { id: "payroll", label: "Payroll", path: "/admin/payroll" },
+  { id: "expenses", label: "Expenses", path: "/admin/expenses" },
   { id: "change-history", label: "Change history", path: "/admin/change-history" },
 ];
 

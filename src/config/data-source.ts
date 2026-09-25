@@ -83,6 +83,9 @@ import {
   ChatUserPublicKey,
   TeacherPayrollConfig,
   TeacherPayrollRateHistory,
+  FixedExpense,
+  FixedExpenseAmountHistory,
+  VariableExpense,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -365,6 +368,8 @@ export async function ensureInstitutionSettingSchema() {
       ADD COLUMN IF NOT EXISTS "adminAiBriefingConfig" jsonb;
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "teacherPayrollEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "expensesEnabled" boolean NOT NULL DEFAULT false;
   `);
   await bootstrap.destroy();
 }
@@ -1598,6 +1603,61 @@ export async function ensureTeacherPayrollSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureExpensesSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS fixed_expenses (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      name varchar(160) NOT NULL,
+      category varchar(60) NOT NULL,
+      frequency varchar(16) NOT NULL,
+      currency varchar(8) NOT NULL DEFAULT 'AUD',
+      "startDate" date NOT NULL,
+      "endDate" date,
+      notes text,
+      "createdById" uuid,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_fixed_expenses_category"
+      ON fixed_expenses (category);
+
+    CREATE TABLE IF NOT EXISTS fixed_expense_amount_history (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "fixedExpenseId" uuid NOT NULL REFERENCES fixed_expenses(id) ON DELETE CASCADE,
+      amount numeric(12, 2) NOT NULL,
+      "effectiveFrom" date NOT NULL,
+      "effectiveTo" date,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_fixed_expense_amount_history_expense"
+      ON fixed_expense_amount_history ("fixedExpenseId");
+
+    CREATE TABLE IF NOT EXISTS variable_expenses (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      title varchar(160) NOT NULL,
+      category varchar(60) NOT NULL,
+      amount numeric(12, 2) NOT NULL,
+      currency varchar(8) NOT NULL DEFAULT 'AUD',
+      "expenseDate" date NOT NULL,
+      notes text,
+      "createdById" uuid,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_variable_expenses_category"
+      ON variable_expenses (category);
+    CREATE INDEX IF NOT EXISTS "IDX_variable_expenses_date"
+      ON variable_expenses ("expenseDate");
+  `);
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -1686,6 +1746,9 @@ export const AppDataSource = new DataSource({
     ChatUserPublicKey,
     TeacherPayrollConfig,
     TeacherPayrollRateHistory,
+    FixedExpense,
+    FixedExpenseAmountHistory,
+    VariableExpense,
   ],
   migrations: [],
   subscribers: [],

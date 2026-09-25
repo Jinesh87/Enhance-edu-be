@@ -101,4 +101,7 @@ export * from "./ChatMessage.js";
 export * from "./ChatUserPublicKey.js";
 export * from "./TeacherPayrollConfig.js";
 export * from "./TeacherPayrollRateHistory.js";
+export * from "./FixedExpense.js";
+export * from "./FixedExpenseAmountHistory.js";
+export * from "./VariableExpense.js";
 

@@ -43,6 +43,7 @@ import chatRouter from "./modules/shared/chat/chat.routes.js";
 import adminReportsRouter from "./modules/admin/reports/admin-reports.routes.js";
 import adminDashboardRouter from "./modules/admin/dashboard/admin-dashboard.routes.js";
 import adminPayrollRouter from "./modules/admin/payroll/admin-payroll.routes.js";
+import adminExpensesRouter from "./modules/admin/expenses/admin-expenses.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -109,6 +110,7 @@ app.use("/api/admin/ai", adminAiRouter);
 app.use("/api/admin/reports", adminReportsRouter);
 app.use("/api/admin/dashboard", adminDashboardRouter);
 app.use("/api/admin/payroll", adminPayrollRouter);
+app.use("/api/admin/expenses", adminExpensesRouter);
 app.use("/api/storage", storageRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
 app.use("/api/guardian/portal-settings", guardianPortalRouter);

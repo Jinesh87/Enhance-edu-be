@@ -65,6 +65,7 @@ export class SettingsController {
         login2faEnabled: config.login2faEnabled,
         sandboxModeEnabled: config.sandboxModeEnabled,
         teacherPayrollEnabled: config.teacherPayrollEnabled,
+        expensesEnabled: config.expensesEnabled,
       },
       "Security settings updated by Super Admin",
     );
