@@ -414,7 +414,7 @@ class AdminPayrollService {
     };
   }
 
-  async list(query: PayrollPeriodQuery) {
+  async list(query: PayrollPeriodQuery, options: { includeSessions?: boolean } = {}) {
     await this.assertEnabled();
     const period = this.resolvePeriod(query);
 
@@ -483,6 +483,22 @@ class AdminPayrollService {
           amount: config && config.isActive ? pay.amount : null,
           currency: config?.currency ?? "AUD",
         },
+        ...(options.includeSessions
+          ? {
+              sessions: priced.map((s) => ({
+                sessionId: s.sessionId,
+                className: s.className,
+                subject: s.subject,
+                startAt: s.startAt.toISOString(),
+                sessionLocalDate: s.sessionLocalDate,
+                durationHours: s.durationHours,
+                attendeeCount: s.attendeeCount,
+                appliedRate: s.appliedRate,
+                appliedPayBasis: s.appliedPayBasis,
+                appliedCurrency: s.appliedCurrency,
+              })),
+            }
+          : {}),
       };
     });
 

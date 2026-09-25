@@ -26,6 +26,7 @@ export interface UpdateSecuritySettingInput {
   login2faEnabled: boolean;
   sandboxModeEnabled: boolean;
   teacherPayrollEnabled: boolean;
+  expensesEnabled?: boolean;
 }
 
 export interface GuardianPortalSettings {
@@ -153,6 +154,7 @@ export class SettingsService {
         login2faEnabled: false,
         sandboxModeEnabled: false,
         teacherPayrollEnabled: false,
+        expensesEnabled: false,
         guardianPortalClassDetailsEnabled: false,
         guardianPortalAssessmentsEnabled: false,
         guardianPortalEntranceExamsEnabled: false,
@@ -332,12 +334,14 @@ export class SettingsService {
     login2faEnabled: boolean;
     sandboxModeEnabled: boolean;
     teacherPayrollEnabled: boolean;
+    expensesEnabled: boolean;
   }> {
     const setting = await this.getOrCreateDefault();
     return {
       login2faEnabled: setting.login2faEnabled ?? false,
       sandboxModeEnabled: setting.sandboxModeEnabled ?? false,
       teacherPayrollEnabled: setting.teacherPayrollEnabled ?? false,
+      expensesEnabled: setting.expensesEnabled ?? false,
     };
   }
 
@@ -347,16 +351,21 @@ export class SettingsService {
     login2faEnabled: boolean;
     sandboxModeEnabled: boolean;
     teacherPayrollEnabled: boolean;
+    expensesEnabled: boolean;
   }> {
     const setting = await this.getOrCreateDefault();
     setting.login2faEnabled = input.login2faEnabled;
     setting.sandboxModeEnabled = input.sandboxModeEnabled;
     setting.teacherPayrollEnabled = input.teacherPayrollEnabled;
+    if (typeof input.expensesEnabled === "boolean") {
+      setting.expensesEnabled = input.expensesEnabled;
+    }
     await this.settingRepo.save(setting);
     return {
       login2faEnabled: setting.login2faEnabled,
       sandboxModeEnabled: setting.sandboxModeEnabled,
       teacherPayrollEnabled: setting.teacherPayrollEnabled,
+      expensesEnabled: setting.expensesEnabled,
     };
   }
 
@@ -373,6 +382,11 @@ export class SettingsService {
   async isTeacherPayrollEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.teacherPayrollEnabled ?? false;
+  }
+
+  async isExpensesEnabled(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.expensesEnabled ?? false;
   }
 
   private mapGuardianPortalSettings(

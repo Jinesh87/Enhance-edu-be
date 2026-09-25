@@ -10,7 +10,11 @@ import { adminPayrollController } from "./admin-payroll.controller.js";
 import {
   payrollPeriodQuerySchema,
   payrollTeacherParamsSchema,
+  staffEntryParamsSchema,
+  staffParamsSchema,
+  staffWorkEntrySchema,
   upsertPayrollConfigSchema,
+  upsertStaffConfigSchema,
 } from "./admin-payroll.validation.js";
 
 const adminPayrollRouter = Router();
@@ -41,6 +45,45 @@ adminPayrollRouter.put(
   "/configs",
   validate(upsertPayrollConfigSchema),
   adminPayrollController.upsertConfig,
+);
+
+adminPayrollRouter.get(
+  "/staff",
+  validate(payrollPeriodQuerySchema, "query"),
+  adminPayrollController.staffList,
+);
+
+adminPayrollRouter.put(
+  "/staff/configs",
+  validate(upsertStaffConfigSchema),
+  adminPayrollController.upsertStaffConfig,
+);
+
+adminPayrollRouter.put(
+  "/staff/entries/:entryId",
+  validate(staffEntryParamsSchema, "params"),
+  validate(staffWorkEntrySchema),
+  adminPayrollController.updateStaffEntry,
+);
+
+adminPayrollRouter.delete(
+  "/staff/entries/:entryId",
+  validate(staffEntryParamsSchema, "params"),
+  adminPayrollController.deleteStaffEntry,
+);
+
+adminPayrollRouter.get(
+  "/staff/:staffUserId",
+  validate(staffParamsSchema, "params"),
+  validate(payrollPeriodQuerySchema, "query"),
+  adminPayrollController.staffDetail,
+);
+
+adminPayrollRouter.post(
+  "/staff/:staffUserId/entries",
+  validate(staffParamsSchema, "params"),
+  validate(staffWorkEntrySchema),
+  adminPayrollController.createStaffEntry,
 );
 
 export default adminPayrollRouter;
