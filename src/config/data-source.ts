@@ -86,6 +86,9 @@ import {
   FixedExpense,
   FixedExpenseAmountHistory,
   VariableExpense,
+  StaffPayrollConfig,
+  StaffPayrollRateHistory,
+  StaffWorkEntry,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -1658,6 +1661,61 @@ export async function ensureExpensesSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureStaffPayrollSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS staff_payroll_configs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "staffUserId" uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      "payBasis" varchar(16) NOT NULL DEFAULT 'HOURLY',
+      rate numeric(12, 2) NOT NULL,
+      currency varchar(8) NOT NULL DEFAULT 'AUD',
+      "isActive" boolean NOT NULL DEFAULT true,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS staff_payroll_rate_history (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "staffUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "payBasis" varchar(16) NOT NULL,
+      rate numeric(12, 2) NOT NULL,
+      currency varchar(8) NOT NULL DEFAULT 'AUD',
+      "effectiveFrom" date NOT NULL,
+      "effectiveTo" date,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_staff_payroll_rate_history_staff"
+      ON staff_payroll_rate_history ("staffUserId");
+
+    CREATE TABLE IF NOT EXISTS staff_work_entries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "staffUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "workDate" date NOT NULL,
+      unit varchar(8) NOT NULL,
+      quantity numeric(8, 2) NOT NULL,
+      notes text,
+      "createdById" uuid,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_staff_work_entries_staff"
+      ON staff_work_entries ("staffUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_staff_work_entries_date"
+      ON staff_work_entries ("workDate");
+
+    ALTER TABLE staff_work_entries ADD COLUMN IF NOT EXISTS rate numeric(12, 2);
+    ALTER TABLE staff_work_entries ADD COLUMN IF NOT EXISTS "payBasis" varchar(16);
+    ALTER TABLE staff_work_entries ADD COLUMN IF NOT EXISTS currency varchar(8);
+  `);
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -1749,6 +1807,9 @@ export const AppDataSource = new DataSource({
     FixedExpense,
     FixedExpenseAmountHistory,
     VariableExpense,
+    StaffPayrollConfig,
+    StaffPayrollRateHistory,
+    StaffWorkEntry,
   ],
   migrations: [],
   subscribers: [],

@@ -104,4 +104,7 @@ export * from "./TeacherPayrollRateHistory.js";
 export * from "./FixedExpense.js";
 export * from "./FixedExpenseAmountHistory.js";
 export * from "./VariableExpense.js";
+export * from "./StaffPayrollConfig.js";
+export * from "./StaffPayrollRateHistory.js";
+export * from "./StaffWorkEntry.js";
 

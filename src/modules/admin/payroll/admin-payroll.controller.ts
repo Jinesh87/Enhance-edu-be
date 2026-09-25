@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { PayrollPayBasis } from "../../../entities/TeacherPayrollConfig.js";
 import { adminPayrollService } from "./admin-payroll.service.js";
+import { adminStaffPayrollService } from "./admin-staff-payroll.service.js";
 
 class AdminPayrollController {
   feature = async (_req: Request, res: Response, next: NextFunction) => {
@@ -54,6 +55,74 @@ class AdminPayrollController {
           : undefined,
       });
       res.status(200).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  staffList = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(
+        await adminStaffPayrollService.list({
+          from: req.query.from ? String(req.query.from) : undefined,
+          to: req.query.to ? String(req.query.to) : undefined,
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  staffDetail = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(
+        await adminStaffPayrollService.detail(String(req.params.staffUserId), {
+          from: req.query.from ? String(req.query.from) : undefined,
+          to: req.query.to ? String(req.query.to) : undefined,
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  upsertStaffConfig = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(await adminStaffPayrollService.upsertConfig(req.body));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  createStaffEntry = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(201).json(
+        await adminStaffPayrollService.createEntry(
+          String(req.params.staffUserId),
+          req.body,
+          req.user?.id,
+        ),
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateStaffEntry = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(
+        await adminStaffPayrollService.updateEntry(String(req.params.entryId), req.body),
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteStaffEntry = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(
+        await adminStaffPayrollService.deleteEntry(String(req.params.entryId)),
+      );
     } catch (error) {
       next(error);
     }
