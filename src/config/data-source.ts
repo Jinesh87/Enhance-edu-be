@@ -376,6 +376,14 @@ export async function ensureInstitutionSettingSchema() {
       ADD COLUMN IF NOT EXISTS "teacherPayrollEnabled" boolean NOT NULL DEFAULT false;
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "expensesEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "googleCalendarEnabled" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "googleClientId" varchar(255);
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "googleClientSecretEnc" text;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "googleCredentialsVerifiedAt" timestamptz;
   `);
   await bootstrap.destroy();
 }

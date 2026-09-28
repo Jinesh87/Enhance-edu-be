@@ -518,6 +518,14 @@ export class SettingsService {
     };
   }
 
+  async getDefaultSetting(): Promise<InstitutionSetting> {
+    return this.getOrCreateDefault();
+  }
+
+  async saveSetting(setting: InstitutionSetting): Promise<InstitutionSetting> {
+    return this.settingRepo.save(setting);
+  }
+
   async getOpenAiApiKey(): Promise<string | null> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.openaiApiKey?.trim() || null;

@@ -90,6 +90,21 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: false })
   expensesEnabled!: boolean;
 
+  /** When true, teachers and guardians can connect Google Calendar for meeting bookings. */
+  @Column({ type: "boolean", default: false })
+  googleCalendarEnabled!: boolean;
+
+  /** OAuth client ID from the institution's Google Cloud project. */
+  @Column({ type: "varchar", length: 255, nullable: true })
+  googleClientId!: string | null;
+
+  /** OAuth client secret, encrypted with secret-box. */
+  @Column({ type: "text", nullable: true })
+  googleClientSecretEnc!: string | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  googleCredentialsVerifiedAt!: Date | null;
+
   /** OpenAI API key for institution AI features. */
   @Column({ type: "varchar", length: 255, nullable: true })
   openaiApiKey!: string | null;
