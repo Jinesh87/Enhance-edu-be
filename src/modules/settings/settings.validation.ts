@@ -68,6 +68,7 @@ export const updateNotificationSettingSchema = Joi.object({
 
 export const updateAdminAiCapabilitySettingSchema = Joi.object({
   assistantEnabled: Joi.boolean().required(),
+  staffAiEnabled: Joi.boolean().optional(),
   dataInsightsEnabled: Joi.boolean().required(),
   emailDraftingEnabled: Joi.boolean().required(),
   messageDraftingEnabled: Joi.boolean().required(),

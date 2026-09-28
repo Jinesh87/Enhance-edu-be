@@ -48,6 +48,7 @@ export type AdminAiBriefingConfig = {
 
 export type AdminAiCapabilitySettings = {
   assistantEnabled: boolean;
+  staffAiEnabled: boolean;
   dataInsightsEnabled: boolean;
   emailDraftingEnabled: boolean;
   messageDraftingEnabled: boolean;
@@ -73,6 +74,7 @@ export const DEFAULT_ADMIN_AI_BRIEFING_CONFIG: AdminAiBriefingConfig = {
 
 export const DEFAULT_ADMIN_AI_CAPABILITY_SETTINGS: AdminAiCapabilitySettings = {
   assistantEnabled: true,
+  staffAiEnabled: true,
   dataInsightsEnabled: true,
   emailDraftingEnabled: true,
   messageDraftingEnabled: true,
