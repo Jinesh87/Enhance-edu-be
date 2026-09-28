@@ -45,6 +45,8 @@ import adminDashboardRouter from "./modules/admin/dashboard/admin-dashboard.rout
 import adminPayrollRouter from "./modules/admin/payroll/admin-payroll.routes.js";
 import adminExpensesRouter from "./modules/admin/expenses/admin-expenses.routes.js";
 import adminFinanceRouter from "./modules/admin/finance/admin-finance.routes.js";
+import adminFeedbackRouter from "./modules/admin/feedback/admin-feedback.routes.js";
+import guardianFeedbackRouter from "./modules/guardian/feedback/guardian-feedback.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -113,6 +115,8 @@ app.use("/api/admin/dashboard", adminDashboardRouter);
 app.use("/api/admin/payroll", adminPayrollRouter);
 app.use("/api/admin/expenses", adminExpensesRouter);
 app.use("/api/admin/finance", adminFinanceRouter);
+app.use("/api/admin/feedback", adminFeedbackRouter);
+app.use("/api/guardian/feedback", guardianFeedbackRouter);
 app.use("/api/storage", storageRouter);
 app.use("/api/guardian/students", guardianStudentsRouter);
 app.use("/api/guardian/portal-settings", guardianPortalRouter);

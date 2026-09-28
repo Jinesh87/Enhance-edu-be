@@ -91,6 +91,7 @@ import {
   StaffPayrollRateHistory,
   StaffWorkEntry,
   StaffDesignation,
+  ClassFeedback,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -1766,6 +1767,34 @@ export async function ensureStaffPayrollSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureClassFeedbackSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS class_feedback (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "sessionId" uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      "classId" uuid,
+      "studentId" uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      "guardianUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      rating smallint NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      comment text,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      UNIQUE ("sessionId", "studentId", "guardianUserId")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_class_feedback_session" ON class_feedback ("sessionId");
+    CREATE INDEX IF NOT EXISTS "IDX_class_feedback_class" ON class_feedback ("classId");
+    CREATE INDEX IF NOT EXISTS "IDX_class_feedback_guardian" ON class_feedback ("guardianUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_class_feedback_created" ON class_feedback ("createdAt");
+  `);
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -1862,6 +1891,7 @@ export const AppDataSource = new DataSource({
     StaffPayrollRateHistory,
     StaffWorkEntry,
     StaffDesignation,
+    ClassFeedback,
   ],
   migrations: [],
   subscribers: [],
