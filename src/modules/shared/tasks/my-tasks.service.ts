@@ -59,22 +59,61 @@ export class MyTasksService {
 
   async list(
     actorId: string,
-    filters: { tab: MyTaskTab; page: number; limit: number },
+    filters: {
+      tab: MyTaskTab;
+      page: number;
+      limit: number;
+      search?: string;
+      filter?: string;
+      sortOrder?: "ASC" | "DESC";
+    },
   ) {
     const status =
       filters.tab === "completed" ? TaskStatus.DONE : TaskStatus.OPEN;
 
+    const qb = this.tasks
+      .createQueryBuilder("task")
+      .leftJoinAndSelect("task.student", "student")
+      .leftJoinAndSelect("task.session", "session")
+      .leftJoinAndSelect("session.class", "class")
+      .leftJoinAndSelect("session.assessment", "assessment")
+      .where("task.assignedUserId = :actorId", { actorId })
+      .andWhere("task.status = :status", { status });
+
+    if (filters.search && filters.search.trim()) {
+      const search = `%${filters.search.trim()}%`;
+      qb.andWhere(
+        "(student.fullName ILIKE :search OR student.preferredName ILIKE :search OR task.title ILIKE :search OR class.name ILIKE :search OR class.code ILIKE :search OR assessment.name ILIKE :search)",
+        { search },
+      );
+    }
+
+    if (filters.filter === "overdue" && status === TaskStatus.OPEN) {
+      qb.andWhere("task.dueAt < :now", { now: new Date() });
+    } else if (filters.filter === "due_today" && status === TaskStatus.OPEN) {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+      qb.andWhere("task.dueAt >= :startOfDay AND task.dueAt <= :endOfDay", {
+        startOfDay,
+        endOfDay,
+      });
+    }
+
+    if (status === TaskStatus.OPEN) {
+      qb.orderBy("task.dueAt", filters.sortOrder === "DESC" ? "DESC" : "ASC");
+    } else {
+      qb.orderBy(
+        "task.completedAt",
+        filters.sortOrder === "ASC" ? "ASC" : "DESC",
+      );
+    }
+
+    qb.skip((filters.page - 1) * filters.limit).take(filters.limit);
+
     const [[rows, total], pending, overdue, completed] = await Promise.all([
-      this.tasks.findAndCount({
-        where: { assignedUserId: actorId, status },
-        relations: { student: true, session: { class: true, assessment: true } },
-        order:
-          status === TaskStatus.OPEN
-            ? { dueAt: "ASC" }
-            : { completedAt: "DESC" },
-        skip: (filters.page - 1) * filters.limit,
-        take: filters.limit,
-      }),
+      qb.getManyAndCount(),
       this.tasks.count({
         where: { assignedUserId: actorId, status: TaskStatus.OPEN },
       }),

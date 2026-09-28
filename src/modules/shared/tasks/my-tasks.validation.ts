@@ -17,7 +17,10 @@ export const listMyTasksQuerySchema = Joi.object({
     .valid(...MY_TASK_TABS)
     .default("pending"),
   page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(50).default(10),
+  limit: Joi.number().integer().min(1).max(100).default(10),
+  search: Joi.string().trim().allow("").optional(),
+  filter: Joi.string().valid("all", "overdue", "due_today").optional(),
+  sortOrder: Joi.string().valid("ASC", "DESC").optional(),
 });
 
 export const myTaskIdParamsSchema = Joi.object({

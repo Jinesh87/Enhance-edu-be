@@ -7,8 +7,11 @@ class MyTasksController {
     try {
       const data = await myTasksService.list(req.user!.id, {
         tab: req.query.tab as MyTaskTab,
-        page: Number(req.query.page),
-        limit: Number(req.query.limit),
+        page: Number(req.query.page) || 1,
+        limit: Number(req.query.limit) || 10,
+        search: typeof req.query.search === "string" ? req.query.search : undefined,
+        filter: typeof req.query.filter === "string" ? req.query.filter : undefined,
+        sortOrder: req.query.sortOrder === "DESC" ? "DESC" : "ASC",
       });
       res.status(200).json(data);
     } catch (error) {
