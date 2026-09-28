@@ -1,3 +1,4 @@
+import { In } from "typeorm";
 import { AttendanceRepository } from "../../shared/attendance/attendance.repository.js";
 import { AppDataSource } from "../../../config/data-source.js";
 import {
@@ -23,6 +24,11 @@ import { emailService } from "../../email/email.service.js";
 import { writeAuditLog } from "../../../common/utils/audit-log.js";
 import { syncTrialEnquiryOnAttendance } from "../../shared/attendance/sync-trial-enquiry.js";
 import { notifyGuardiansOfAttendanceCorrection } from "../../notifications/attendance-notifications.service.js";
+import {
+  notifyUsers,
+  taskAssignedNotificationPayload,
+} from "../../notifications/domain-notifications.js";
+import { myTasksHref } from "../../shared/tasks/my-tasks.links.js";
 
 export const ABSENCE_POLICIES = [
   "TASK_AND_ALERT",
@@ -102,27 +108,20 @@ export class AdminAttendanceService {
       );
     }
 
-    let mappedAbsences = unresolvedAbsences.map((ua) => ({
-      id: ua.id,
-      studentName: ua.student.fullName,
-      sessionName: `${ua.session.class?.code ?? "EXAM"} - ${ua.session.class?.name ?? ua.session.assessment?.name ?? "Session"}`,
-      graceClosed: new Date(
-        ua.session.startAt.getTime() + ua.session.gracePeriodMinutes * 60000,
-      ).toISOString(),
-      policy: ua.absencePolicy,
-      followUpStaffId: ua.followUpStaffId,
-      followUpStaffName: ua.followUpStaff?.fullName ?? null,
-      parentAlertStatus: ua.parentAlertStatus,
-    }));
-
-    const totalAbsences = mappedAbsences.length;
+    const totalAbsences = unresolvedAbsences.length;
+    let pagedAbsences = unresolvedAbsences;
     if (filters?.pageAbsences && filters?.limitAbsences) {
       const start = (filters.pageAbsences - 1) * filters.limitAbsences;
-      mappedAbsences = mappedAbsences.slice(
+      pagedAbsences = unresolvedAbsences.slice(
         start,
         start + filters.limitAbsences,
       );
     }
+
+    const tasksByRecordId = await this.findAssignedFollowUpTasks(pagedAbsences);
+    const mappedAbsences = pagedAbsences.map((ua) =>
+      this.toAbsenceDto(ua, tasksByRecordId.get(ua.id)),
+    );
 
     return {
       stats: {
@@ -529,9 +528,9 @@ export class AdminAttendanceService {
       record.parentAlertSentAt = new Date();
     }
 
-    if (includesTask) {
-      await this.assignAbsenceChaseTask(record, actorId);
-    }
+    const task = includesTask
+      ? await this.assignAbsenceChaseTask(record)
+      : null;
 
     record.parentAlertStatus = includesTask && includesAlert
       ? "SENT_AND_ASSIGNED"
@@ -540,13 +539,37 @@ export class AdminAttendanceService {
         : "SENT";
 
     await AppDataSource.getRepository(AttendanceRecord).save(record);
-    return this.toAbsenceDto(record);
+
+    if (task && record.followUpStaff) {
+      await notifyUsers([
+        {
+          userId: record.followUpStaff.id,
+          ...taskAssignedNotificationPayload({
+            taskId: task.id,
+            studentName: record.student.preferredName || record.student.fullName,
+            sessionLabel: sessionName,
+            href: myTasksHref(record.followUpStaff.role, task.id),
+          }),
+        },
+      ]);
+    }
+
+    return this.toAbsenceDto(record, task);
   }
 
-  private async assignAbsenceChaseTask(
-    record: AttendanceRecord,
-    _actorId: string,
-  ) {
+  private async assignAbsenceChaseTask(record: AttendanceRecord): Promise<Task> {
+    const assignee =
+      record.followUpStaff ??
+      (record.followUpStaffId
+        ? await AppDataSource.getRepository(User).findOne({
+            where: { id: record.followUpStaffId },
+          })
+        : null);
+    if (!assignee) {
+      throw new AppError(400, "Staff member not found", "STAFF_NOT_FOUND");
+    }
+    record.followUpStaff = assignee;
+
     const tasks = AppDataSource.getRepository(Task);
     let task = await tasks.findOne({
       where: {
@@ -564,25 +587,62 @@ export class AdminAttendanceService {
       task = tasks.create({
         type: TaskType.ABSENCE_CHASE,
         status: TaskStatus.OPEN,
-        assignedRole: UserRole.STAFF,
+        assignedRole: assignee.role,
         title: `Chase absence — ${studentName} · ${classLabel}`,
         studentId: record.studentId,
         sessionId: record.sessionId,
         attendanceRecordId: record.id,
         dueAt: record.session.endAt,
-        assignedUserId: record.followUpStaffId,
+        assignedUserId: assignee.id,
       });
     } else {
-      task.assignedUserId = record.followUpStaffId;
-      task.assignedRole = UserRole.STAFF;
+      task.assignedUserId = assignee.id;
+      task.assignedRole = assignee.role;
       task.status = TaskStatus.OPEN;
       task.attendanceRecordId = record.id;
+      task.completedAt = null;
+      task.completedByUserId = null;
     }
 
-    await tasks.save(task);
+    return tasks.save(task);
   }
 
-  private toAbsenceDto(record: AttendanceRecord) {
+  private async findAssignedFollowUpTasks(
+    records: AttendanceRecord[],
+  ): Promise<Map<string, Task>> {
+    const assignedIds = records
+      .filter(
+        (record) =>
+          record.followUpStaffId &&
+          (record.parentAlertStatus === "ASSIGNED" ||
+            record.parentAlertStatus === "SENT_AND_ASSIGNED"),
+      )
+      .map((record) => record.id);
+    if (assignedIds.length === 0) return new Map();
+
+    const tasks = await AppDataSource.getRepository(Task).find({
+      where: {
+        type: TaskType.ABSENCE_CHASE,
+        attendanceRecordId: In(assignedIds),
+      },
+      relations: { completedByUser: true },
+    });
+    return new Map(
+      tasks.map((task) => [task.attendanceRecordId as string, task]),
+    );
+  }
+
+  private toFollowUpTaskDto(task: Task | null | undefined) {
+    if (!task) return null;
+    return {
+      id: task.id,
+      status: task.status,
+      completedAt: task.completedAt,
+      completedByName: task.completedByUser?.fullName ?? null,
+    };
+  }
+
+  private toAbsenceDto(record: AttendanceRecord, task?: Task | null) {
     return {
       id: record.id,
       studentName: record.student.fullName,
@@ -595,6 +655,7 @@ export class AdminAttendanceService {
       followUpStaffId: record.followUpStaffId,
       followUpStaffName: record.followUpStaff?.fullName ?? null,
       parentAlertStatus: record.parentAlertStatus,
+      followUpTask: this.toFollowUpTaskDto(task),
     };
   }
 
@@ -619,26 +680,35 @@ export class AdminAttendanceService {
     return record;
   }
 
-  private async findGuardiansForStudentUser(studentUserId: string) {
+  async findGuardiansForStudentUser(studentUserId: string): Promise<
+    { fullName: string; email: string | null; mobile: string | null }[]
+  > {
     const studentRepo = AppDataSource.getRepository(Student);
     const profile = await studentRepo.findOne({
       where: { userId: studentUserId },
       relations: { guardianLinks: { guardian: true } },
     });
 
-    const byEmail = new Map<string, { fullName: string; email: string | null }>();
+    const byEmail = new Map<
+      string,
+      { fullName: string; email: string | null; mobile: string | null }
+    >();
 
-    const addGuardian = (fullName: string, email: string | null) => {
-      const key = (email || fullName).toLowerCase();
+    const addGuardian = (guardian: User) => {
+      const key = (guardian.email || guardian.fullName).toLowerCase();
       if (!byEmail.has(key)) {
-        byEmail.set(key, { fullName, email });
+        byEmail.set(key, {
+          fullName: guardian.fullName,
+          email: guardian.email,
+          mobile: guardian.mobile,
+        });
       }
     };
 
     if (profile) {
       for (const link of profile.guardianLinks ?? []) {
         if (link.guardian) {
-          addGuardian(link.guardian.fullName, link.guardian.email);
+          addGuardian(link.guardian);
         }
       }
 
@@ -648,12 +718,26 @@ export class AdminAttendanceService {
       });
       for (const enrollment of enrollments) {
         if (enrollment.guardian) {
-          addGuardian(enrollment.guardian.fullName, enrollment.guardian.email);
+          addGuardian(enrollment.guardian);
         }
       }
     }
 
     return Array.from(byEmail.values());
+  }
+
+  async getCorrectionRecord(id: string) {
+    const record = await this.repo.findAttendanceRecordById(id);
+    if (!record) {
+      throw new AppError(404, "Attendance record not found", "NOT_FOUND");
+    }
+    const deviceSignals = await this.repo.findLatestDeviceSignals([
+      { sessionId: record.sessionId, studentId: record.studentId },
+    ]);
+    return this.toCorrectionRow(
+      record,
+      deviceSignals.get(`${record.sessionId}|${record.studentId}`) ?? null,
+    );
   }
 
   async listRecordsForCorrection(filters: {
@@ -753,21 +837,7 @@ export class AdminAttendanceService {
       });
     }
 
-    const saved = await this.repo.findAttendanceRecordById(id);
-    if (!saved) {
-      throw new AppError(404, "Attendance record not found", "NOT_FOUND");
-    }
-
-    const deviceSignals = await this.repo.findLatestDeviceSignals([
-      { sessionId: saved.sessionId, studentId: saved.studentId },
-    ]);
-
-    return {
-      record: this.toCorrectionRow(
-        saved,
-        deviceSignals.get(`${saved.sessionId}|${saved.studentId}`) ?? null,
-      ),
-    };
+    return { record: await this.getCorrectionRecord(id) };
   }
 
   async getCorrectionHistory(id: string) {

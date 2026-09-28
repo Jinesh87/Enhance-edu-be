@@ -3,6 +3,7 @@ import { sharedAttendanceService } from "../../shared/attendance/shared-attendan
 import { adminAttendanceService } from "./admin-attendance.service.js";
 import { studentAttendanceExportService } from "./student-attendance-export.service.js";
 import { liveUpdateManager } from "../../shared/attendance/live-updates.js";
+import { broadcastRollUpdate } from "../../shared/attendance/broadcast-roll-update.js";
 import { AdminDecision } from "../../../entities/index.js";
 import { AppError } from "../../../common/errors/AppError.js";
 
@@ -188,18 +189,8 @@ class AdminAttendanceController {
         req.user!.id,
       );
 
-      try {
-        if (result.record.sessionId) {
-          const rollData = await sharedAttendanceService.getLiveRollData(
-            result.record.sessionId,
-          );
-          liveUpdateManager.broadcast(result.record.sessionId, {
-            type: "ROLL_UPDATE",
-            ...rollData,
-          });
-        }
-      } catch (err) {
-        console.error("Failed to broadcast attendance correction roll update:", err);
+      if (result.record.sessionId) {
+        await broadcastRollUpdate(result.record.sessionId);
       }
 
       res.status(200).json(result);

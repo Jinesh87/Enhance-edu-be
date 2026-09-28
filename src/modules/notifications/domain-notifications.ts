@@ -291,6 +291,40 @@ export function attendanceExceptionNotificationPayload(input: {
   };
 }
 
+export function taskAssignedNotificationPayload(input: {
+  taskId: string;
+  studentName: string;
+  sessionLabel: string;
+  href: string;
+}): Omit<CreateNotificationInput, "userId"> {
+  return {
+    type: "TASK_ASSIGNED" as NotificationType,
+    title: "New task assigned",
+    body: `Follow up ${input.studentName}'s absence · ${input.sessionLabel}`,
+    data: {
+      taskId: input.taskId,
+      href: input.href,
+    },
+  };
+}
+
+export function taskCompletedNotificationPayload(input: {
+  taskId: string;
+  staffName: string;
+  studentName: string;
+  statusLabel: string;
+}): Omit<CreateNotificationInput, "userId"> {
+  return {
+    type: "TASK_COMPLETED" as NotificationType,
+    title: "Task completed",
+    body: `${input.staffName} completed a follow-up · ${input.studentName} marked ${input.statusLabel}`,
+    data: {
+      taskId: input.taskId,
+      href: "/admin/tasks",
+    },
+  };
+}
+
 export function enrollmentPendingNotificationPayload(input: {
   studentFullName: string;
   pendingEnrollmentId: string;
