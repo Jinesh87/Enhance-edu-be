@@ -53,13 +53,50 @@ class AdminExpensesController {
     }
   };
 
-  createVariable = async (req: Request, res: Response, next: NextFunction) => {
+  createHead = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const data = await adminExpensesService.createVariable(
-        req.body,
-        req.user?.id,
+      res.status(201).json(await adminExpensesService.createHead(req.body, req.user?.id));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getHead = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(
+        await adminExpensesService.getHead(String(req.params.id), {
+          from: req.query.from ? String(req.query.from) : undefined,
+          to: req.query.to ? String(req.query.to) : undefined,
+        }),
       );
-      res.status(201).json(data);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateHead = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(
+        await adminExpensesService.updateHead(String(req.params.id), req.body),
+      );
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteHead = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json(await adminExpensesService.deleteHead(String(req.params.id)));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  createLog = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(201).json(
+        await adminExpensesService.createLog(String(req.params.id), req.body, req.user?.id),
+      );
     } catch (error) {
       next(error);
     }

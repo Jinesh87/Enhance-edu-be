@@ -86,6 +86,7 @@ import {
   FixedExpense,
   FixedExpenseAmountHistory,
   VariableExpense,
+  VariableExpenseHead,
   StaffPayrollConfig,
   StaffPayrollRateHistory,
   StaffWorkEntry,
@@ -1657,6 +1658,40 @@ export async function ensureExpensesSchema() {
       ON variable_expenses (category);
     CREATE INDEX IF NOT EXISTS "IDX_variable_expenses_date"
       ON variable_expenses ("expenseDate");
+
+    CREATE TABLE IF NOT EXISTS variable_expense_heads (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      title varchar(160) NOT NULL,
+      category varchar(60) NOT NULL,
+      "createdById" uuid,
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_variable_expense_heads_category"
+      ON variable_expense_heads (category);
+
+    ALTER TABLE variable_expenses ADD COLUMN IF NOT EXISTS "headId" uuid
+      REFERENCES variable_expense_heads(id) ON DELETE CASCADE;
+    CREATE INDEX IF NOT EXISTS "IDX_variable_expenses_head"
+      ON variable_expenses ("headId");
+
+    -- Group expenses logged before heads existed under one head per title + category.
+    INSERT INTO variable_expense_heads (title, category, "createdById")
+    SELECT DISTINCT ON (v.title, v.category) v.title, v.category, v."createdById"
+    FROM variable_expenses v
+    WHERE v."headId" IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM variable_expense_heads h
+        WHERE h.title = v.title AND h.category = v.category
+      )
+    ORDER BY v.title, v.category, v."createdAt";
+
+    UPDATE variable_expenses v
+    SET "headId" = h.id
+    FROM variable_expense_heads h
+    WHERE v."headId" IS NULL
+      AND h.title = v.title
+      AND h.category = v.category;
   `);
   await bootstrap.destroy();
 }
@@ -1807,6 +1842,7 @@ export const AppDataSource = new DataSource({
     FixedExpense,
     FixedExpenseAmountHistory,
     VariableExpense,
+    VariableExpenseHead,
     StaffPayrollConfig,
     StaffPayrollRateHistory,
     StaffWorkEntry,

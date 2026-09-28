@@ -34,9 +34,12 @@ export const updateFixedExpenseSchema = Joi.object({
   effectiveFrom: ymd.optional(),
 });
 
-export const variableExpenseSchema = Joi.object({
+export const expenseHeadSchema = Joi.object({
   title: Joi.string().trim().min(1).max(160).required(),
   category: Joi.string().trim().min(1).max(60).required(),
+});
+
+export const variableExpenseSchema = Joi.object({
   amount: amount.required(),
   expenseDate: ymd.required(),
   currency: Joi.string().trim().uppercase().max(8).optional(),

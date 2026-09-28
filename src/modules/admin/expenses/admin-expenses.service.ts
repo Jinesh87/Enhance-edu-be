@@ -7,6 +7,7 @@ import {
 } from "../../../entities/FixedExpense.js";
 import { FixedExpenseAmountHistory } from "../../../entities/FixedExpenseAmountHistory.js";
 import { VariableExpense } from "../../../entities/VariableExpense.js";
+import { VariableExpenseHead } from "../../../entities/VariableExpenseHead.js";
 import { settingsService } from "../../settings/settings.service.js";
 import { dayBoundsInClassTz } from "../ai/tool-helpers.js";
 
@@ -36,9 +37,12 @@ export type UpdateFixedExpenseInput = {
   effectiveFrom?: string;
 };
 
-export type VariableExpenseInput = {
+export type ExpenseHeadInput = {
   title: string;
   category: string;
+};
+
+export type ExpenseLogInput = {
   amount: number;
   expenseDate: string;
   currency?: string;
@@ -172,6 +176,7 @@ class AdminExpensesService {
     FixedExpenseAmountHistory,
   );
   private readonly variable = AppDataSource.getRepository(VariableExpense);
+  private readonly heads = AppDataSource.getRepository(VariableExpenseHead);
 
   async assertEnabled() {
     const enabled = await settingsService.isExpensesEnabled();
@@ -228,7 +233,7 @@ class AdminExpensesService {
     await this.assertEnabled();
     const period = this.resolvePeriod(query);
 
-    const [fixedRows, variableRows] = await Promise.all([
+    const [fixedRows, variableRows, headRows, headStats] = await Promise.all([
       this.fixed.find({ order: { name: "ASC" } }),
       this.variable
         .createQueryBuilder("v")
@@ -239,6 +244,15 @@ class AdminExpensesService {
         .orderBy("v.expenseDate", "DESC")
         .addOrderBy("v.createdAt", "DESC")
         .getMany(),
+      this.heads.find({ order: { title: "ASC" } }),
+      this.variable
+        .createQueryBuilder("v")
+        .select('v."headId"', "headId")
+        .addSelect("COUNT(*)::int", "logCount")
+        .addSelect('MAX(v."expenseDate")', "lastExpenseDate")
+        .where('v."headId" IS NOT NULL')
+        .groupBy('v."headId"')
+        .getRawMany<{ headId: string; logCount: number; lastExpenseDate: string }>(),
     ]);
     const historyById = await this.loadHistory(fixedRows.map((f) => f.id));
 
@@ -252,6 +266,7 @@ class AdminExpensesService {
       amount: number;
       currency: string;
       frequency: FixedExpenseFrequency | null;
+      headId: string | null;
     }> = [];
 
     const fixed = fixedRows.map((row) => {
@@ -271,6 +286,7 @@ class AdminExpensesService {
           amount,
           currency: row.currency,
           frequency: row.frequency,
+          headId: null,
         });
       }
       const current = history.find((h) => h.effectiveTo === null) ?? null;
@@ -308,15 +324,34 @@ class AdminExpensesService {
         amount: Number(row.amount),
         currency: row.currency,
         frequency: null,
+        headId: row.headId,
       });
       return {
         id: row.id,
+        headId: row.headId,
         title: row.title,
         category: row.category,
         amount: Number(row.amount),
         currency: row.currency,
         expenseDate: row.expenseDate,
         notes: row.notes,
+      };
+    });
+
+    const statsByHead = new Map(headStats.map((s) => [s.headId, s] as const));
+    const heads = headRows.map((head) => {
+      const logs = variable.filter((v) => v.headId === head.id);
+      const stats = statsByHead.get(head.id);
+      return {
+        id: head.id,
+        title: head.title,
+        category: head.category,
+        periodCount: logs.length,
+        periodTotal: roundMoney(logs.reduce((sum, v) => sum + v.amount, 0)),
+        totalCount: Number(stats?.logCount ?? 0),
+        lastExpenseDate: stats?.lastExpenseDate
+          ? String(stats.lastExpenseDate).slice(0, 10)
+          : null,
       };
     });
 
@@ -354,6 +389,7 @@ class AdminExpensesService {
       ledger,
       fixed,
       variable,
+      heads,
     };
   }
 
@@ -472,12 +508,106 @@ class AdminExpensesService {
     return { id };
   }
 
-  async createVariable(input: VariableExpenseInput, userId?: string) {
+  private async findHead(id: string) {
+    const head = await this.heads.findOne({ where: { id } });
+    if (!head) {
+      throw new AppError(404, "Expense head not found", "EXPENSE_HEAD_NOT_FOUND");
+    }
+    return head;
+  }
+
+  async createHead(input: ExpenseHeadInput, userId?: string) {
     await this.assertEnabled();
-    const row = await this.variable.save(
-      this.variable.create({
+    const head = await this.heads.save(
+      this.heads.create({
         title: input.title.trim(),
         category: input.category.trim(),
+        createdById: userId ?? null,
+      }),
+    );
+    return { id: head.id };
+  }
+
+  async updateHead(id: string, input: ExpenseHeadInput) {
+    await this.assertEnabled();
+    const head = await this.findHead(id);
+    head.title = input.title.trim();
+    head.category = input.category.trim();
+    await AppDataSource.transaction(async (manager) => {
+      await manager.getRepository(VariableExpenseHead).save(head);
+      await manager
+        .getRepository(VariableExpense)
+        .update({ headId: id }, { title: head.title, category: head.category });
+    });
+    return { id };
+  }
+
+  async deleteHead(id: string) {
+    await this.assertEnabled();
+    const result = await this.heads.delete({ id });
+    if (!result.affected) {
+      throw new AppError(404, "Expense head not found", "EXPENSE_HEAD_NOT_FOUND");
+    }
+    return { id };
+  }
+
+  /** One head with its logs in the period (newest first) and all-time totals. */
+  async getHead(id: string, query: ExpensePeriodQuery) {
+    await this.assertEnabled();
+    const period = this.resolvePeriod(query);
+    const head = await this.findHead(id);
+    const [logs, allTime] = await Promise.all([
+      this.variable
+        .createQueryBuilder("v")
+        .where('v."headId" = :id', { id })
+        .andWhere("v.expenseDate >= :from AND v.expenseDate <= :to", {
+          from: period.from,
+          to: period.to,
+        })
+        .orderBy("v.expenseDate", "DESC")
+        .addOrderBy("v.createdAt", "DESC")
+        .getMany(),
+      this.variable
+        .createQueryBuilder("v")
+        .select("COUNT(*)::int", "count")
+        .addSelect("COALESCE(SUM(v.amount), 0)", "total")
+        .where('v."headId" = :id', { id })
+        .getRawOne<{ count: number; total: string }>(),
+    ]);
+    const items = logs.map((log) => ({
+      id: log.id,
+      headId: id,
+      title: log.title,
+      category: log.category,
+      amount: Number(log.amount),
+      currency: log.currency,
+      expenseDate: log.expenseDate,
+      notes: log.notes,
+    }));
+    const periodTotal = roundMoney(items.reduce((sum, l) => sum + l.amount, 0));
+    return {
+      head: { id: head.id, title: head.title, category: head.category },
+      period: { from: period.from, to: period.to },
+      summary: {
+        periodTotal,
+        periodCount: items.length,
+        average: items.length ? roundMoney(periodTotal / items.length) : 0,
+        allTimeTotal: roundMoney(Number(allTime?.total ?? 0)),
+        allTimeCount: Number(allTime?.count ?? 0),
+        currency: items[0]?.currency ?? DEFAULT_CURRENCY,
+      },
+      logs: items,
+    };
+  }
+
+  async createLog(headId: string, input: ExpenseLogInput, userId?: string) {
+    await this.assertEnabled();
+    const head = await this.findHead(headId);
+    const row = await this.variable.save(
+      this.variable.create({
+        headId: head.id,
+        title: head.title,
+        category: head.category,
         amount: input.amount.toFixed(2),
         currency: normalizeCurrency(input.currency),
         expenseDate: parseYmd(input.expenseDate)!,
@@ -488,14 +618,12 @@ class AdminExpensesService {
     return { id: row.id };
   }
 
-  async updateVariable(id: string, input: VariableExpenseInput) {
+  async updateVariable(id: string, input: ExpenseLogInput) {
     await this.assertEnabled();
     const row = await this.variable.findOne({ where: { id } });
     if (!row) {
       throw new AppError(404, "Expense not found", "VARIABLE_EXPENSE_NOT_FOUND");
     }
-    row.title = input.title.trim();
-    row.category = input.category.trim();
     row.amount = input.amount.toFixed(2);
     row.expenseDate = parseYmd(input.expenseDate)!;
     row.notes = cleanText(input.notes);

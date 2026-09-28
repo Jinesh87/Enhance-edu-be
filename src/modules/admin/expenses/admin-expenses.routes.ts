@@ -9,6 +9,7 @@ import { validate } from "../../../common/middleware/validate.js";
 import { adminExpensesController } from "./admin-expenses.controller.js";
 import {
   createFixedExpenseSchema,
+  expenseHeadSchema,
   expenseIdParamsSchema,
   expensePeriodQuerySchema,
   updateFixedExpenseSchema,
@@ -50,9 +51,32 @@ adminExpensesRouter.delete(
 );
 
 adminExpensesRouter.post(
-  "/variable",
+  "/heads",
+  validate(expenseHeadSchema),
+  adminExpensesController.createHead,
+);
+adminExpensesRouter.get(
+  "/heads/:id",
+  validate(expenseIdParamsSchema, "params"),
+  validate(expensePeriodQuerySchema, "query"),
+  adminExpensesController.getHead,
+);
+adminExpensesRouter.put(
+  "/heads/:id",
+  validate(expenseIdParamsSchema, "params"),
+  validate(expenseHeadSchema),
+  adminExpensesController.updateHead,
+);
+adminExpensesRouter.delete(
+  "/heads/:id",
+  validate(expenseIdParamsSchema, "params"),
+  adminExpensesController.deleteHead,
+);
+adminExpensesRouter.post(
+  "/heads/:id/logs",
+  validate(expenseIdParamsSchema, "params"),
   validate(variableExpenseSchema),
-  adminExpensesController.createVariable,
+  adminExpensesController.createLog,
 );
 adminExpensesRouter.put(
   "/variable/:id",
