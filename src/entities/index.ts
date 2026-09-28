@@ -108,4 +108,5 @@ export * from "./VariableExpense.js";
 export * from "./StaffPayrollConfig.js";
 export * from "./StaffPayrollRateHistory.js";
 export * from "./StaffWorkEntry.js";
+export * from "./StaffDesignation.js";
 

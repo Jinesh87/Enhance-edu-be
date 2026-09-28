@@ -96,7 +96,7 @@ class AdminFinanceService {
 
     const breakdown = [
       ...(teacherPay ? [{ key: "teacher-pay", label: "Teacher pay", group: "Payroll", amount: teacherPay.total }] : []),
-      ...(staffPay ? [{ key: "staff-pay", label: "Staff pay", group: "Payroll", amount: staffPay.total }] : []),
+      ...(staffPay ? [{ key: "staff-pay", label: "Employee pay", group: "Payroll", amount: staffPay.total }] : []),
       ...(expenseSection
         ? expenseSection.byCategory.map((c) => ({
             key: `expense:${c.category}`,

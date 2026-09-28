@@ -29,6 +29,7 @@ export type PersonDto = {
   mobile: string | null;
   role: UserRole;
   employmentType: EmploymentType | null;
+  designation: string | null;
   securitySetupComplete: boolean;
   status: UserStatus;
   lastSignedInAt: Date | null;
@@ -75,6 +76,7 @@ export type InvitePersonInput = {
   mobile?: string | null;
   role: UserRole;
   employmentType?: EmploymentType | null;
+  designation?: string | null;
   /** Required when institution sandbox mode is enabled. */
   password?: string;
   students?: GuardianStudentEnrollmentInput[];
@@ -90,6 +92,7 @@ export type UpdatePersonInput = {
   mobile?: string | null;
   role?: UserRole;
   employmentType?: EmploymentType | null;
+  designation?: string | null;
   status?: UserStatus.ACTIVE | UserStatus.DEACTIVATED;
   subjectIds?: string[];
   modulePermissions?: string[];
