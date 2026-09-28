@@ -267,6 +267,9 @@ export class InstitutionSetting {
   @Column({ type: "boolean", default: true })
   adminAiConfirmedActionsEnabled!: boolean;
 
+  @Column({ type: "boolean", default: true })
+  adminAiStaffEnabled!: boolean;
+
   /** Schedule/sections for Admin AI proactive briefings. */
   @Column({ type: "jsonb", nullable: true })
   adminAiBriefingConfig!: {
