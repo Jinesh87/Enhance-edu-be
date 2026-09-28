@@ -65,6 +65,7 @@ function toPersonDto(user: User): PersonDto {
     mobile: user.mobile,
     role: user.role,
     employmentType: user.employmentType,
+    designation: user.designation ?? null,
     modulePermissions: user.modulePermissions ?? [],
     securitySetupComplete: user.securitySetupComplete,
     status: user.status,
@@ -266,6 +267,10 @@ export class UsersService {
       role: input.role,
       status: sandboxMode ? UserStatus.ACTIVE : UserStatus.INVITED,
       employmentType: input.employmentType ?? null,
+      designation:
+        input.role === UserRole.OFFICE_STAFF
+          ? input.designation?.trim() || null
+          : null,
       modulePermissions:
         input.role === UserRole.OFFICE_STAFF
           ? sanitizeModulePermissions(input.modulePermissions)
@@ -460,6 +465,7 @@ export class UsersService {
       mobile: user.mobile,
       role: user.role,
       employmentType: user.employmentType,
+      designation: user.designation,
       status: user.status,
       modulePermissions: user.modulePermissions,
     };
@@ -546,8 +552,12 @@ export class UsersService {
           "MODULES_REQUIRED",
         );
       }
+      if (input.designation !== undefined) {
+        user.designation = input.designation?.trim() || null;
+      }
     } else if (input.role !== undefined) {
       user.modulePermissions = null;
+      user.designation = null;
     }
 
     await this.users.save(user);
@@ -583,6 +593,7 @@ export class UsersService {
       mobile: user.mobile,
       role: user.role,
       employmentType: user.employmentType,
+      designation: user.designation,
       status: user.status,
       modulePermissions: user.modulePermissions,
     };

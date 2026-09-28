@@ -47,6 +47,15 @@ export const createUserSchema = Joi.object({
       then: Joi.required(),
       otherwise: Joi.optional(),
     }),
+  designation: Joi.string()
+    .trim()
+    .max(120)
+    .when("role", {
+      is: UserRole.OFFICE_STAFF,
+      then: Joi.required(),
+      otherwise: Joi.forbidden(),
+    })
+    .messages({ "any.required": "Designation is required for staff" }),
   students: Joi.array()
     .items(guardianStudentEnrollmentSchema)
     .min(1)
@@ -81,6 +90,7 @@ export const updateUserSchema = Joi.object({
   employmentType: Joi.string()
     .valid(...EMPLOYMENT_TYPES)
     .allow(null),
+  designation: Joi.string().trim().max(120).allow(null, ""),
   status: Joi.string().valid(UserStatus.ACTIVE, UserStatus.DEACTIVATED),
   subjectIds: Joi.array().items(Joi.string().uuid()).optional(),
   modulePermissions: Joi.array()
@@ -91,6 +101,14 @@ export const updateUserSchema = Joi.object({
   .messages({
     "object.min": "At least one field is required",
   });
+
+export const designationSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(120).required(),
+});
+
+export const designationParamsSchema = Joi.object({
+  designationId: Joi.string().uuid().required(),
+});
 
 export const listUsersQuerySchema = Joi.object({
   status: Joi.string().valid(...Object.values(UserStatus)),

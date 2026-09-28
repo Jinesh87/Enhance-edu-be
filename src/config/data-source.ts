@@ -90,6 +90,7 @@ import {
   StaffPayrollConfig,
   StaffPayrollRateHistory,
   StaffWorkEntry,
+  StaffDesignation,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -1747,6 +1748,20 @@ export async function ensureStaffPayrollSchema() {
     ALTER TABLE staff_work_entries ADD COLUMN IF NOT EXISTS rate numeric(12, 2);
     ALTER TABLE staff_work_entries ADD COLUMN IF NOT EXISTS "payBasis" varchar(16);
     ALTER TABLE staff_work_entries ADD COLUMN IF NOT EXISTS currency varchar(8);
+
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS designation varchar(120);
+
+    CREATE TABLE IF NOT EXISTS staff_designations (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      name varchar(120) NOT NULL UNIQUE,
+      "createdById" uuid,
+      "createdAt" timestamptz NOT NULL DEFAULT now()
+    );
+
+    INSERT INTO staff_designations (name)
+    SELECT DISTINCT TRIM(designation) FROM users
+    WHERE designation IS NOT NULL AND TRIM(designation) <> ''
+    ON CONFLICT (name) DO NOTHING;
   `);
   await bootstrap.destroy();
 }
@@ -1846,6 +1861,7 @@ export const AppDataSource = new DataSource({
     StaffPayrollConfig,
     StaffPayrollRateHistory,
     StaffWorkEntry,
+    StaffDesignation,
   ],
   migrations: [],
   subscribers: [],
