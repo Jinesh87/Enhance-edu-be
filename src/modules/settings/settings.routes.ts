@@ -13,6 +13,7 @@ import {
   updateSecuritySettingSchema,
   updateGuardianPortalSettingSchema,
   updateOpenAiSettingSchema,
+  updateGoogleCalendarSettingSchema,
   updateNotificationSettingSchema,
   updateAdminAiCapabilitySettingSchema,
   openAiUsageQuerySchema,
@@ -31,6 +32,7 @@ import {
   updateClassroomSchema,
 } from "./classrooms.validation.js";
 import { UserRole } from "../../common/constants/roles.js";
+import { googleCalendarConfigService } from "../integrations/google/google-calendar-config.service.js";
 
 const router = Router();
 
@@ -105,6 +107,43 @@ router.put(
   "/openai",
   validate(updateOpenAiSettingSchema, "body"),
   (req, res) => void settingsController.updateOpenAiSettings(req, res),
+);
+
+router.get(
+  "/google-calendar",
+  authorize(UserRole.SUPER_ADMIN),
+  async (_req, res, next) => {
+    try {
+      res.json(await googleCalendarConfigService.getConfig());
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.put(
+  "/google-calendar",
+  authorize(UserRole.SUPER_ADMIN),
+  validate(updateGoogleCalendarSettingSchema, "body"),
+  async (req, res, next) => {
+    try {
+      res.json(await googleCalendarConfigService.updateConfig(req.body));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/google-calendar/verify",
+  authorize(UserRole.SUPER_ADMIN),
+  async (_req, res, next) => {
+    try {
+      res.json(await googleCalendarConfigService.verify());
+    } catch (error) {
+      next(error);
+    }
+  },
 );
 
 router.get(

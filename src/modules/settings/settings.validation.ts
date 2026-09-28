@@ -31,6 +31,13 @@ export const updateOpenAiSettingSchema = Joi.object({
   openaiApiKey: Joi.string().trim().max(255).allow("", null).required(),
 });
 
+export const updateGoogleCalendarSettingSchema = Joi.object({
+  enabled: Joi.boolean().required(),
+  clientId: Joi.string().trim().max(255).allow("", null).required(),
+  clientSecret: Joi.string().trim().max(255).allow("", null).optional(),
+  clearSecret: Joi.boolean().optional(),
+});
+
 export const updateNotificationSettingSchema = Joi.object({
   sessionChangeEmailNotificationsEnabled: Joi.boolean().required(),
   classReminderDigestEnabled: Joi.boolean().required(),

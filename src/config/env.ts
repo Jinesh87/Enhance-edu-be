@@ -22,6 +22,10 @@ export const env = {
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN ?? "7d",
   JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,
   JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
+  /** Key for encrypting stored integration secrets (OAuth client secret, user tokens). */
+  APP_ENCRYPTION_KEY: process.env.APP_ENCRYPTION_KEY ?? "",
+  /** Public origin users open the app on; used to build OAuth redirect URLs. Defaults to FRONTEND_URL. */
+  PUBLIC_APP_URL: process.env.PUBLIC_APP_URL ?? "",
   /** Linode Object Storage (S3-compatible). Falls back to local ./uploads when unset. */
   LINODE_OBJECT_STORAGE_ENDPOINT: process.env.LINODE_OBJECT_STORAGE_ENDPOINT ?? "",
   LINODE_OBJECT_STORAGE_REGION: process.env.LINODE_OBJECT_STORAGE_REGION ?? "ap-south-1",
