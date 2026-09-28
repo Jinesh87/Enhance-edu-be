@@ -109,4 +109,5 @@ export * from "./StaffPayrollConfig.js";
 export * from "./StaffPayrollRateHistory.js";
 export * from "./StaffWorkEntry.js";
 export * from "./StaffDesignation.js";
+export * from "./ClassFeedback.js";
 

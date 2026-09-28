@@ -22,6 +22,7 @@ import {
   ensureTeacherPayrollSchema,
   ensureExpensesSchema,
   ensureStaffPayrollSchema,
+  ensureClassFeedbackSchema,
 } from "./config/data-source.js";
 import { logger } from "./config/logger.js";
 import { connectRedis } from "./config/redis.js";
@@ -63,6 +64,7 @@ async function bootstrap() {
   await ensureTeacherPayrollSchema();
   await ensureExpensesSchema();
   await ensureStaffPayrollSchema();
+  await ensureClassFeedbackSchema();
   await repairChatMessageMediaLinks().catch((error) => {
     logger.warn({ err: error }, "Chat media repair skipped");
   });
