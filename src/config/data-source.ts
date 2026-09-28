@@ -372,6 +372,8 @@ export async function ensureInstitutionSettingSchema() {
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "adminAiConfirmedActionsEnabled" boolean NOT NULL DEFAULT true;
     ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "adminAiStaffEnabled" boolean NOT NULL DEFAULT true;
+    ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "adminAiBriefingConfig" jsonb;
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "teacherPayrollEnabled" boolean NOT NULL DEFAULT false;

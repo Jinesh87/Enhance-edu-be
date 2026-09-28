@@ -30,7 +30,7 @@ const router = Router();
 
 router.use(
   authenticate,
-  authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
+  authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF, UserRole.STAFF),
 );
 
 router.get(

@@ -5,17 +5,14 @@ import { AppDataSource } from "../../../config/data-source.js";
 import { env } from "../../../config/env.js";
 import { User } from "../../../entities/User.js";
 
+import { settingsService } from "../../settings/settings.service.js";
+
 export type AdminAiActor = {
   id: string;
   email: string;
   role: UserRole;
   modulePermissions: string[];
 };
-
-const CONSOLE_ROLES = new Set<UserRole>([
-  UserRole.SUPER_ADMIN,
-  UserRole.OFFICE_STAFF,
-]);
 
 export function assertAdminAiEnabled() {
   if (!env.ADMIN_AI_ENABLED) {
@@ -43,7 +40,16 @@ export async function resolveAdminAiActor(userId: string): Promise<AdminAiActor>
     throw new AppError(401, "Authentication required", "UNAUTHORIZED");
   }
 
-  if (!CONSOLE_ROLES.has(user.role)) {
+  const aiSettings = await settingsService.getAdminAiCapabilitySettings();
+  const allowedRoles = new Set<UserRole>([
+    UserRole.SUPER_ADMIN,
+  ]);
+  if (aiSettings.staffAiEnabled) {
+    allowedRoles.add(UserRole.OFFICE_STAFF);
+    allowedRoles.add(UserRole.STAFF);
+  }
+
+  if (!allowedRoles.has(user.role)) {
     throw new AppError(
       403,
       "You do not have permission to access this information.",
@@ -64,6 +70,7 @@ export function canUseAdminAiModule(
   moduleId: AdminModuleId,
 ): boolean {
   if (actor.role === UserRole.SUPER_ADMIN) return true;
+  if (actor.role === UserRole.STAFF) return true;
   if (actor.role !== UserRole.OFFICE_STAFF) return false;
   return actor.modulePermissions.includes(moduleId);
 }

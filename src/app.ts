@@ -19,6 +19,7 @@ import teacherLearningRouter from "./modules/teacher/learning-tools/teacher-lear
 import teacherCoachRouter from "./modules/teacher/coach/teacher-coach.routes.js";
 import adminAttendanceRouter from "./modules/admin/attendance/admin-attendance.routes.js";
 import adminTasksRouter from "./modules/admin/tasks/admin-tasks.routes.js";
+import myTasksRouter from "./modules/shared/tasks/my-tasks.routes.js";
 import adminSubjectsRouter from "./modules/admin/subjects/admin-subjects.routes.js";
 import adminSyllabusRouter from "./modules/admin/syllabus/admin-syllabus.routes.js";
 import adminYearLevelsRouter from "./modules/admin/year-levels/admin-year-levels.routes.js";
@@ -95,6 +96,7 @@ attendanceRouter.use(adminAttendanceRouter);
 
 app.use("/api/attendance", attendanceRouter);
 app.use("/api/tasks", adminTasksRouter);
+app.use("/api/my-tasks", myTasksRouter);
 app.use("/api/subjects", adminSubjectsRouter);
 app.use("/api/syllabus", adminSyllabusRouter);
 app.use("/api/year-levels", adminYearLevelsRouter);

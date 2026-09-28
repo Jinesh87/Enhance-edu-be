@@ -70,6 +70,7 @@ export interface UpdateOpenAiSettingInput {
 
 export type UpdateAdminAiCapabilitySettingsInput = {
   assistantEnabled: boolean;
+  staffAiEnabled?: boolean;
   dataInsightsEnabled: boolean;
   emailDraftingEnabled: boolean;
   messageDraftingEnabled: boolean;
@@ -215,6 +216,7 @@ export class SettingsService {
   ): AdminAiCapabilitySettings {
     return {
       assistantEnabled: setting.adminAiAssistantEnabled ?? true,
+      staffAiEnabled: setting.adminAiStaffEnabled ?? true,
       dataInsightsEnabled: setting.adminAiDataInsightsEnabled ?? true,
       emailDraftingEnabled: setting.adminAiEmailDraftingEnabled ?? true,
       messageDraftingEnabled: setting.adminAiMessageDraftingEnabled ?? true,
@@ -243,6 +245,9 @@ export class SettingsService {
     const before = this.mapAdminAiCapabilitySettings(setting);
 
     setting.adminAiAssistantEnabled = Boolean(input.assistantEnabled);
+    if (input.staffAiEnabled !== undefined) {
+      setting.adminAiStaffEnabled = Boolean(input.staffAiEnabled);
+    }
     setting.adminAiDataInsightsEnabled = Boolean(input.dataInsightsEnabled);
     setting.adminAiEmailDraftingEnabled = Boolean(input.emailDraftingEnabled);
     setting.adminAiMessageDraftingEnabled = Boolean(

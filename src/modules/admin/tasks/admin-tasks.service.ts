@@ -1,3 +1,4 @@
+import { IsNull, LessThan, Not } from "typeorm";
 import { AppDataSource } from "../../../config/data-source.js";
 import { AppError } from "../../../common/errors/AppError.js";
 import { UserRole } from "../../../common/constants/roles.js";
@@ -30,6 +31,10 @@ function toTaskDto(task: Task) {
     title: task.title,
     source: "Attendance",
     assignedRole: task.assignedRole,
+    assignedUser: task.assignedUser
+      ? { id: task.assignedUser.id, fullName: task.assignedUser.fullName }
+      : null,
+    completedByName: task.completedByUser?.fullName ?? null,
     dueAt: task.dueAt,
     completedAt: task.completedAt,
     createdAt: task.createdAt,
@@ -61,34 +66,40 @@ export class AdminTasksService {
   async list(filters?: { page?: number; limit?: number }) {
     await this.syncAbsenceChaseTasks();
 
-    const tasks = await this.tasks.find({
-      where: { assignedRole: UserRole.SUPER_ADMIN },
-      relations: {
-        student: true,
-        session: { class: true },
-      },
-      order: { dueAt: "ASC", createdAt: "DESC" },
-    });
-
-    const now = Date.now();
-    const open = tasks.filter((task) => task.status === TaskStatus.OPEN);
-    const overdue = open.filter((task) => task.dueAt.getTime() < now);
-
-    const total = tasks.length;
-    let paginatedTasks = tasks;
-    if (filters?.page && filters?.limit) {
-      const start = (filters.page - 1) * filters.limit;
-      paginatedTasks = tasks.slice(start, start + filters.limit);
-    }
+    const paginate = Boolean(filters?.page && filters?.limit);
+    const [[tasks, total], open, overdue, assigned] = await Promise.all([
+      this.tasks.findAndCount({
+        relations: {
+          student: true,
+          session: { class: true },
+          assignedUser: true,
+          completedByUser: true,
+        },
+        order: { dueAt: "ASC", createdAt: "DESC" },
+        ...(paginate
+          ? {
+              skip: (filters!.page! - 1) * filters!.limit!,
+              take: filters!.limit!,
+            }
+          : {}),
+      }),
+      this.openCount(),
+      this.tasks.count({
+        where: { status: TaskStatus.OPEN, dueAt: LessThan(new Date()) },
+      }),
+      this.tasks.count({
+        where: { status: TaskStatus.OPEN, assignedUserId: Not(IsNull()) },
+      }),
+    ]);
 
     return {
       counts: {
-        open: open.length,
-        overdue: overdue.length,
-        awaitingApproval: 0,
-        unassigned: 0,
+        open,
+        overdue,
+        assigned,
+        unassigned: open - assigned,
       },
-      tasks: paginatedTasks.map(toTaskDto),
+      tasks: tasks.map(toTaskDto),
       total,
     };
   }
@@ -99,6 +110,7 @@ export class AdminTasksService {
       relations: {
         student: true,
         session: { class: true },
+        assignedUser: true,
       },
     });
 
@@ -115,7 +127,7 @@ export class AdminTasksService {
     task.completedByUserId = actorId;
     await this.tasks.save(task);
 
-    const openCount = await this.openCountForRole(task.assignedRole);
+    const openCount = await this.openCount();
     adminNotificationManager.broadcast({
       type: "TASK_COMPLETED",
       role: task.assignedRole,
@@ -250,7 +262,7 @@ export class AdminTasksService {
 
     if (created > 0) {
       logger.info({ created }, "Absence chase tasks created");
-      const openCount = await this.openCountForRole(UserRole.SUPER_ADMIN);
+      const openCount = await this.openCount();
       adminNotificationManager.broadcast({
         type: "TASKS_CREATED",
         role: UserRole.SUPER_ADMIN,
@@ -265,10 +277,8 @@ export class AdminTasksService {
     return created;
   }
 
-  private openCountForRole(role: UserRole) {
-    return this.tasks.count({
-      where: { assignedRole: role, status: TaskStatus.OPEN },
-    });
+  openCount(): Promise<number> {
+    return this.tasks.count({ where: { status: TaskStatus.OPEN } });
   }
 }
 

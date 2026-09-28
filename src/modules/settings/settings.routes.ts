@@ -38,7 +38,13 @@ const router = Router();
 
 router.use(
   authenticate,
-  authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF),
+  authorize(UserRole.SUPER_ADMIN, UserRole.OFFICE_STAFF, UserRole.STAFF),
+);
+
+// Readable by AI assistant clients across staff and admin consoles
+router.get(
+  "/ai-capabilities",
+  (req, res) => void settingsController.getAdminAiCapabilitySettings(req, res),
 );
 
 // Readable by settings and classes (timetable generation skips holiday dates).
@@ -169,11 +175,6 @@ router.put(
   "/notifications",
   validate(updateNotificationSettingSchema, "body"),
   (req, res) => void settingsController.updateNotificationSettings(req, res),
-);
-
-router.get(
-  "/ai-capabilities",
-  (req, res) => void settingsController.getAdminAiCapabilitySettings(req, res),
 );
 
 router.put(
