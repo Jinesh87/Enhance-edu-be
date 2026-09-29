@@ -32,7 +32,7 @@ export type UpdateGoogleCalendarConfigInput = {
   clearSecret?: boolean;
 };
 
-function publicOrigin() {
+export function publicOrigin() {
   const raw = env.PUBLIC_APP_URL || env.FRONTEND_URL;
   try {
     return new URL(raw).origin;

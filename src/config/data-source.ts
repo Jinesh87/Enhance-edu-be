@@ -92,6 +92,7 @@ import {
   StaffWorkEntry,
   StaffDesignation,
   ClassFeedback,
+  GoogleCalendarConnection,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -1801,6 +1802,19 @@ export async function ensureClassFeedbackSchema() {
     CREATE INDEX IF NOT EXISTS "IDX_class_feedback_class" ON class_feedback ("classId");
     CREATE INDEX IF NOT EXISTS "IDX_class_feedback_guardian" ON class_feedback ("guardianUserId");
     CREATE INDEX IF NOT EXISTS "IDX_class_feedback_created" ON class_feedback ("createdAt");
+
+    CREATE TABLE IF NOT EXISTS google_calendar_connections (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "userId" uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      "googleEmail" varchar(320),
+      "calendarId" varchar(320) NOT NULL DEFAULT 'primary',
+      "refreshTokenEnc" text NOT NULL,
+      "accessTokenEnc" text,
+      "accessTokenExpiresAt" timestamptz,
+      scopes text,
+      "connectedAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
   `);
   await bootstrap.destroy();
 }
@@ -1902,6 +1916,7 @@ export const AppDataSource = new DataSource({
     StaffWorkEntry,
     StaffDesignation,
     ClassFeedback,
+    GoogleCalendarConnection,
   ],
   migrations: [],
   subscribers: [],
