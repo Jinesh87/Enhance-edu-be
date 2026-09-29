@@ -38,6 +38,15 @@ export const updateGoogleCalendarSettingSchema = Joi.object({
   clearSecret: Joi.boolean().optional(),
 });
 
+const hhmm = Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+export const updateMeetingSettingSchema = Joi.object({
+  adminApprovalRequired: Joi.boolean(),
+  dayStart: hhmm,
+  dayEnd: hhmm,
+  timeZone: Joi.string().trim().max(64),
+}).min(1);
+
 export const updateNotificationSettingSchema = Joi.object({
   sessionChangeEmailNotificationsEnabled: Joi.boolean().required(),
   classReminderDigestEnabled: Joi.boolean().required(),

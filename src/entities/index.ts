@@ -111,4 +111,5 @@ export * from "./StaffWorkEntry.js";
 export * from "./StaffDesignation.js";
 export * from "./ClassFeedback.js";
 export * from "./GoogleCalendarConnection.js";
+export * from "./MeetingRequest.js";
 

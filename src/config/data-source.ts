@@ -93,6 +93,7 @@ import {
   StaffDesignation,
   ClassFeedback,
   GoogleCalendarConnection,
+  MeetingRequest,
 } from "../entities/index.js";
 import { MessagingConfig } from "../entities/EmailConfig.js";
 import { env } from "./env.js";
@@ -387,6 +388,14 @@ export async function ensureInstitutionSettingSchema() {
       ADD COLUMN IF NOT EXISTS "googleClientSecretEnc" text;
     ALTER TABLE institution_setting
       ADD COLUMN IF NOT EXISTS "googleCredentialsVerifiedAt" timestamptz;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "meetingAdminApprovalRequired" boolean NOT NULL DEFAULT false;
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "meetingDayStart" varchar(5) NOT NULL DEFAULT '08:00';
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "meetingDayEnd" varchar(5) NOT NULL DEFAULT '20:00';
+    ALTER TABLE institution_setting
+      ADD COLUMN IF NOT EXISTS "meetingTimeZone" varchar(64) NOT NULL DEFAULT 'Australia/Sydney';
   `);
   await bootstrap.destroy();
 }
@@ -1819,6 +1828,48 @@ export async function ensureClassFeedbackSchema() {
   await bootstrap.destroy();
 }
 
+export async function ensureMeetingSchema() {
+  const bootstrap = new DataSource({
+    ...postgresOptions(),
+    synchronize: false,
+    entities: [],
+  });
+  await bootstrap.initialize();
+  await bootstrap.query(`
+    CREATE TABLE IF NOT EXISTS meeting_requests (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "guardianUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "teacherUserId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "studentId" uuid REFERENCES students(id) ON DELETE SET NULL,
+      "startAt" timestamptz NOT NULL,
+      "endAt" timestamptz NOT NULL,
+      "timeZone" varchar(64) NOT NULL,
+      topic varchar(200) NOT NULL,
+      note text,
+      status varchar(20) NOT NULL,
+      "adminReviewedById" uuid,
+      "adminReviewedAt" timestamptz,
+      "adminNote" text,
+      "sentToTeacherAt" timestamptz,
+      "teacherRespondedAt" timestamptz,
+      "teacherNote" text,
+      "cancelledById" uuid,
+      "cancelledAt" timestamptz,
+      "googleEventId" varchar(1024),
+      "meetLink" varchar(500),
+      "calendarEventLink" varchar(1000),
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_guardianUserId" ON meeting_requests ("guardianUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_teacherUserId" ON meeting_requests ("teacherUserId");
+    CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_studentId" ON meeting_requests ("studentId");
+    CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_startAt" ON meeting_requests ("startAt");
+    CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_status" ON meeting_requests (status);
+  `);
+  await bootstrap.destroy();
+}
+
 export const AppDataSource = new DataSource({
   ...postgresOptions(),
   synchronize: env.DB_SYNC === "true" || env.NODE_ENV !== "production",
@@ -1917,6 +1968,7 @@ export const AppDataSource = new DataSource({
     StaffDesignation,
     ClassFeedback,
     GoogleCalendarConnection,
+    MeetingRequest,
   ],
   migrations: [],
   subscribers: [],

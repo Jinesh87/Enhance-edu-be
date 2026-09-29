@@ -8,7 +8,20 @@ import {
   type AdminAiCapabilitySettings,
 } from "../admin/ai/admin-ai-capabilities.js";
 import { computeNextBriefingRunAt } from "../admin/ai/briefings/briefing-schedule.js";
-import { resolveIanaTimeZone } from "../../common/utils/timezone.js";
+import {
+  DEFAULT_CLASS_TIMEZONE,
+  isValidTimeZone,
+  resolveIanaTimeZone,
+} from "../../common/utils/timezone.js";
+import { AppError } from "../../common/errors/AppError.js";
+
+export type MeetingSettings = {
+  adminApprovalRequired: boolean;
+  /** "HH:MM" in `timeZone`. */
+  dayStart: string;
+  dayEnd: string;
+  timeZone: string;
+};
 import { emailService } from "../email/email.service.js";
 
 function clampDigestHour(value: number | null | undefined): number {
@@ -156,6 +169,10 @@ export class SettingsService {
         sandboxModeEnabled: false,
         teacherPayrollEnabled: false,
         expensesEnabled: false,
+        meetingAdminApprovalRequired: false,
+        meetingDayStart: "08:00",
+        meetingDayEnd: "20:00",
+        meetingTimeZone: DEFAULT_CLASS_TIMEZONE,
         guardianPortalClassDetailsEnabled: false,
         guardianPortalAssessmentsEnabled: false,
         guardianPortalEntranceExamsEnabled: false,
@@ -301,8 +318,7 @@ export class SettingsService {
       lastRunAt: now.toISOString(),
       nextRunAt: next ? next.toISOString() : null,
     };
-    setting.adminAiBriefingConfig = updated;
-    await this.settingRepo.save(setting);
+    await this.settingRepo.update({ id: setting.id }, { adminAiBriefingConfig: updated });
     return { claimed: true, config: updated };
   }
 
@@ -317,8 +333,7 @@ export class SettingsService {
       ...current,
       nextRunAt: next ? next.toISOString() : null,
     };
-    setting.adminAiBriefingConfig = updated;
-    await this.settingRepo.save(setting);
+    await this.settingRepo.update({ id: setting.id }, { adminAiBriefingConfig: updated });
     return updated;
   }
 
@@ -392,6 +407,44 @@ export class SettingsService {
   async isExpensesEnabled(): Promise<boolean> {
     const setting = await this.settingRepo.findOneBy({ id: "default" });
     return setting?.expensesEnabled ?? false;
+  }
+
+  private mapMeetingSettings(setting: InstitutionSetting): MeetingSettings {
+    return {
+      adminApprovalRequired: setting.meetingAdminApprovalRequired ?? false,
+      dayStart: setting.meetingDayStart || "08:00",
+      dayEnd: setting.meetingDayEnd || "20:00",
+      timeZone: resolveIanaTimeZone(setting.meetingTimeZone),
+    };
+  }
+
+  async getMeetingSettings(): Promise<MeetingSettings> {
+    return this.mapMeetingSettings(await this.getOrCreateDefault());
+  }
+
+  async updateMeetingSettings(input: Partial<MeetingSettings>): Promise<MeetingSettings> {
+    const setting = await this.getOrCreateDefault();
+    const dayStart = input.dayStart ?? setting.meetingDayStart;
+    const dayEnd = input.dayEnd ?? setting.meetingDayEnd;
+    if (dayStart >= dayEnd) {
+      throw new AppError(400, "The end time must be after the start time.", "MEETING_HOURS_INVALID");
+    }
+    if (input.timeZone !== undefined && !isValidTimeZone(input.timeZone)) {
+      throw new AppError(400, "Choose a valid time zone.", "MEETING_TIMEZONE_INVALID");
+    }
+    if (typeof input.adminApprovalRequired === "boolean") {
+      setting.meetingAdminApprovalRequired = input.adminApprovalRequired;
+    }
+    setting.meetingDayStart = dayStart;
+    setting.meetingDayEnd = dayEnd;
+    if (input.timeZone !== undefined) setting.meetingTimeZone = input.timeZone;
+    await this.settingRepo.save(setting);
+    return this.mapMeetingSettings(setting);
+  }
+
+  async isMeetingAdminApprovalRequired(): Promise<boolean> {
+    const setting = await this.settingRepo.findOneBy({ id: "default" });
+    return setting?.meetingAdminApprovalRequired ?? false;
   }
 
   private mapGuardianPortalSettings(
