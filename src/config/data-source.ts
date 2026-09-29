@@ -1866,6 +1866,16 @@ export async function ensureMeetingSchema() {
     CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_studentId" ON meeting_requests ("studentId");
     CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_startAt" ON meeting_requests ("startAt");
     CREATE INDEX IF NOT EXISTS "IDX_meeting_requests_status" ON meeting_requests (status);
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "guardianEventId" varchar(1024);
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "cancelReason" text;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "proposedStartAt" timestamptz;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "proposedEndAt" timestamptz;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "proposedNote" text;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "proposedAt" timestamptz;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "rescheduledAt" timestamptz;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "rescheduledById" uuid;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "rescheduleNote" text;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "previousStartAt" timestamptz;
   `);
   await bootstrap.destroy();
 }

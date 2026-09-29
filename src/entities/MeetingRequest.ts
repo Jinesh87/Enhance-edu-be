@@ -108,8 +108,41 @@ export class MeetingRequest {
   @Column({ type: "timestamptz", nullable: true })
   cancelledAt!: Date | null;
 
+  @Column({ type: "text", nullable: true })
+  cancelReason!: string | null;
+
+  /** A new time the guardian proposed for a confirmed meeting; waits for the teacher. */
+  @Column({ type: "timestamptz", nullable: true })
+  proposedStartAt!: Date | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  proposedEndAt!: Date | null;
+
+  @Column({ type: "text", nullable: true })
+  proposedNote!: string | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  proposedAt!: Date | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  rescheduledAt!: Date | null;
+
+  @Column({ type: "uuid", nullable: true })
+  rescheduledById!: string | null;
+
+  @Column({ type: "text", nullable: true })
+  rescheduleNote!: string | null;
+
+  /** The time before the most recent reschedule, shown as "moved from". */
+  @Column({ type: "timestamptz", nullable: true })
+  previousStartAt!: Date | null;
+
   @Column({ type: "varchar", length: 1024, nullable: true })
   googleEventId!: string | null;
+
+  /** The guardian's own copy of the event, imported into their connected calendar. */
+  @Column({ type: "varchar", length: 1024, nullable: true })
+  guardianEventId!: string | null;
 
   @Column({ type: "varchar", length: 500, nullable: true })
   meetLink!: string | null;

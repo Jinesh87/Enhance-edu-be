@@ -21,6 +21,20 @@ const availabilityQuerySchema = Joi.object({
     .required(),
   durationMinutes: durationSchema,
   timeZone: timeZoneSchema,
+  excludeMeetingId: Joi.string().uuid().allow(null, ""),
+});
+
+const teacherAvailabilityQuerySchema = Joi.object({
+  meetingId: Joi.string().uuid().required(),
+  date: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .required(),
+  timeZone: timeZoneSchema,
+});
+
+const rescheduleSchema = Joi.object({
+  startAt: Joi.date().iso().required(),
+  note: Joi.string().trim().max(1000).allow(null, ""),
 });
 
 const createMeetingSchema = Joi.object({
@@ -43,7 +57,7 @@ const cancelSchema = Joi.object({
 });
 
 const adminListQuerySchema = Joi.object({
-  view: Joi.string().valid("pending", "all").default("all"),
+  view: Joi.string().valid("pending", "all", "cancelled").default("all"),
   status: Joi.string().valid(...MEETING_REQUEST_STATUSES),
   academicYear: Joi.string().trim().max(60).allow(""),
   term: Joi.string().trim().max(120).allow(""),
@@ -82,6 +96,7 @@ guardianMeetingsRouter.get(
       date: string;
       durationMinutes: string | number;
       timeZone?: string;
+      excludeMeetingId?: string;
     };
     res.json(
       await meetingsService.availability(req.user!.id, {
@@ -89,8 +104,22 @@ guardianMeetingsRouter.get(
         date: query.date,
         timeZone: query.timeZone,
         durationMinutes: Number(query.durationMinutes),
+        excludeMeetingId: query.excludeMeetingId || null,
       }),
     );
+  }),
+);
+
+guardianMeetingsRouter.post(
+  "/:id/reschedule",
+  validate(idParamsSchema, "params"),
+  validate(rescheduleSchema),
+  handle(async (req, res) => {
+    const meeting = await meetingsService.guardianReschedule(req.user!.id, String(req.params.id), {
+      startAt: new Date(req.body.startAt).toISOString(),
+      note: req.body.note,
+    });
+    res.json({ meeting });
   }),
 );
 
@@ -131,6 +160,41 @@ teacherMeetingsRouter.get(
   }),
 );
 
+teacherMeetingsRouter.get(
+  "/availability",
+  validate(teacherAvailabilityQuerySchema, "query"),
+  handle(async (req, res) => {
+    const query = req.query as unknown as { meetingId: string; date: string; timeZone?: string };
+    res.json(await meetingsService.teacherAvailability(req.user!.id, query));
+  }),
+);
+
+teacherMeetingsRouter.post(
+  "/:id/reschedule",
+  validate(idParamsSchema, "params"),
+  validate(rescheduleSchema),
+  handle(async (req, res) => {
+    const meeting = await meetingsService.teacherReschedule(req.user!.id, String(req.params.id), {
+      startAt: new Date(req.body.startAt).toISOString(),
+      note: req.body.note,
+    });
+    res.json({ meeting });
+  }),
+);
+
+teacherMeetingsRouter.post(
+  "/:id/reschedule-response",
+  validate(idParamsSchema, "params"),
+  validate(decisionSchema),
+  handle(async (req, res) => {
+    const meeting = await meetingsService.teacherRespondToProposal(req.user!.id, String(req.params.id), {
+      accept: req.body.approve,
+      note: req.body.note,
+    });
+    res.json({ meeting });
+  }),
+);
+
 teacherMeetingsRouter.post(
   "/:id/decision",
   validate(idParamsSchema, "params"),
@@ -163,7 +227,7 @@ adminMeetingsRouter.get(
   validate(adminListQuerySchema, "query"),
   handle(async (req, res) => {
     const query = req.query as unknown as {
-      view: "pending" | "all";
+      view: "pending" | "all" | "cancelled";
       status?: (typeof MEETING_REQUEST_STATUSES)[number];
       academicYear?: string;
       term?: string;

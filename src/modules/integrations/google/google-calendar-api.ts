@@ -7,20 +7,31 @@ const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 
 export type BusyInterval = { start: Date; end: Date };
 
+type GoogleEvent = {
+  id?: string;
+  iCalUID?: string;
+  sequence?: number;
+  htmlLink?: string;
+  hangoutLink?: string;
+  summary?: string;
+  description?: string;
+  start?: { dateTime?: string; timeZone?: string };
+  end?: { dateTime?: string; timeZone?: string };
+  organizer?: { email?: string; displayName?: string };
+  attendees?: Array<{ email?: string; responseStatus?: string; organizer?: boolean }>;
+  conferenceData?: {
+    conferenceId?: string;
+    conferenceSolution?: unknown;
+    createRequest?: { status?: { statusCode?: string } };
+    entryPoints?: Array<{ entryPointType?: string; uri?: string }>;
+  };
+};
+
 export type CreatedMeetEvent = {
   eventId: string;
   meetLink: string | null;
   htmlLink: string | null;
-};
-
-type GoogleEvent = {
-  id?: string;
-  htmlLink?: string;
-  hangoutLink?: string;
-  conferenceData?: {
-    createRequest?: { status?: { statusCode?: string } };
-    entryPoints?: Array<{ entryPointType?: string; uri?: string }>;
-  };
+  event: GoogleEvent;
 };
 
 async function requireToken(userId: string) {
@@ -145,7 +156,107 @@ export async function createMeetEvent(input: {
     eventId: created.body.id,
     meetLink: meetLinkOf(event),
     htmlLink: event.htmlLink ?? null,
+    event,
   };
+}
+
+/** Moves an existing event and emails attendees the updated invite. Returns the updated event. */
+export async function rescheduleCalendarEvent(input: {
+  organizerUserId: string;
+  eventId: string;
+  startAt: Date;
+  endAt: Date;
+  timeZone: string;
+}): Promise<GoogleEvent> {
+  const { accessToken, calendarId } = await requireToken(input.organizerUserId);
+  const result = await calendarFetch<GoogleEvent>(
+    accessToken,
+    `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(input.eventId)}?conferenceDataVersion=1&sendUpdates=all`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        start: { dateTime: input.startAt.toISOString(), timeZone: input.timeZone },
+        end: { dateTime: input.endAt.toISOString(), timeZone: input.timeZone },
+      }),
+    },
+  );
+  if (!result.ok || !result.body?.id) {
+    logger.warn({ status: result.status, body: result.body }, "Google event reschedule failed");
+    throw new AppError(
+      502,
+      "Google Calendar didn't accept the new time. Please try again.",
+      "GOOGLE_EVENT_UPDATE_FAILED",
+    );
+  }
+  return result.body;
+}
+
+/**
+ * Puts the attendee's copy of an organiser's event straight onto the attendee's own calendar.
+ * Google only auto-adds invitations from "known" senders by default, so without this the
+ * meeting may only arrive as an email. Importing with the same iCalUID links to (rather than
+ * duplicates) the invitation. Best effort: returns null when the attendee isn't connected or
+ * Google refuses.
+ */
+export async function importEventToAttendeeCalendar(
+  attendeeUserId: string,
+  event: GoogleEvent,
+): Promise<string | null> {
+  if (!event.iCalUID) return null;
+  const token = await googleCalendarConnectionService.getAccessToken(attendeeUserId);
+  if (!token) return null;
+
+  const conference = event.conferenceData;
+  const result = await calendarFetch<GoogleEvent>(
+    token.accessToken,
+    `/calendars/${encodeURIComponent(token.calendarId)}/events/import?conferenceDataVersion=1`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        iCalUID: event.iCalUID,
+        ...(event.sequence !== undefined ? { sequence: event.sequence } : {}),
+        summary: event.summary,
+        description: event.description,
+        start: event.start,
+        end: event.end,
+        organizer: event.organizer,
+        attendees: event.attendees,
+        ...(conference?.entryPoints?.length
+          ? {
+              conferenceData: {
+                conferenceId: conference.conferenceId,
+                conferenceSolution: conference.conferenceSolution,
+                entryPoints: conference.entryPoints,
+              },
+            }
+          : {}),
+        reminders: { useDefault: true },
+      }),
+    },
+  );
+
+  if (!result.ok || !result.body?.id) {
+    logger.warn(
+      { attendeeUserId, status: result.status, body: result.body },
+      "Google event import to attendee calendar failed",
+    );
+    return null;
+  }
+  return result.body.id;
+}
+
+/** Removes an event from the user's own calendar without emailing anyone. Missing events are ignored. */
+export async function removeEventFromOwnCalendar(userId: string, eventId: string): Promise<void> {
+  const token = await googleCalendarConnectionService.getAccessToken(userId);
+  if (!token) return;
+  const result = await calendarFetch<unknown>(
+    token.accessToken,
+    `/calendars/${encodeURIComponent(token.calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=none`,
+    { method: "DELETE" },
+  );
+  if (!result.ok && result.status !== 404 && result.status !== 410) {
+    logger.warn({ userId, eventId, status: result.status }, "Google event removal failed");
+  }
 }
 
 /** Removes the event and emails attendees that it was cancelled. Missing events are ignored. */
