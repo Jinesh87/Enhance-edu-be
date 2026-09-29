@@ -1876,6 +1876,10 @@ export async function ensureMeetingSchema() {
     ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "rescheduledById" uuid;
     ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "rescheduleNote" text;
     ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "previousStartAt" timestamptz;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "initiatedBy" varchar(10) NOT NULL DEFAULT 'GUARDIAN';
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "sentToGuardianAt" timestamptz;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "guardianRespondedAt" timestamptz;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "guardianNote" text;
   `);
   await bootstrap.destroy();
 }

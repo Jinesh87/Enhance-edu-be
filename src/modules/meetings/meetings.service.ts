@@ -16,11 +16,16 @@ import {
   User,
   type MeetingRequestStatus,
 } from "../../entities/index.js";
+import type { MeetingInitiator } from "../../entities/MeetingRequest.js";
 import type { NotificationType } from "../../entities/Notification.js";
 import { notifyUsers } from "../notifications/domain-notifications.js";
 import type { CreateNotificationInput } from "../notifications/notifications.service.js";
 import { settingsService, type MeetingSettings } from "../settings/settings.service.js";
-import { listSuperAdmins, listTeachersForGuardian } from "../shared/chat/chat-auth.js";
+import {
+  listGuardiansForTeacher,
+  listSuperAdmins,
+  listTeachersForGuardian,
+} from "../shared/chat/chat-auth.js";
 import { googleCalendarConfigService } from "../integrations/google/google-calendar-config.service.js";
 import {
   createMeetEvent,
@@ -51,6 +56,7 @@ export type MeetingRequestDto = {
   id: string;
   status: MeetingRequestStatus;
   displayStatus: MeetingDisplayStatus;
+  initiatedBy: MeetingInitiator;
   startAt: string;
   endAt: string;
   timeZone: string;
@@ -65,6 +71,8 @@ export type MeetingRequestDto = {
   adminReviewedAt: string | null;
   teacherNote: string | null;
   teacherRespondedAt: string | null;
+  guardianNote: string | null;
+  guardianRespondedAt: string | null;
   cancelledAt: string | null;
   cancelledBy: "GUARDIAN" | "TEACHER" | null;
   cancelReason: string | null;
@@ -99,6 +107,10 @@ export type CreateMeetingInput = {
   topic: string;
   note?: string | null;
 };
+
+export type TeacherCreateMeetingInput = Omit<CreateMeetingInput, "teacherId"> & { guardianId: string };
+
+const PENDING_STATUSES: MeetingRequestStatus[] = ["PENDING_ADMIN", "PENDING_TEACHER", "PENDING_GUARDIAN"];
 
 function repo() {
   return AppDataSource.getRepository(MeetingRequest);
@@ -166,11 +178,12 @@ function whenLabel(request: Pick<MeetingRequest, "startAt" | "timeZone">) {
 }
 
 function toDto(row: MeetingRequest): MeetingRequestDto {
-  const pending = row.status === "PENDING_ADMIN" || row.status === "PENDING_TEACHER";
+  const pending = PENDING_STATUSES.includes(row.status);
   return {
     id: row.id,
     status: row.status,
     displayStatus: pending && row.startAt.getTime() <= Date.now() ? "EXPIRED" : row.status,
+    initiatedBy: row.initiatedBy ?? "GUARDIAN",
     startAt: row.startAt.toISOString(),
     endAt: row.endAt.toISOString(),
     timeZone: row.timeZone,
@@ -189,6 +202,8 @@ function toDto(row: MeetingRequest): MeetingRequestDto {
     adminReviewedAt: row.adminReviewedAt?.toISOString() ?? null,
     teacherNote: row.teacherNote,
     teacherRespondedAt: row.teacherRespondedAt?.toISOString() ?? null,
+    guardianNote: row.guardianNote,
+    guardianRespondedAt: row.guardianRespondedAt?.toISOString() ?? null,
     cancelledAt: row.cancelledAt?.toISOString() ?? null,
     cancelledBy: !row.cancelledById
       ? null
@@ -383,6 +398,16 @@ class MeetingsService {
     ];
   }
 
+  /** The guardian's Google busy blocks when they've connected a calendar; best effort. */
+  private async guardianBusy(guardianUserId: string, from: Date, to: Date): Promise<BusyInterval[]> {
+    const connected = await connectedUserIds([guardianUserId]);
+    if (!connected.has(guardianUserId)) return [];
+    return getCalendarBusy(guardianUserId, from, to).catch((error) => {
+      logger.warn({ err: error, guardianUserId }, "Could not read guardian's Google Calendar busy times");
+      return [];
+    });
+  }
+
   // ---------------------------------------------------------------- guardian
 
   async guardianOptions(guardianUserId: string) {
@@ -442,6 +467,7 @@ class MeetingsService {
     teacherUserId: string,
     input: { date: string; durationMinutes: number; timeZone?: string | null },
     exclude?: MeetingRequest,
+    guardianUserId?: string,
   ) {
     const settings = await settingsService.getMeetingSettings();
     const guardianTimeZone = requestTimeZone(input.timeZone, settings);
@@ -466,7 +492,11 @@ class MeetingsService {
     const rangeEnd = new Date(Math.max(...windows.map((w) => w.windowEnd.getTime())));
     if (rangeEnd.getTime() <= earliest || rangeStart.getTime() > latest) return empty;
 
-    const busy = await this.teacherBusy(teacherUserId, rangeStart, rangeEnd, exclude);
+    const [teacherBusy, guardianBusy] = await Promise.all([
+      this.teacherBusy(teacherUserId, rangeStart, rangeEnd, exclude),
+      guardianUserId ? this.guardianBusy(guardianUserId, rangeStart, rangeEnd) : Promise.resolve([]),
+    ]);
+    const busy = [...teacherBusy, ...guardianBusy];
     const durationMs = input.durationMinutes * 60_000;
     const slots: Array<{ startAt: string; endAt: string }> = [];
     for (const { windowStart, windowEnd } of windows) {
@@ -525,13 +555,18 @@ class MeetingsService {
   }
 
   async listForGuardian(guardianUserId: string) {
-    const rows = await repo().find({
-      where: { guardianUserId },
-      relations: { guardian: true, teacher: true, student: true },
-      order: { startAt: "DESC" },
-      take: 200,
-    });
-    return rows.map(toDto);
+    const rows = await repo()
+      .createQueryBuilder("m")
+      .leftJoinAndSelect("m.guardian", "guardian")
+      .leftJoinAndSelect("m.teacher", "teacher")
+      .leftJoinAndSelect("m.student", "student")
+      .where("m.guardianUserId = :guardianUserId", { guardianUserId })
+      .andWhere(`(m."initiatedBy" = 'GUARDIAN' OR m."sentToGuardianAt" IS NOT NULL)`)
+      .orderBy("m.startAt", "DESC")
+      .take(200)
+      .getMany();
+    const classes = await classContexts(rows.map((r) => r.id));
+    return rows.map((row) => ({ ...toDto(row), classes: classes.get(row.id) ?? [] }));
   }
 
   async create(guardianUserId: string, input: CreateMeetingInput) {
@@ -562,6 +597,8 @@ class MeetingsService {
         topic: input.topic.trim(),
         note: input.note?.trim() || null,
         status: adminApprovalRequired ? "PENDING_ADMIN" : "PENDING_TEACHER",
+        initiatedBy: "GUARDIAN",
+        sentToGuardianAt: new Date(),
         sentToTeacherAt: adminApprovalRequired ? null : new Date(),
       }),
     );
@@ -604,6 +641,164 @@ class MeetingsService {
         ),
       },
     ]);
+  }
+
+  private async notifyGuardianOfRequest(request: MeetingRequest) {
+    const about = request.student ? ` about ${request.student.fullName}` : "";
+    await notifyUsers([
+      {
+        userId: request.guardianUserId,
+        ...payload(
+          "MEETING_REQUESTED",
+          "Meeting request from a teacher",
+          `${displayName(request.teacher)} would like a Google Meet${about} · ${whenLabel(request)}`,
+          HREF.guardian,
+          request.id,
+        ),
+      },
+    ]);
+  }
+
+  /** The guardian accepts (booking the Meet) or declines a teacher's request. */
+  async guardianDecide(guardianUserId: string, id: string, input: { approve: boolean; note?: string | null }) {
+    const request = await this.loadRequest(id);
+    if (request.guardianUserId !== guardianUserId || !request.sentToGuardianAt) {
+      throw new AppError(404, "Meeting request not found", "MEETING_NOT_FOUND");
+    }
+    if (request.status !== "PENDING_GUARDIAN") {
+      throw new AppError(409, "This request is no longer waiting for you.", "MEETING_NOT_PENDING");
+    }
+    if (input.approve && request.startAt.getTime() <= Date.now()) {
+      throw new AppError(409, "The requested time has already passed.", "MEETING_EXPIRED");
+    }
+    const note = input.note?.trim() || null;
+    const guardianName = displayName(request.guardian);
+
+    if (!input.approve) {
+      const result = await repo().update(
+        { id, status: "PENDING_GUARDIAN", guardianRespondedAt: IsNull() },
+        { status: "DECLINED", guardianRespondedAt: new Date(), guardianNote: note },
+      );
+      if (!result.affected) {
+        throw new AppError(409, "This request is no longer waiting for you.", "MEETING_NOT_PENDING");
+      }
+      const updated = await this.loadRequest(id);
+      await notifyUsers([
+        {
+          userId: updated.teacherUserId,
+          ...payload(
+            "MEETING_UPDATED",
+            "Meeting request declined",
+            note
+              ? `${guardianName} can't meet at ${whenLabel(updated)}: ${note}`
+              : `${guardianName} can't meet at ${whenLabel(updated)}. Try another time.`,
+            HREF.teacher,
+            updated.id,
+          ),
+        },
+      ]);
+      return toDto(updated);
+    }
+
+    const updated = await this.bookMeet(request, "GUARDIAN", note);
+    await notifyUsers([
+      {
+        userId: updated.teacherUserId,
+        ...payload(
+          "MEETING_SCHEDULED",
+          "Meeting confirmed",
+          `${guardianName} accepted · ${whenLabel(updated)}. The Google Meet is on your calendar.`,
+          HREF.teacher,
+          updated.id,
+        ),
+      },
+    ]);
+    return toDto(updated);
+  }
+
+  /**
+   * Creates the Google Meet on the teacher's calendar once the receiving side accepts, and
+   * adds the guardian's copy. The claim on `*RespondedAt` stops a double-click booking twice.
+   */
+  private async bookMeet(request: MeetingRequest, responder: MeetingInitiator, responseNote: string | null) {
+    const id = request.id;
+    const fromStatus: MeetingRequestStatus = responder === "TEACHER" ? "PENDING_TEACHER" : "PENDING_GUARDIAN";
+    const respondedColumn = responder === "TEACHER" ? "teacherRespondedAt" : "guardianRespondedAt";
+    const noteColumn = responder === "TEACHER" ? "teacherNote" : "guardianNote";
+
+    const claim = await repo()
+      .createQueryBuilder()
+      .update(MeetingRequest)
+      .set({ [respondedColumn]: new Date() })
+      .where(`id = :id AND status = :status AND "${respondedColumn}" IS NULL`, { id, status: fromStatus })
+      .execute();
+    if (!claim.affected) {
+      throw new AppError(409, "This request is already being processed.", "MEETING_NOT_PENDING");
+    }
+
+    let createdEvent: CreatedMeetEvent | null = null;
+    let guardianConnected = false;
+    try {
+      const busy = await this.teacherBusy(request.teacherUserId, request.startAt, request.endAt, request);
+      if (busy.some((b) => overlaps(request.startAt, request.endAt, b))) {
+        throw new AppError(
+          409,
+          responder === "TEACHER"
+            ? "Your calendar now has something else at this time. Decline and ask the guardian to pick another slot."
+            : "The teacher's calendar now has something else at this time. Decline and ask them for another slot.",
+          "MEETING_SLOT_UNAVAILABLE",
+        );
+      }
+
+      const guardianConnection = await AppDataSource.getRepository(GoogleCalendarConnection).findOne({
+        where: { userId: request.guardianUserId },
+      });
+      guardianConnected = Boolean(guardianConnection);
+      const guardianEmail = guardianConnection?.googleEmail || request.guardian?.email || null;
+      const studentLine = request.student ? `Student: ${request.student.fullName}\n` : "";
+      const initiatorLabel = request.initiatedBy === "TEACHER" ? "teacher" : "guardian";
+      const responderLabel = responder === "TEACHER" ? "teacher" : "guardian";
+      const event = await createMeetEvent({
+        organizerUserId: request.teacherUserId,
+        summary: `Parent–teacher meeting: ${request.topic}`,
+        description:
+          `${studentLine}Guardian: ${displayName(request.guardian)}\nTeacher: ${displayName(request.teacher)}` +
+          (request.note ? `\n\nNote from ${initiatorLabel}:\n${request.note}` : "") +
+          (responseNote ? `\n\nNote from ${responderLabel}:\n${responseNote}` : ""),
+        startAt: request.startAt,
+        endAt: request.endAt,
+        timeZone: request.timeZone,
+        attendeeEmails: guardianEmail ? [guardianEmail] : [],
+        requestId: request.id,
+      });
+
+      await repo().update(
+        { id },
+        {
+          status: "SCHEDULED",
+          [noteColumn]: responseNote,
+          googleEventId: event.eventId,
+          meetLink: event.meetLink,
+          calendarEventLink: event.htmlLink,
+        },
+      );
+      createdEvent = event;
+    } catch (error) {
+      await repo().update({ id, status: fromStatus }, { [respondedColumn]: null });
+      throw error;
+    }
+
+    if (createdEvent && guardianConnected) {
+      const guardianEventId = await importEventToAttendeeCalendar(
+        request.guardianUserId,
+        createdEvent.event,
+      ).catch((error) => {
+        logger.warn({ err: error, meetingId: id }, "Failed to add meeting to guardian's Google Calendar");
+        return null;
+      });
+      if (guardianEventId) await repo().update({ id }, { guardianEventId });
+    }
+    return this.loadRequest(id);
   }
 
   // ------------------------------------------------------------------ admin
@@ -667,6 +862,29 @@ class MeetingsService {
     };
   }
 
+  /** Every meeting overlapping [from, to) for the admin calendar, optionally by year and term. */
+  async listForAdminRange(input: { from: Date; to: Date; academicYear?: string; term?: string }) {
+    const qb = repo()
+      .createQueryBuilder("m")
+      .leftJoinAndSelect("m.guardian", "guardian")
+      .leftJoinAndSelect("m.teacher", "teacher")
+      .leftJoinAndSelect("m.student", "student")
+      .where("m.startAt < :to AND m.endAt > :from", { from: input.from, to: input.to });
+    if (input.academicYear || input.term) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1 FROM (${CLASS_CONTEXT_SQL}) x
+          WHERE (CAST(:academicYear AS text) IS NULL OR x."academicYear" = :academicYear)
+            AND (CAST(:term AS text) IS NULL OR x."term" = :term)
+        )`,
+        { academicYear: input.academicYear || null, term: input.term || null },
+      );
+    }
+    const rows = await qb.orderBy("m.startAt", "ASC").take(1000).getMany();
+    const classes = await classContexts(rows.map((r) => r.id));
+    return rows.map((row) => ({ ...toDto(row), classes: classes.get(row.id) ?? [] }));
+  }
+
   async adminDecide(adminUserId: string, id: string, input: { approve: boolean; note?: string | null }) {
     const request = await this.loadRequest(id);
     if (request.status !== "PENDING_ADMIN") {
@@ -677,15 +895,18 @@ class MeetingsService {
     }
 
     const now = new Date();
+    const fromTeacher = request.initiatedBy === "TEACHER";
     const claimed = await repo()
       .createQueryBuilder()
       .update(MeetingRequest)
       .set({
-        status: input.approve ? "PENDING_TEACHER" : "REJECTED",
+        status: input.approve ? (fromTeacher ? "PENDING_GUARDIAN" : "PENDING_TEACHER") : "REJECTED",
         adminReviewedById: adminUserId,
         adminReviewedAt: now,
         adminNote: input.note?.trim() || null,
-        sentToTeacherAt: input.approve ? now : null,
+        ...(fromTeacher
+          ? { sentToGuardianAt: input.approve ? now : null }
+          : { sentToTeacherAt: input.approve ? now : null }),
       })
       .where("id = :id AND status = :status", { id, status: "PENDING_ADMIN" })
       .execute();
@@ -694,6 +915,28 @@ class MeetingsService {
     }
 
     const updated = await this.loadRequest(id);
+    if (fromTeacher) {
+      if (input.approve) {
+        await this.notifyGuardianOfRequest(updated);
+      }
+      await notifyUsers([
+        {
+          userId: updated.teacherUserId,
+          ...payload(
+            "MEETING_UPDATED",
+            input.approve ? "Meeting request approved by the school" : "Meeting request not approved",
+            input.approve
+              ? `Your request to meet ${displayName(updated.guardian)} was sent to them · ${whenLabel(updated)}`
+              : updated.adminNote
+                ? `The school declined your meeting with ${displayName(updated.guardian)}: ${updated.adminNote}`
+                : `The school declined your meeting with ${displayName(updated.guardian)}.`,
+            HREF.teacher,
+            updated.id,
+          ),
+        },
+      ]);
+      return toDto(updated);
+    }
     if (input.approve) {
       await this.notifyTeacherOfRequest(updated);
       await notifyUsers([
@@ -783,80 +1026,7 @@ class MeetingsService {
       return toDto(updated);
     }
 
-    // Claim the request so a double-click can't book two events.
-    const claim = await repo()
-      .createQueryBuilder()
-      .update(MeetingRequest)
-      .set({ teacherRespondedAt: new Date() })
-      .where('id = :id AND status = :status AND "teacherRespondedAt" IS NULL', {
-        id,
-        status: "PENDING_TEACHER",
-      })
-      .execute();
-    if (!claim.affected) {
-      throw new AppError(409, "This request is already being processed.", "MEETING_NOT_PENDING");
-    }
-
-    let createdEvent: CreatedMeetEvent | null = null;
-    let guardianConnected = false;
-    try {
-      const busy = await this.teacherBusy(teacherUserId, request.startAt, request.endAt, request);
-      if (busy.some((b) => overlaps(request.startAt, request.endAt, b))) {
-        throw new AppError(
-          409,
-          "Your calendar now has something else at this time. Decline and ask the guardian to pick another slot.",
-          "MEETING_SLOT_UNAVAILABLE",
-        );
-      }
-
-      const guardianConnection = await AppDataSource.getRepository(GoogleCalendarConnection).findOne({
-        where: { userId: request.guardianUserId },
-      });
-      guardianConnected = Boolean(guardianConnection);
-      const guardianEmail = guardianConnection?.googleEmail || request.guardian?.email || null;
-      const studentLine = request.student ? `Student: ${request.student.fullName}\n` : "";
-      const event = await createMeetEvent({
-        organizerUserId: teacherUserId,
-        summary: `Parent–teacher meeting: ${request.topic}`,
-        description:
-          `${studentLine}Guardian: ${displayName(request.guardian)}\nTeacher: ${displayName(request.teacher)}` +
-          (request.note ? `\n\nNote from guardian:\n${request.note}` : "") +
-          (note ? `\n\nNote from teacher:\n${note}` : ""),
-        startAt: request.startAt,
-        endAt: request.endAt,
-        timeZone: request.timeZone,
-        attendeeEmails: guardianEmail ? [guardianEmail] : [],
-        requestId: request.id,
-      });
-
-      await repo().update(
-        { id },
-        {
-          status: "SCHEDULED",
-          teacherNote: note,
-          googleEventId: event.eventId,
-          meetLink: event.meetLink,
-          calendarEventLink: event.htmlLink,
-        },
-      );
-      createdEvent = event;
-    } catch (error) {
-      await repo().update({ id, status: "PENDING_TEACHER" }, { teacherRespondedAt: null });
-      throw error;
-    }
-
-    if (createdEvent && guardianConnected) {
-      const guardianEventId = await importEventToAttendeeCalendar(
-        request.guardianUserId,
-        createdEvent.event,
-      ).catch((error) => {
-        logger.warn({ err: error, meetingId: id }, "Failed to add meeting to guardian's Google Calendar");
-        return null;
-      });
-      if (guardianEventId) await repo().update({ id }, { guardianEventId });
-    }
-
-    const updated = await this.loadRequest(id);
+    const updated = await this.bookMeet(request, "TEACHER", note);
     await notifyUsers([
       {
         userId: updated.guardianUserId,
@@ -870,6 +1040,153 @@ class MeetingsService {
       },
     ]);
     return toDto(updated);
+  }
+
+  /** Guardians of students the teacher takes, with those students, for the request form. */
+  async teacherOptions(teacherUserId: string) {
+    const [credentials, meetingSettings, guardians, studentRows, connected] = await Promise.all([
+      googleCalendarConfigService.getCredentials(),
+      settingsService.getMeetingSettings(),
+      listGuardiansForTeacher(teacherUserId),
+      this.taughtStudentsByGuardian(teacherUserId),
+      connectedUserIds([teacherUserId]),
+    ]);
+    const guardianConnected = await connectedUserIds(guardians.map((g) => g.userId));
+    return {
+      available: Boolean(credentials),
+      calendarConnected: connected.has(teacherUserId),
+      adminApprovalRequired: meetingSettings.adminApprovalRequired,
+      dayStart: meetingSettings.dayStart,
+      dayEnd: meetingSettings.dayEnd,
+      timeZone: meetingSettings.timeZone,
+      durations: MEETING_DURATIONS,
+      guardians: guardians.map((g) => ({
+        id: g.userId,
+        name: g.preferredName?.trim() || g.fullName,
+        subtitle: g.subtitle ?? null,
+        calendarConnected: guardianConnected.has(g.userId),
+        students: studentRows
+          .filter((s) => s.guardianId === g.userId)
+          .map((s) => ({ id: s.studentId, name: s.studentName })),
+      })),
+    };
+  }
+
+  private async taughtStudentsByGuardian(teacherUserId: string) {
+    return AppDataSource.query(
+      `
+      SELECT DISTINCT
+        gs."guardianId" AS "guardianId",
+        st.id AS "studentId",
+        COALESCE(NULLIF(st."preferredName", ''), st."fullName") AS "studentName"
+      FROM students st
+      INNER JOIN guardian_students gs ON gs."studentId" = st.id
+      INNER JOIN class_students cs ON cs."studentId" = st."userId"
+      INNER JOIN classes c ON c.id = cs."classId"
+        AND (c."teacherId" = $1 OR EXISTS (
+          SELECT 1 FROM sessions s WHERE s."classId" = c.id AND s."teacherId" = $1
+        ))
+      ORDER BY "studentName"
+      `,
+      [teacherUserId],
+    ) as Promise<Array<{ guardianId: string; studentId: string; studentName: string }>>;
+  }
+
+  private async assertTeacherCanBook(teacherUserId: string) {
+    await this.assertCalendarAvailable();
+    const connected = await connectedUserIds([teacherUserId]);
+    if (!connected.has(teacherUserId)) {
+      throw new AppError(
+        409,
+        "Connect Google Calendar from your profile before requesting meetings.",
+        "GOOGLE_CALENDAR_NOT_CONNECTED",
+      );
+    }
+  }
+
+  private async eligibleGuardian(teacherUserId: string, guardianUserId: string, studentId?: string | null) {
+    const [guardians, students] = await Promise.all([
+      listGuardiansForTeacher(teacherUserId),
+      studentId ? this.taughtStudentsByGuardian(teacherUserId) : Promise.resolve([]),
+    ]);
+    if (!guardians.some((g) => g.userId === guardianUserId)) {
+      throw new AppError(
+        403,
+        "You can only request meetings with guardians of students you teach.",
+        "MEETING_GUARDIAN_NOT_ALLOWED",
+      );
+    }
+    if (studentId && !students.some((s) => s.guardianId === guardianUserId && s.studentId === studentId)) {
+      throw new AppError(404, "Student not found", "STUDENT_NOT_FOUND");
+    }
+  }
+
+  /** Free slots for a new teacher request: the teacher's calendar plus the guardian's, when connected. */
+  async teacherNewMeetingAvailability(
+    teacherUserId: string,
+    input: { guardianId: string; date: string; durationMinutes: number; timeZone?: string | null },
+  ) {
+    await this.assertTeacherCanBook(teacherUserId);
+    await this.eligibleGuardian(teacherUserId, input.guardianId);
+    return this.computeSlots(teacherUserId, input, undefined, input.guardianId);
+  }
+
+  async teacherCreate(teacherUserId: string, input: TeacherCreateMeetingInput) {
+    await this.assertTeacherCanBook(teacherUserId);
+    await this.eligibleGuardian(teacherUserId, input.guardianId, input.studentId);
+
+    const startAt = new Date(input.startAt);
+    const endAt = new Date(startAt.getTime() + input.durationMinutes * 60_000);
+    const settings = await this.assertSlotBookable(teacherUserId, startAt, endAt);
+    const guardianBusy = await this.guardianBusy(input.guardianId, startAt, endAt);
+    if (guardianBusy.some((b) => overlaps(startAt, endAt, b))) {
+      throw new AppError(
+        409,
+        "That time is no longer free on the guardian's calendar. Pick another slot.",
+        "MEETING_SLOT_UNAVAILABLE",
+      );
+    }
+    const timeZone = requestTimeZone(input.timeZone, settings);
+    const adminApprovalRequired = settings.adminApprovalRequired;
+    const now = new Date();
+
+    const saved = await repo().save(
+      repo().create({
+        guardianUserId: input.guardianId,
+        teacherUserId,
+        studentId: input.studentId ?? null,
+        startAt,
+        endAt,
+        timeZone,
+        topic: input.topic.trim(),
+        note: input.note?.trim() || null,
+        status: adminApprovalRequired ? "PENDING_ADMIN" : "PENDING_GUARDIAN",
+        initiatedBy: "TEACHER",
+        sentToTeacherAt: now,
+        sentToGuardianAt: adminApprovalRequired ? null : now,
+      }),
+    );
+    const request = await this.loadRequest(saved.id);
+    const about = request.student ? ` about ${request.student.fullName}` : "";
+
+    if (adminApprovalRequired) {
+      const admins = await listSuperAdmins();
+      await notifyUsers(
+        admins.map((a) => ({
+          userId: a.userId,
+          ...payload(
+            "MEETING_REQUESTED",
+            "Meeting request needs approval",
+            `${displayName(request.teacher)} wants to meet ${displayName(request.guardian)}${about} · ${whenLabel(request)}`,
+            HREF.admin,
+            request.id,
+          ),
+        })),
+      );
+    } else {
+      await this.notifyGuardianOfRequest(request);
+    }
+    return toDto(request);
   }
 
   // ------------------------------------------------------------ rescheduling
@@ -953,7 +1270,10 @@ class MeetingsService {
     if (request.teacherUserId !== teacherUserId || !request.sentToTeacherAt) {
       throw new AppError(404, "Meeting request not found", "MEETING_NOT_FOUND");
     }
-    if (request.status !== "SCHEDULED" || request.endAt.getTime() <= Date.now()) {
+    const ownPending =
+      request.initiatedBy === "TEACHER" &&
+      (request.status === "PENDING_ADMIN" || request.status === "PENDING_GUARDIAN");
+    if ((request.status !== "SCHEDULED" && !ownPending) || request.endAt.getTime() <= Date.now()) {
       throw new AppError(409, "Only upcoming confirmed meetings can be rescheduled.", "MEETING_NOT_RESCHEDULABLE");
     }
 
@@ -966,6 +1286,28 @@ class MeetingsService {
 
     const note = input.note?.trim() || null;
     const updated = await this.applyNewTime(request, startAt, endAt, teacherUserId, note);
+    if (ownPending) {
+      const body =
+        `${displayName(updated.teacher)} changed their requested time to ${whenLabel(updated)}` +
+        (note ? `: ${note}` : ".");
+      if (updated.status === "PENDING_GUARDIAN") {
+        await notifyUsers([
+          {
+            userId: updated.guardianUserId,
+            ...payload("MEETING_UPDATED", "Meeting request moved", body, HREF.guardian, updated.id),
+          },
+        ]);
+      } else {
+        const admins = await listSuperAdmins();
+        await notifyUsers(
+          admins.map((a) => ({
+            userId: a.userId,
+            ...payload("MEETING_UPDATED", "Meeting request moved", body, HREF.admin, updated.id),
+          })),
+        );
+      }
+      return toDto(updated);
+    }
     await notifyUsers([
       {
         userId: updated.guardianUserId,
@@ -995,7 +1337,16 @@ class MeetingsService {
     if (request.guardianUserId !== guardianUserId) {
       throw new AppError(404, "Meeting request not found", "MEETING_NOT_FOUND");
     }
-    const pending = request.status === "PENDING_ADMIN" || request.status === "PENDING_TEACHER";
+    if (request.status === "PENDING_GUARDIAN") {
+      throw new AppError(
+        409,
+        "Accept or decline the teacher's request — you can suggest another time in your reply.",
+        "MEETING_NOT_RESCHEDULABLE",
+      );
+    }
+    const pending =
+      request.initiatedBy === "GUARDIAN" &&
+      (request.status === "PENDING_ADMIN" || request.status === "PENDING_TEACHER");
     const confirmed = request.status === "SCHEDULED" && request.endAt.getTime() > Date.now();
     if (!pending && !confirmed) {
       throw new AppError(409, "This meeting can't be rescheduled.", "MEETING_NOT_RESCHEDULABLE");
@@ -1130,14 +1481,18 @@ class MeetingsService {
     reason?: string | null,
   ) {
     const request = await this.loadRequest(id);
+    const fromTeacher = request.initiatedBy === "TEACHER";
+    const guardianCanSee = !fromTeacher || request.sentToGuardianAt !== null;
     const isOwner =
       actor.role === "GUARDIAN"
-        ? request.guardianUserId === actor.id
+        ? request.guardianUserId === actor.id && guardianCanSee
         : request.teacherUserId === actor.id && request.sentToTeacherAt !== null;
     if (!isOwner) throw new AppError(404, "Meeting request not found", "MEETING_NOT_FOUND");
 
+    // The side that started the request can withdraw it while pending; the other side declines instead.
+    const initiatorRole = fromTeacher ? "TEACHER" : "GUARDIAN";
     const cancellable: MeetingRequestStatus[] =
-      actor.role === "GUARDIAN" ? ACTIVE_MEETING_STATUSES : ["SCHEDULED"];
+      actor.role === initiatorRole ? ACTIVE_MEETING_STATUSES : ["SCHEDULED"];
     if (!cancellable.includes(request.status)) {
       throw new AppError(409, "This meeting can't be cancelled.", "MEETING_NOT_CANCELLABLE");
     }
@@ -1186,14 +1541,17 @@ class MeetingsService {
           },
         ]);
       }
-    } else {
+    } else if (guardianCanSee) {
+      const withdrawn = request.status !== "SCHEDULED";
       await notifyUsers([
         {
           userId: updated.guardianUserId,
           ...payload(
             "MEETING_CANCELLED",
-            "Meeting cancelled",
-            `${displayName(updated.teacher)} cancelled the meeting on ${whenLabel(updated)}${reasonText}`,
+            withdrawn ? "Meeting request withdrawn" : "Meeting cancelled",
+            withdrawn
+              ? `${displayName(updated.teacher)} withdrew their meeting request for ${whenLabel(updated)}${reasonText}`
+              : `${displayName(updated.teacher)} cancelled the meeting on ${whenLabel(updated)}${reasonText}`,
             HREF.guardian,
             updated.id,
           ),

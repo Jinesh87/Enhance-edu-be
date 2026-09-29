@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import Joi from "joi";
 import { UserRole } from "../../common/constants/roles.js";
+import { AppError } from "../../common/errors/AppError.js";
 import { authenticate, authorize } from "../../common/middleware/authenticate.js";
 import { validate } from "../../common/middleware/validate.js";
 import { MEETING_REQUEST_STATUSES } from "../../entities/MeetingRequest.js";
@@ -25,11 +26,27 @@ const availabilityQuerySchema = Joi.object({
 });
 
 const teacherAvailabilityQuerySchema = Joi.object({
-  meetingId: Joi.string().uuid().required(),
+  meetingId: Joi.string().uuid(),
+  guardianId: Joi.string().uuid(),
+  durationMinutes: Joi.number()
+    .integer()
+    .valid(...MEETING_DURATIONS),
   date: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .required(),
   timeZone: timeZoneSchema,
+})
+  .xor("meetingId", "guardianId")
+  .with("guardianId", "durationMinutes");
+
+const teacherCreateMeetingSchema = Joi.object({
+  guardianId: Joi.string().uuid().required(),
+  studentId: Joi.string().uuid().allow(null),
+  startAt: Joi.date().iso().required(),
+  durationMinutes: durationSchema,
+  timeZone: timeZoneSchema,
+  topic: Joi.string().trim().min(3).max(200).required(),
+  note: Joi.string().trim().max(2000).allow(null, ""),
 });
 
 const rescheduleSchema = Joi.object({
@@ -137,6 +154,16 @@ guardianMeetingsRouter.post(
 );
 
 guardianMeetingsRouter.post(
+  "/:id/decision",
+  validate(idParamsSchema, "params"),
+  validate(decisionSchema),
+  handle(async (req, res) => {
+    const meeting = await meetingsService.guardianDecide(req.user!.id, String(req.params.id), req.body);
+    res.json({ meeting });
+  }),
+);
+
+guardianMeetingsRouter.post(
   "/:id/cancel",
   validate(idParamsSchema, "params"),
   validate(cancelSchema),
@@ -164,8 +191,51 @@ teacherMeetingsRouter.get(
   "/availability",
   validate(teacherAvailabilityQuerySchema, "query"),
   handle(async (req, res) => {
-    const query = req.query as unknown as { meetingId: string; date: string; timeZone?: string };
-    res.json(await meetingsService.teacherAvailability(req.user!.id, query));
+    const query = req.query as unknown as {
+      meetingId?: string;
+      guardianId?: string;
+      durationMinutes?: number | string;
+      date: string;
+      timeZone?: string;
+    };
+    if (query.guardianId) {
+      res.json(
+        await meetingsService.teacherNewMeetingAvailability(req.user!.id, {
+          guardianId: query.guardianId,
+          date: query.date,
+          timeZone: query.timeZone,
+          durationMinutes: Number(query.durationMinutes),
+        }),
+      );
+      return;
+    }
+    res.json(
+      await meetingsService.teacherAvailability(req.user!.id, {
+        meetingId: query.meetingId!,
+        date: query.date,
+        timeZone: query.timeZone,
+      }),
+    );
+  }),
+);
+
+teacherMeetingsRouter.get(
+  "/options",
+  handle(async (req, res) => {
+    res.json(await meetingsService.teacherOptions(req.user!.id));
+  }),
+);
+
+teacherMeetingsRouter.post(
+  "/",
+  validate(teacherCreateMeetingSchema),
+  handle(async (req, res) => {
+    const body = req.body as { startAt: Date | string } & Record<string, unknown>;
+    const meeting = await meetingsService.teacherCreate(req.user!.id, {
+      ...(req.body as Parameters<typeof meetingsService.teacherCreate>[1]),
+      startAt: new Date(body.startAt).toISOString(),
+    });
+    res.status(201).json({ meeting });
   }),
 );
 
@@ -235,6 +305,34 @@ adminMeetingsRouter.get(
       limit: number;
     };
     res.json(await meetingsService.listForAdmin(query));
+  }),
+);
+
+const adminCalendarQuerySchema = Joi.object({
+  from: Joi.date().iso().required(),
+  to: Joi.date().iso().greater(Joi.ref("from")).required(),
+  academicYear: Joi.string().trim().max(60).allow(""),
+  term: Joi.string().trim().max(120).allow(""),
+});
+
+adminMeetingsRouter.get(
+  "/calendar",
+  validate(adminCalendarQuerySchema, "query"),
+  handle(async (req, res) => {
+    const query = req.query as unknown as { from: Date; to: Date; academicYear?: string; term?: string };
+    const from = new Date(query.from);
+    const to = new Date(query.to);
+    if (to.getTime() - from.getTime() > 62 * 86_400_000) {
+      throw new AppError(400, "Pick a range of two months or less.", "MEETING_RANGE_TOO_LONG");
+    }
+    res.json({
+      items: await meetingsService.listForAdminRange({
+        from,
+        to,
+        academicYear: query.academicYear,
+        term: query.term,
+      }),
+    });
   }),
 );
 

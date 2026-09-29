@@ -15,6 +15,7 @@ import { User } from "./User.js";
 export const MEETING_REQUEST_STATUSES = [
   "PENDING_ADMIN",
   "PENDING_TEACHER",
+  "PENDING_GUARDIAN",
   "SCHEDULED",
   "REJECTED",
   "DECLINED",
@@ -23,16 +24,20 @@ export const MEETING_REQUEST_STATUSES = [
 
 export type MeetingRequestStatus = (typeof MEETING_REQUEST_STATUSES)[number];
 
+export type MeetingInitiator = "GUARDIAN" | "TEACHER";
+
 /** Statuses that still hold the requested time on the teacher's schedule. */
 export const ACTIVE_MEETING_STATUSES: MeetingRequestStatus[] = [
   "PENDING_ADMIN",
   "PENDING_TEACHER",
+  "PENDING_GUARDIAN",
   "SCHEDULED",
 ];
 
 /**
- * A guardian's request for a Google Meet with a teacher. When the institution requires it,
- * a Super Admin approves first; the Meet is only created once the teacher approves.
+ * A Google Meet request between a guardian and a teacher, started by either side. When the
+ * institution requires it, a Super Admin approves first; the Meet (always on the teacher's
+ * calendar) is only created once the other side accepts.
  */
 @Entity("meeting_requests")
 export class MeetingRequest {
@@ -82,6 +87,19 @@ export class MeetingRequest {
   @Column({ type: "varchar", length: 20 })
   @Index()
   status!: MeetingRequestStatus;
+
+  @Column({ type: "varchar", length: 10, default: "GUARDIAN" })
+  initiatedBy!: MeetingInitiator;
+
+  /** Set once a teacher's request is visible to the guardian (immediately, or after admin approval). */
+  @Column({ type: "timestamptz", nullable: true })
+  sentToGuardianAt!: Date | null;
+
+  @Column({ type: "timestamptz", nullable: true })
+  guardianRespondedAt!: Date | null;
+
+  @Column({ type: "text", nullable: true })
+  guardianNote!: string | null;
 
   @Column({ type: "uuid", nullable: true })
   adminReviewedById!: string | null;
