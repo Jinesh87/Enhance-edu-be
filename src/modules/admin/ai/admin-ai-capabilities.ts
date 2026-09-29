@@ -1,7 +1,7 @@
 import { AppError } from "../../../common/errors/AppError.js";
 import { settingsService } from "../../settings/settings.service.js";
 
-  export const ADMIN_AI_CAPABILITIES = [
+export const ADMIN_AI_CAPABILITIES = [
   "assistant",
   "dataInsights",
   "emailDrafting",
@@ -33,16 +33,12 @@ export const ADMIN_AI_BRIEFING_SECTIONS: AdminAiBriefingSection[] = [
 
 export type AdminAiBriefingConfig = {
   time: string | null;
-  /** IANA timezone (e.g. Australia/Sydney). */
   timeZone: string;
   daysOfWeek: number[];
   sections: AdminAiBriefingSection[];
-  /** Optional inclusive local date bounds YYYY-MM-DD. */
   startDate: string | null;
   endDate: string | null;
-  /** Next scheduled fire time (UTC ISO). */
   nextRunAt: string | null;
-  /** Last successful schedule claim (UTC ISO). */
   lastRunAt: string | null;
 };
 
@@ -110,7 +106,9 @@ const DISABLED_MESSAGES: Record<AdminAiCapability, string> = {
     "Confirmed AI Actions are disabled. You can enable them in Settings → AI.",
 };
 
-export function disabledCapabilityMessage(capability: AdminAiCapability): string {
+export function disabledCapabilityMessage(
+  capability: AdminAiCapability,
+): string {
   return DISABLED_MESSAGES[capability];
 }
 
@@ -120,10 +118,7 @@ export function isCapabilityDisabledReply(text: string): boolean {
   for (const message of Object.values(DISABLED_MESSAGES)) {
     if (t === message || t.includes(message)) return true;
   }
-  return (
-    /\bis disabled\b/i.test(t) &&
-    /settings\s*(→|->|–|-)?\s*ai\b/i.test(t)
-  );
+  return /\bis disabled\b/i.test(t) && /settings\s*(→|->|–|-)?\s*ai\b/i.test(t);
 }
 
 export function isCapabilityEnabled(
