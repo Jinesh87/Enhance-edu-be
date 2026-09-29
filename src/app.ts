@@ -49,6 +49,11 @@ import adminFinanceRouter from "./modules/admin/finance/admin-finance.routes.js"
 import adminFeedbackRouter from "./modules/admin/feedback/admin-feedback.routes.js";
 import guardianFeedbackRouter from "./modules/guardian/feedback/guardian-feedback.routes.js";
 import googleCalendarRouter from "./modules/integrations/google/google-calendar.routes.js";
+import {
+  adminMeetingsRouter,
+  guardianMeetingsRouter,
+  teacherMeetingsRouter,
+} from "./modules/meetings/meetings.routes.js";
 import { authenticate } from "./common/middleware/authenticate.js";
 
 const app = express();
@@ -127,6 +132,9 @@ app.use("/api/guardian/coach", guardianCoachRouter);
 app.use("/api/notifications", notificationsRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/integrations/google", googleCalendarRouter);
+app.use("/api/guardian/meetings", guardianMeetingsRouter);
+app.use("/api/teacher/meetings", teacherMeetingsRouter);
+app.use("/api/admin/meetings", adminMeetingsRouter);
 
 app.use(errorHandler);
 

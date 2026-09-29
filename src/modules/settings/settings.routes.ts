@@ -16,8 +16,11 @@ import {
   updateGoogleCalendarSettingSchema,
   updateNotificationSettingSchema,
   updateAdminAiCapabilitySettingSchema,
+  updateMeetingSettingSchema,
   openAiUsageQuerySchema,
 } from "./settings.validation.js";
+import { settingsService } from "./settings.service.js";
+import { writeAuditLog } from "../../common/utils/audit-log.js";
 import {
   checkHolidayConflictsSchema,
   createHolidaySchema,
@@ -146,6 +149,43 @@ router.post(
   async (_req, res, next) => {
     try {
       res.json(await googleCalendarConfigService.verify());
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  "/meetings",
+  authorize(UserRole.SUPER_ADMIN),
+  async (_req, res, next) => {
+    try {
+      res.json(await settingsService.getMeetingSettings());
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.put(
+  "/meetings",
+  authorize(UserRole.SUPER_ADMIN),
+  validate(updateMeetingSettingSchema, "body"),
+  async (req, res, next) => {
+    try {
+      const before = await settingsService.getMeetingSettings();
+      const config = await settingsService.updateMeetingSettings(req.body);
+      await writeAuditLog({
+        actorUserId: req.user?.id ?? null,
+        action: "EDITED",
+        recordType: "meeting_settings",
+        recordId: "default",
+        recordLabel: "Meeting request settings",
+        recordPath: "/admin/integrations-settings",
+        before,
+        after: config,
+      });
+      res.json(config);
     } catch (error) {
       next(error);
     }

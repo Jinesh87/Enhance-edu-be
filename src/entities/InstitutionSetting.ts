@@ -105,6 +105,21 @@ export class InstitutionSetting {
   @Column({ type: "timestamptz", nullable: true })
   googleCredentialsVerifiedAt!: Date | null;
 
+  /** When true, guardian meeting requests go to a Super Admin before reaching the teacher. */
+  @Column({ type: "boolean", default: false })
+  meetingAdminApprovalRequired!: boolean;
+
+  /** Earliest bookable meeting time ("HH:MM") in `meetingTimeZone`. */
+  @Column({ type: "varchar", length: 5, default: "08:00" })
+  meetingDayStart!: string;
+
+  /** Latest time ("HH:MM") a meeting may end, in `meetingTimeZone`. */
+  @Column({ type: "varchar", length: 5, default: "20:00" })
+  meetingDayEnd!: string;
+
+  @Column({ type: "varchar", length: 64, default: "Australia/Sydney" })
+  meetingTimeZone!: string;
+
   /** OpenAI API key for institution AI features. */
   @Column({ type: "varchar", length: 255, nullable: true })
   openaiApiKey!: string | null;
