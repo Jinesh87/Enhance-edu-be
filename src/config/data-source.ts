@@ -1880,6 +1880,11 @@ export async function ensureMeetingSchema() {
     ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "sentToGuardianAt" timestamptz;
     ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "guardianRespondedAt" timestamptz;
     ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "guardianNote" text;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS outcome varchar(20);
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "outcomeSummary" text;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "outcomeActionItems" jsonb;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "outcomeShared" boolean NOT NULL DEFAULT false;
+    ALTER TABLE meeting_requests ADD COLUMN IF NOT EXISTS "outcomeRecordedAt" timestamptz;
   `);
   await bootstrap.destroy();
 }

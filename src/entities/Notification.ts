@@ -44,6 +44,7 @@ export const NOTIFICATION_TYPES = [
   "MEETING_UPDATED",
   "MEETING_SCHEDULED",
   "MEETING_CANCELLED",
+  "MEETING_REMINDER",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
