@@ -4,6 +4,7 @@ import { logger } from "../../config/logger.js";
 import { classRemindersService } from "../../modules/notifications/class-reminders.service.js";
 import { homeworkRemindersService } from "../../modules/notifications/homework-reminders.service.js";
 import { holidayRemindersService } from "../../modules/notifications/holiday-reminders.service.js";
+import { meetingRemindersService } from "../../modules/meetings/meeting-reminders.service.js";
 
 const QUEUE_NAME = "class-reminders";
 const TICK_JOB_NAME = "tick";
@@ -44,12 +45,13 @@ export function getClassRemindersQueue(): Queue<ClassReminderTickPayload> {
 }
 
 async function processTick() {
-  const [oneHour, digest, hwDue, hwOverdue, holidays] = await Promise.all([
+  const [oneHour, digest, hwDue, hwOverdue, holidays, meetings] = await Promise.all([
     classRemindersService.run1hScan(),
     classRemindersService.runDigestScan(),
     homeworkRemindersService.runDueSoonScan(),
     homeworkRemindersService.runOverdueScan(),
     holidayRemindersService.runUpcomingScan(),
+    meetingRemindersService.runScan(),
   ]);
 
   if (
@@ -57,7 +59,8 @@ async function processTick() {
     digest.emailed > 0 ||
     hwDue.sent > 0 ||
     hwOverdue.sent > 0 ||
-    holidays.sent > 0
+    holidays.sent > 0 ||
+    meetings.sent > 0
   ) {
     logger.info(
       {
@@ -71,6 +74,8 @@ async function processTick() {
         homeworkOverdueSent: hwOverdue.sent,
         holidayScanned: holidays.scanned,
         holidaySent: holidays.sent,
+        meetingScanned: meetings.scanned,
+        meetingSent: meetings.sent,
       },
       "Class reminders tick completed",
     );

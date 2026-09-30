@@ -4,7 +4,7 @@ import { UserRole } from "../../common/constants/roles.js";
 import { AppError } from "../../common/errors/AppError.js";
 import { authenticate, authorize } from "../../common/middleware/authenticate.js";
 import { validate } from "../../common/middleware/validate.js";
-import { MEETING_REQUEST_STATUSES } from "../../entities/MeetingRequest.js";
+import { MEETING_OUTCOMES, MEETING_REQUEST_STATUSES } from "../../entities/MeetingRequest.js";
 import { MEETING_DURATIONS, meetingsService } from "./meetings.service.js";
 
 const idParamsSchema = Joi.object({ id: Joi.string().uuid().required() });
@@ -68,6 +68,32 @@ const decisionSchema = Joi.object({
   approve: Joi.boolean().required(),
   note: Joi.string().trim().max(1000).allow(null, ""),
 });
+
+const outcomeSchema = Joi.object({
+  outcome: Joi.string()
+    .valid(...MEETING_OUTCOMES)
+    .required(),
+  summary: Joi.string().trim().max(5000).allow(null, ""),
+  actionItems: Joi.array()
+    .max(20)
+    .items(
+      Joi.object({
+        id: Joi.string().uuid().allow(null, ""),
+        text: Joi.string().trim().max(300).allow("").required(),
+        owner: Joi.string().valid("TEACHER", "GUARDIAN").required(),
+        done: Joi.boolean().default(false),
+      }),
+    )
+    .default([]),
+  shareWithGuardian: Joi.boolean().required(),
+});
+
+const actionItemParamsSchema = Joi.object({
+  id: Joi.string().uuid().required(),
+  itemId: Joi.string().uuid().required(),
+});
+
+const actionItemSchema = Joi.object({ done: Joi.boolean().required() });
 
 const cancelSchema = Joi.object({
   reason: Joi.string().trim().max(1000).allow(null, ""),
@@ -172,6 +198,21 @@ guardianMeetingsRouter.post(
       { id: req.user!.id, role: "GUARDIAN" },
       String(req.params.id),
       req.body.reason,
+    );
+    res.json({ meeting });
+  }),
+);
+
+guardianMeetingsRouter.patch(
+  "/:id/action-items/:itemId",
+  validate(actionItemParamsSchema, "params"),
+  validate(actionItemSchema),
+  handle(async (req, res) => {
+    const meeting = await meetingsService.guardianSetActionItemDone(
+      req.user!.id,
+      String(req.params.id),
+      String(req.params.itemId),
+      req.body.done,
     );
     res.json({ meeting });
   }),
@@ -285,6 +326,16 @@ teacherMeetingsRouter.post(
       String(req.params.id),
       req.body.reason,
     );
+    res.json({ meeting });
+  }),
+);
+
+teacherMeetingsRouter.put(
+  "/:id/outcome",
+  validate(idParamsSchema, "params"),
+  validate(outcomeSchema),
+  handle(async (req, res) => {
+    const meeting = await meetingsService.recordOutcome(req.user!.id, String(req.params.id), req.body);
     res.json({ meeting });
   }),
 );

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { In, IsNull } from "typeorm";
 import { AppDataSource } from "../../config/data-source.js";
 import { logger } from "../../config/logger.js";
@@ -16,7 +17,11 @@ import {
   User,
   type MeetingRequestStatus,
 } from "../../entities/index.js";
-import type { MeetingInitiator } from "../../entities/MeetingRequest.js";
+import type {
+  MeetingActionItem,
+  MeetingInitiator,
+  MeetingOutcome,
+} from "../../entities/MeetingRequest.js";
 import type { NotificationType } from "../../entities/Notification.js";
 import { notifyUsers } from "../notifications/domain-notifications.js";
 import type { CreateNotificationInput } from "../notifications/notifications.service.js";
@@ -86,8 +91,27 @@ export type MeetingRequestDto = {
   previousStartAt: string | null;
   meetLink: string | null;
   calendarEventLink: string | null;
+  /** Guardians only receive it once the teacher shares it. */
+  outcome: MeetingOutcomeDto | null;
   createdAt: string;
 };
+
+export type MeetingOutcomeDto = {
+  status: MeetingOutcome;
+  summary: string | null;
+  actionItems: MeetingActionItem[];
+  shared: boolean;
+  recordedAt: string;
+};
+
+export type RecordOutcomeInput = {
+  outcome: MeetingOutcome;
+  summary?: string | null;
+  actionItems?: Array<{ id?: string | null; text: string; owner: MeetingInitiator; done?: boolean }>;
+  shareWithGuardian: boolean;
+};
+
+type DtoViewer = "guardian" | "staff";
 
 export type MeetingClassContext = {
   studentName: string;
@@ -177,7 +201,19 @@ function whenLabel(request: Pick<MeetingRequest, "startAt" | "timeZone">) {
   });
 }
 
-function toDto(row: MeetingRequest): MeetingRequestDto {
+function outcomeDto(row: MeetingRequest, viewer: DtoViewer): MeetingOutcomeDto | null {
+  if (!row.outcome || !row.outcomeRecordedAt) return null;
+  if (viewer === "guardian" && !row.outcomeShared) return null;
+  return {
+    status: row.outcome,
+    summary: row.outcomeSummary,
+    actionItems: row.outcomeActionItems ?? [],
+    shared: row.outcomeShared,
+    recordedAt: row.outcomeRecordedAt.toISOString(),
+  };
+}
+
+function toDto(row: MeetingRequest, viewer: DtoViewer = "staff"): MeetingRequestDto {
   const pending = PENDING_STATUSES.includes(row.status);
   return {
     id: row.id,
@@ -231,6 +267,7 @@ function toDto(row: MeetingRequest): MeetingRequestDto {
     previousStartAt: row.previousStartAt?.toISOString() ?? null,
     meetLink: row.meetLink,
     calendarEventLink: row.status === "SCHEDULED" ? row.calendarEventLink : null,
+    outcome: outcomeDto(row, viewer),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -300,6 +337,53 @@ function payload(
   meetingId: string,
 ): Omit<CreateNotificationInput, "userId"> {
   return { type, title, body, data: { meetingId, href } };
+}
+
+/** Centre-wide (PUBLIC) holidays covering any of the given dates (YYYY-MM-DD), keyed by date. */
+async function publicHolidaysOn(dates: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (dates.length === 0) return result;
+  const rows: Array<{ date: string; name: string }> = await AppDataSource.query(
+    `
+    SELECT to_char(d, 'YYYY-MM-DD') AS date, h.name
+    FROM unnest($1::date[]) AS d
+    INNER JOIN holidays h ON h.kind = 'PUBLIC' AND d BETWEEN h."startDate" AND h."endDate"
+    ORDER BY h."startDate"
+    `,
+    [dates],
+  );
+  for (const row of rows) {
+    if (!result.has(row.date)) result.set(row.date, row.name);
+  }
+  return result;
+}
+
+/** Holiday dates in the meeting time zone between now and the booking horizon. */
+async function upcomingClosedDates(timeZone: string): Promise<Array<{ date: string; name: string }>> {
+  const rows: Array<{ startDate: string; endDate: string; name: string }> = await AppDataSource.query(
+    `
+    SELECT to_char("startDate", 'YYYY-MM-DD') AS "startDate",
+           to_char("endDate", 'YYYY-MM-DD') AS "endDate",
+           name
+    FROM holidays
+    WHERE kind = 'PUBLIC' AND "endDate" >= $1::date AND "startDate" <= $2::date
+    ORDER BY "startDate"
+    `,
+    [
+      calendarDateInTimeZone(new Date(), timeZone),
+      calendarDateInTimeZone(new Date(Date.now() + MAX_DAYS_AHEAD * 86_400_000), timeZone),
+    ],
+  );
+  const closed = new Map<string, string>();
+  for (const row of rows) {
+    const [y, m, d] = row.startDate.split("-").map(Number);
+    for (let t = Date.UTC(y, m - 1, d); ; t += 86_400_000) {
+      const key = new Date(t).toISOString().slice(0, 10);
+      if (key > row.endDate) break;
+      if (!closed.has(key)) closed.set(key, row.name);
+    }
+  }
+  return [...closed].map(([date, name]) => ({ date, name }));
 }
 
 async function connectedUserIds(userIds: string[]): Promise<Set<string>> {
@@ -420,13 +504,17 @@ class MeetingsService {
         relations: { student: true },
       }),
     ]);
-    const connected = await connectedUserIds(teachers.map((t) => t.userId));
+    const [connected, closedDates] = await Promise.all([
+      connectedUserIds(teachers.map((t) => t.userId)),
+      upcomingClosedDates(meetingSettings.timeZone),
+    ]);
     return {
       available: Boolean(credentials),
       adminApprovalRequired: meetingSettings.adminApprovalRequired,
       dayStart: meetingSettings.dayStart,
       dayEnd: meetingSettings.dayEnd,
       timeZone: meetingSettings.timeZone,
+      closedDates,
       durations: MEETING_DURATIONS,
       teachers: teachers.map((t) => ({
         id: t.userId,
@@ -479,13 +567,21 @@ class MeetingsService {
       calendarDateInTimeZone(dayStart, settings.timeZone),
       calendarDateInTimeZone(new Date(dayEnd.getTime() - 1), settings.timeZone),
     ]);
+    const holidays = await publicHolidaysOn([...adminDates]);
     const windows = [...adminDates]
+      .filter((date) => !holidays.has(date))
       .map((date) => meetingWindow(date, settings))
       .filter((w) => w.windowStart < dayEnd && w.windowEnd > dayStart);
 
     const earliest = Date.now() + MIN_LEAD_MINUTES * 60_000;
     const latest = Date.now() + MAX_DAYS_AHEAD * 86_400_000;
-    const empty = { date: input.date, timeZone: guardianTimeZone, adminTimeZone: settings.timeZone, slots: [] };
+    const empty = {
+      date: input.date,
+      timeZone: guardianTimeZone,
+      adminTimeZone: settings.timeZone,
+      slots: [] as Array<{ startAt: string; endAt: string }>,
+      holiday: windows.length === 0 ? ([...holidays.values()][0] ?? null) : null,
+    };
     if (windows.length === 0) return empty;
 
     const rangeStart = new Date(Math.min(...windows.map((w) => w.windowStart.getTime())));
@@ -531,10 +627,12 @@ class MeetingsService {
     }
 
     const settings = await settingsService.getMeetingSettings();
-    const { windowStart, windowEnd } = meetingWindow(
-      calendarDateInTimeZone(startAt, settings.timeZone),
-      settings,
-    );
+    const adminDate = calendarDateInTimeZone(startAt, settings.timeZone);
+    const holiday = (await publicHolidaysOn([adminDate])).get(adminDate);
+    if (holiday) {
+      throw new AppError(400, `The centre is closed that day (${holiday}). Pick another date.`, "MEETING_ON_HOLIDAY");
+    }
+    const { windowStart, windowEnd } = meetingWindow(adminDate, settings);
     if (startAt < windowStart || endAt > windowEnd) {
       throw new AppError(
         400,
@@ -566,7 +664,7 @@ class MeetingsService {
       .take(200)
       .getMany();
     const classes = await classContexts(rows.map((r) => r.id));
-    return rows.map((row) => ({ ...toDto(row), classes: classes.get(row.id) ?? [] }));
+    return rows.map((row) => ({ ...toDto(row, "guardian"), classes: classes.get(row.id) ?? [] }));
   }
 
   async create(guardianUserId: string, input: CreateMeetingInput) {
@@ -624,7 +722,7 @@ class MeetingsService {
       await this.notifyTeacherOfRequest(request);
     }
 
-    return toDto(request);
+    return toDto(request, "guardian");
   }
 
   private async notifyTeacherOfRequest(request: MeetingRequest) {
@@ -697,7 +795,7 @@ class MeetingsService {
           ),
         },
       ]);
-      return toDto(updated);
+      return toDto(updated, "guardian");
     }
 
     const updated = await this.bookMeet(request, "GUARDIAN", note);
@@ -713,7 +811,7 @@ class MeetingsService {
         ),
       },
     ]);
-    return toDto(updated);
+    return toDto(updated, "guardian");
   }
 
   /**
@@ -739,6 +837,16 @@ class MeetingsService {
     let createdEvent: CreatedMeetEvent | null = null;
     let guardianConnected = false;
     try {
+      const { timeZone: adminTimeZone } = await settingsService.getMeetingSettings();
+      const adminDate = calendarDateInTimeZone(request.startAt, adminTimeZone);
+      const holiday = (await publicHolidaysOn([adminDate])).get(adminDate);
+      if (holiday) {
+        throw new AppError(
+          409,
+          `The centre is closed that day (${holiday}). Decline and suggest another date.`,
+          "MEETING_ON_HOLIDAY",
+        );
+      }
       const busy = await this.teacherBusy(request.teacherUserId, request.startAt, request.endAt, request);
       if (busy.some((b) => overlaps(request.startAt, request.endAt, b))) {
         throw new AppError(
@@ -1051,7 +1159,10 @@ class MeetingsService {
       this.taughtStudentsByGuardian(teacherUserId),
       connectedUserIds([teacherUserId]),
     ]);
-    const guardianConnected = await connectedUserIds(guardians.map((g) => g.userId));
+    const [guardianConnected, closedDates] = await Promise.all([
+      connectedUserIds(guardians.map((g) => g.userId)),
+      upcomingClosedDates(meetingSettings.timeZone),
+    ]);
     return {
       available: Boolean(credentials),
       calendarConnected: connected.has(teacherUserId),
@@ -1059,6 +1170,7 @@ class MeetingsService {
       dayStart: meetingSettings.dayStart,
       dayEnd: meetingSettings.dayEnd,
       timeZone: meetingSettings.timeZone,
+      closedDates,
       durations: MEETING_DURATIONS,
       guardians: guardians.map((g) => ({
         id: g.userId,
@@ -1381,7 +1493,7 @@ class MeetingsService {
           })),
         );
       }
-      return toDto(updated);
+      return toDto(updated, "guardian");
     }
 
     const result = await repo().update(
@@ -1407,7 +1519,7 @@ class MeetingsService {
         ),
       },
     ]);
-    return toDto(updated);
+    return toDto(updated, "guardian");
   }
 
   /** The teacher accepts or turns down a guardian's proposed new time. */
@@ -1558,7 +1670,79 @@ class MeetingsService {
         },
       ]);
     }
+    return toDto(updated, actor.role === "GUARDIAN" ? "guardian" : "staff");
+  }
+
+  // ---------------------------------------------------------------- outcomes
+
+  /** The teacher records how a confirmed meeting went, optionally sharing it with the guardian. */
+  async recordOutcome(teacherUserId: string, id: string, input: RecordOutcomeInput) {
+    const request = await this.loadRequest(id);
+    if (request.teacherUserId !== teacherUserId || !request.sentToTeacherAt) {
+      throw new AppError(404, "Meeting request not found", "MEETING_NOT_FOUND");
+    }
+    if (request.status !== "SCHEDULED") {
+      throw new AppError(409, "Only confirmed meetings can have an outcome.", "MEETING_NOT_SCHEDULED");
+    }
+    if (request.startAt.getTime() > Date.now()) {
+      throw new AppError(409, "You can record the outcome once the meeting has started.", "MEETING_NOT_STARTED");
+    }
+
+    const previous = new Map((request.outcomeActionItems ?? []).map((item) => [item.id, item]));
+    const actionItems: MeetingActionItem[] = (input.actionItems ?? [])
+      .map((item) => ({ ...item, text: item.text.trim() }))
+      .filter((item) => item.text.length > 0)
+      .map((item) => ({
+        id: item.id && previous.has(item.id) ? item.id : randomUUID(),
+        text: item.text,
+        owner: item.owner,
+        done: Boolean(item.done),
+      }));
+
+    const wasShared = request.outcomeShared;
+    await repo().update(
+      { id },
+      {
+        outcome: input.outcome,
+        outcomeSummary: input.summary?.trim() || null,
+        outcomeActionItems: actionItems,
+        outcomeShared: input.shareWithGuardian,
+        outcomeRecordedAt: new Date(),
+      },
+    );
+    const updated = await this.loadRequest(id);
+
+    if (input.shareWithGuardian) {
+      await notifyUsers([
+        {
+          userId: updated.guardianUserId,
+          ...payload(
+            "MEETING_UPDATED",
+            wasShared ? "Meeting notes updated" : "Meeting notes shared",
+            `${displayName(updated.teacher)} ${wasShared ? "updated" : "shared"} notes from your meeting on ${whenLabel(updated)}.`,
+            HREF.guardian,
+            updated.id,
+          ),
+        },
+      ]);
+    }
     return toDto(updated);
+  }
+
+  /** The guardian ticks off one of their own action items from shared meeting notes. */
+  async guardianSetActionItemDone(guardianUserId: string, id: string, itemId: string, done: boolean) {
+    const request = await this.loadRequest(id);
+    if (request.guardianUserId !== guardianUserId || !request.outcomeShared) {
+      throw new AppError(404, "Meeting request not found", "MEETING_NOT_FOUND");
+    }
+    const items = request.outcomeActionItems ?? [];
+    const item = items.find((i) => i.id === itemId);
+    if (!item || item.owner !== "GUARDIAN") {
+      throw new AppError(404, "Action item not found", "MEETING_ACTION_ITEM_NOT_FOUND");
+    }
+    item.done = done;
+    await repo().update({ id }, { outcomeActionItems: items });
+    return toDto(await this.loadRequest(id), "guardian");
   }
 }
 

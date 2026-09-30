@@ -26,6 +26,16 @@ export type MeetingRequestStatus = (typeof MEETING_REQUEST_STATUSES)[number];
 
 export type MeetingInitiator = "GUARDIAN" | "TEACHER";
 
+export const MEETING_OUTCOMES = ["HELD", "NO_SHOW"] as const;
+export type MeetingOutcome = (typeof MEETING_OUTCOMES)[number];
+
+export type MeetingActionItem = {
+  id: string;
+  text: string;
+  owner: MeetingInitiator;
+  done: boolean;
+};
+
 /** Statuses that still hold the requested time on the teacher's schedule. */
 export const ACTIVE_MEETING_STATUSES: MeetingRequestStatus[] = [
   "PENDING_ADMIN",
@@ -167,6 +177,23 @@ export class MeetingRequest {
 
   @Column({ type: "varchar", length: 1000, nullable: true })
   calendarEventLink!: string | null;
+
+  /** Recorded by the teacher once a confirmed meeting has started. */
+  @Column({ type: "varchar", length: 20, nullable: true })
+  outcome!: MeetingOutcome | null;
+
+  @Column({ type: "text", nullable: true })
+  outcomeSummary!: string | null;
+
+  @Column({ type: "jsonb", nullable: true })
+  outcomeActionItems!: MeetingActionItem[] | null;
+
+  /** Whether the guardian can see the summary and action items. */
+  @Column({ type: "boolean", default: false })
+  outcomeShared!: boolean;
+
+  @Column({ type: "timestamptz", nullable: true })
+  outcomeRecordedAt!: Date | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;

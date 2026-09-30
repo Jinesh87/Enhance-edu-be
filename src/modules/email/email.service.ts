@@ -102,6 +102,17 @@ export interface SendEnrollmentAcceptedEmailParams {
   isStudent: boolean;
 }
 
+export interface SendMeetingReminderEmailParams {
+  to: string;
+  fullName: string;
+  withName: string;
+  topic: string;
+  whenLabel: string;
+  studentName: string | null;
+  meetLink: string | null;
+  meetingsLink: string;
+}
+
 export interface SendHolidayReminderEmailParams {
   to: string;
   fullName: string;
@@ -871,6 +882,69 @@ export class EmailService {
       );
     } catch (err) {
       logger.error({ err, to: params.to }, "Error sending holiday reminder email");
+    }
+  }
+
+  async sendMeetingReminderEmail(
+    params: SendMeetingReminderEmailParams,
+  ): Promise<void> {
+    const config = await this.getConfig();
+    if (!config?.enabled) {
+      logger.warn(
+        { to: params.to },
+        "Email disabled/missing, skipping meeting reminder email",
+      );
+      return;
+    }
+
+    const resend = new Resend(config.resendApiKey);
+    const studentRow = params.studentName
+      ? `
+          <tr>
+            <td style="padding: 6px 0; color: #64748B;">Student</td>
+            <td style="padding: 6px 0; font-weight: 600; color: #002C23;">${escapeHtml(params.studentName)}</td>
+          </tr>`
+      : "";
+
+    const html = buildResponsiveEmailShell({
+      previewText: `Reminder: meeting with ${params.withName} on ${params.whenLabel}`,
+      badgeText: "Meeting Reminder",
+      badgeTone: "info",
+      title: "Your meeting is coming up",
+      recipientName: params.fullName,
+      introHtml: `<p style="margin:0;">This is a reminder of your Google Meet with <strong>${escapeHtml(params.withName)}</strong>.</p>`,
+      detailsCardHtml: `
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr>
+            <td style="padding: 6px 0; color: #64748B; width: 32%;">Topic</td>
+            <td style="padding: 6px 0; font-weight: 700; color: #002C23;">${escapeHtml(params.topic)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748B;">When</td>
+            <td style="padding: 6px 0; font-weight: 600; color: #002C23;">${escapeHtml(params.whenLabel)}</td>
+          </tr>${studentRow}
+        </table>
+      `,
+      cta: params.meetLink
+        ? { label: "Join Google Meet", url: params.meetLink }
+        : { label: "View meeting", url: params.meetingsLink },
+      secondaryNotice: "Need to change the time? Reschedule or cancel from the Meetings page.",
+    });
+
+    try {
+      const { data, error } = await resend.emails.send({
+        from: `${config.fromName} <${config.fromEmail}>`,
+        to: params.to,
+        subject: `Reminder: meeting with ${params.withName} — ${params.whenLabel}`,
+        html,
+      });
+      if (error) {
+        logger.error({ error, to: params.to }, "Failed to send meeting reminder email");
+        return;
+      }
+      logger.info({ to: params.to, emailId: data?.id }, "Meeting reminder email sent");
+    } catch (err) {
+      logger.error({ err, to: params.to }, "Error sending meeting reminder email");
     }
   }
 
